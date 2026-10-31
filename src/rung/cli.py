@@ -107,7 +107,8 @@ def cmd_plan(args) -> int:
 def _print_outcome(outcome: checks.Outcome) -> None:
     print(f"{MARK[outcome.verdict]:5} {outcome.check.id} ({outcome.check.kind}): {outcome.summary}")
     for line in outcome.lines:
-        print(f"      {line}")
+        for part in line.splitlines():
+            print(f"      {part}")
 
 
 def cmd_check(args) -> int:

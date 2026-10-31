@@ -70,9 +70,17 @@ def _run_lean(root: Path, check: Check) -> Outcome:
     return Outcome(check, result.verdict, result.reason, lines)
 
 
+def _resolve_tools(command: str) -> str:
+    """Point a leading `lake` at the elan install, which is often not on PATH."""
+    parts = shlex.split(command)
+    if parts and parts[0] == "lake":
+        parts[0] = lean.find_lake()
+    return shlex.join(parts)
+
+
 def _run_drt(root: Path, check: Check) -> Outcome:
-    model = drt.Side(check.require("model"), root / check.get("model_cwd", "."))
-    impl = drt.Side(check.require("impl"), root / check.get("impl_cwd", "."))
+    model = drt.Side(_resolve_tools(check.require("model")), root / check.get("model_cwd", "."))
+    impl = drt.Side(_resolve_tools(check.require("impl")), root / check.get("impl_cwd", "."))
     result = drt.run(
         model,
         impl,

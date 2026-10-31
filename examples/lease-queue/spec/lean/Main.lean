@@ -18,7 +18,7 @@ def render (s : State) : String :=
   s!"owner={opt s.owner} valid={bit s.valid} done={bit s.done} result={opt s.result}"
 
 def parseLine (line : String) : List Action :=
-  (line.splitOn " ").filterMap fun tok => (tok.trim.toNat?).map decode
+  (line.splitOn " ").filterMap fun tok => tok.trimAscii.toString.toNat? |>.map decode
 
 partial def loop (stdin : IO.FS.Stream) (stdout : IO.FS.Stream) : IO Unit := do
   let line ← stdin.getLine

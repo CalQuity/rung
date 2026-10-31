@@ -12,6 +12,9 @@ build/
 # Evidence artifacts can be large; the ledger keeps their hashes. Upload them from CI.
 .rung/evidence/
 
+# The example starts clean on every clone.
+examples/*/.rung/
+
 # Lean and TLC build output
 .lake/
 states/
