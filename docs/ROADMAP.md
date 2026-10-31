@@ -2,14 +2,28 @@
 
 ## Shipped (0.1)
 
-- `rung init`, `plan`, `check`, `status`, `laws`, `ledger`, `draft`, `add`, `skill`, `doctor`
-- Runners: TLC, Lean (build, escape-hatch scan, `#print axioms` audit), differential
-  random testing with shrinking, commands, evidence scripts
-- Content-addressed, hash-chained evidence ledger; `LAWS.md`
-- Model providers: Claude Code CLI, Codex CLI, any OpenAI-compatible endpoint
-- Lease-queue example; CI that runs it with the real TLC and Lean
+- CLI: `init`, `plan`, `doctor`, `check` (`--changed`, `--base`), `status`, `report`, `prove`,
+  `laws`, `add`, `baseline`, `waive`, `draft tla|lean|runtime`, `agents`, `hook`, `ledger`;
+  `--json` and documented exit codes everywhere
+- Check kinds: `command`, `evidence`, `scan` (any SARIF tool; gitleaks, osv-scanner and zizmor
+  verified), `deps`, `tla`, `lean`, `drt`
+- Gating on what a branch introduces (merge-base worktree or committed baseline), stable
+  fingerprints, waivers with expiry
+- Fix proofs: a new test must fail on the merge base and pass on the branch
+- Runtime verification scripts drafted by a model and kept only once they pass
+- Claude Code Stop hook that blocks finishing with unverified changes
+- Content-addressed, hash-chained ledger; `LAWS.md`
+- GitHub Action with a sticky report comment; Rung verifies its own repository
 
 ## Next
+
+### Test quality
+Mutation-testing adapters (mutmut, Stryker, cargo-mutants) that report which mutants the suite
+fails to kill on changed lines, gated like scans: only surviving mutants a branch introduces block.
+
+### More adapters and agents
+JSON adapters for tools that do not emit SARIF (React Doctor, ESLint, Ruff), and enforcement
+hooks for agents beyond Claude Code as their hook interfaces settle.
 
 ### Counterexample to regression test
 Translate a TLC trace into a test in the repository's own language and add it to the
@@ -28,10 +42,6 @@ have drifted, the gap a mirror-style spec otherwise leaves.
 Delete a guard or weaken an action in the spec and re-run TLC. If every invariant still
 holds, the invariants are too weak to catch that class of bug. This extends the current
 vacuity check.
-
-### Runtime verification skill generator
-Generate the project-local skill that launches the app, drives one feature and records
-evidence, run it once before handing it over, and keep its feature map current.
 
 ### Portal
 A local web view, `rung portal`, over the same files:
