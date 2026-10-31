@@ -1,0 +1,62 @@
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+from rung import cli, ledger
+
+
+def run(project: Path, *args: str) -> int:
+    return cli.main(["-C", str(project), *args])
+
+
+def test_check_records_a_fresh_verdict_that_goes_stale(project: Path, capsys) -> None:
+    assert run(project, "check") == 0
+    assert "PASS" in capsys.readouterr().out
+    assert run(project, "status", "--ci") == 0
+
+    (project / "src" / "core.py").write_text("changed = True\n")
+    assert run(project, "status", "--ci") == 1
+    assert "changed: src/core.py" in capsys.readouterr().out
+
+
+def test_check_ci_reruns_only_what_is_not_fresh(project: Path, capsys) -> None:
+    run(project, "check")
+    capsys.readouterr()
+    assert run(project, "check", "--ci") == 0
+    assert "All verdicts are fresh" in capsys.readouterr().out
+    assert len(ledger.read(project)) == 1
+
+
+def test_failing_command_fails_the_run(project: Path) -> None:
+    run(project, "add", "broken", "--run", f"{sys.executable} -c 'raise SystemExit(3)'")
+    assert run(project, "check", "broken") == 1
+    assert ledger.read(project)[-1]["verdict"] == "fail"
+
+
+def test_missing_tool_is_an_error_verdict_not_a_crash(project: Path, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("RUNG_TLA2TOOLS", str(project / "nope.jar"))
+    (project / "Spec.tla").write_text("---- MODULE Spec ----\n====\n")
+    with (project / "rung.toml").open("a") as fh:
+        fh.write('\n[[check]]\nid = "proto"\nkind = "tla"\nspec = "Spec.tla"\ncovers = []\n')
+    assert run(project, "check", "proto") == 1
+    assert "tla2tools.jar not found" in capsys.readouterr().out
+    assert ledger.read(project)[-1]["verdict"] == "error"
+
+
+def test_init_without_tty_writes_config_and_laws(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("def main():\n    pass\n")
+    assert run(tmp_path, "init", "--provider", "none") == 0
+    assert (tmp_path / "rung.toml").exists()
+    assert (tmp_path / "LAWS.md").exists()
+
+
+def test_ledger_command_reports_intact_chain(project: Path, capsys) -> None:
+    run(project, "check")
+    assert run(project, "ledger") == 0
+    assert "chain intact" in capsys.readouterr().out
+
+
+def test_no_config_is_a_clean_error(tmp_path: Path, capsys) -> None:
+    assert run(tmp_path, "status") == 2
+    assert "rung init" in capsys.readouterr().err

@@ -1,0 +1,9 @@
+name = "lease_model"
+defaultTargets = ["leasemodel"]
+
+[[lean_lib]]
+name = "LeaseModel"
+
+[[lean_exe]]
+name = "leasemodel"
+root = "Main"

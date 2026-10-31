@@ -1,0 +1,35 @@
+[project]
+name = "lease-queue"
+
+[llm]
+provider = "none"
+model = ""
+base_url = ""
+api_key_env = "RUNG_API_KEY"
+
+[[check]]
+id = "lease-protocol"
+kind = "tla"
+spec = "spec/tla/LeaseQueue.tla"
+config = "spec/tla/LeaseQueue.cfg"
+covers = ["leasequeue/queue.py"]
+
+[[check]]
+id = "lease-model-proofs"
+kind = "lean"
+project = "spec/lean"
+theorems = ["LeaseModel.complete_requires_lease", "LeaseModel.run_consistent"]
+covers = []
+
+[[check]]
+id = "impl-matches-model"
+kind = "drt"
+model = "lake exe leasemodel"
+model_cwd = "spec/lean"
+impl = "python3 -m leasequeue.drt"
+alphabet = ["0", "1", "2", "3", "4"]
+cases = 2000
+max_len = 8
+seed = 7
+specs = ["spec/lean/**/*.lean", "leasequeue/drt.py"]
+covers = ["leasequeue/queue.py"]

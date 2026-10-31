@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+
+# Rung scratch space; the ledger itself (.rung/ledger.jsonl) is meant to be committed.
+.rung/cache/
+.rung/runs/
+
+# Lean and TLC build output
+.lake/
+states/
+*.st
