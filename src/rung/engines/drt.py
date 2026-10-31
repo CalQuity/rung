@@ -78,9 +78,7 @@ def shrink(case: str, model: Side, impl: Side, timeout: int, max_rounds: int = 5
         if not candidates:
             break
         m_out, i_out = model.run(candidates, timeout), impl.run(candidates, timeout)
-        smaller = next(
-            (Divergence(c, m, i) for c, m, i in zip(candidates, m_out, i_out, strict=True) if m != i), None
-        )
+        smaller = next((Divergence(c, m, i) for c, m, i in zip(candidates, m_out, i_out, strict=True) if m != i), None)
         if smaller is None:
             break
         current, tokens = smaller, smaller.input.split()

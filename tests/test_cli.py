@@ -24,12 +24,12 @@ def test_check_ci_reruns_only_what_is_not_fresh(project: Path, capsys) -> None:
     run(project, "check")
     capsys.readouterr()
     assert run(project, "check", "--ci") == 0
-    assert "All verdicts are fresh" in capsys.readouterr().out
+    assert "every selected check is fresh" in capsys.readouterr().out
     assert len(ledger.read(project)) == 1
 
 
 def test_failing_command_fails_the_run(project: Path) -> None:
-    run(project, "add", "broken", "--run", f"{sys.executable} -c 'raise SystemExit(3)'")
+    run(project, "add", "command", "broken", "--run", f"{sys.executable} -c 'raise SystemExit(3)'")
     assert run(project, "check", "broken") == 1
     assert ledger.read(project)[-1]["verdict"] == "fail"
 
@@ -69,7 +69,7 @@ def test_evidence_check_hashes_artifacts_into_the_ledger(project: Path) -> None:
         "out = pathlib.Path(os.environ['RUNG_EVIDENCE_DIR'])\n"
         "(out / 'transcript.txt').write_text('$ app --help\\nusage: app\\n')\n"
     )
-    run(project, "add", "drive", "--kind", "evidence", "--run", f"{sys.executable} drive.py")
+    run(project, "add", "evidence", "drive", "--run", f"{sys.executable} drive.py")
     assert run(project, "check", "drive") == 0
     entry = ledger.read(project)[-1]
     assert entry["verdict"] == "pass"
@@ -78,6 +78,6 @@ def test_evidence_check_hashes_artifacts_into_the_ledger(project: Path) -> None:
 
 
 def test_evidence_check_without_artifacts_fails(project: Path) -> None:
-    run(project, "add", "claims", "--kind", "evidence", "--run", f"{sys.executable} -c 'pass'")
+    run(project, "add", "evidence", "claims", "--run", f"{sys.executable} -c 'pass'")
     assert run(project, "check", "claims") == 1
     assert "recorded no evidence" in ledger.read(project)[-1]["summary"]

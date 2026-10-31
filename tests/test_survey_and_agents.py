@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rung import plan, skills, survey
+from rung import agents, plan, survey
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "lease-queue"
 
@@ -29,9 +29,15 @@ def test_survey_skips_dependency_dirs(tmp_path: Path) -> None:
 
 def test_skill_install_is_idempotent_and_keeps_existing_agents_md(tmp_path: Path) -> None:
     (tmp_path / "AGENTS.md").write_text("# House rules\n\nBe kind.\n")
-    skills.install(tmp_path)
-    skills.install(tmp_path)
+    agents.install(tmp_path)
+    agents.install(tmp_path)
     text = (tmp_path / "AGENTS.md").read_text()
     assert text.startswith("# House rules")
-    assert text.count(skills.BEGIN) == 1
+    assert text.count(agents.BEGIN) == 1
     assert (tmp_path / ".claude" / "skills" / "rung" / "SKILL.md").exists()
+
+
+def test_keywords_in_strings_and_comments_do_not_count() -> None:
+    prose = 'WORDS = "state status retry lease lock claim expire timeout"  # retry lease lock\n'
+    assert survey.stateful_terms(survey.code_only(prose)) == []
+    assert survey.stateful_terms("job.lease_valid = retryCount\n") == ["lease", "retry"]

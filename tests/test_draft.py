@@ -6,8 +6,8 @@ import pytest
 
 from rung import draft
 from rung.config import LLMConfig
+from rung.engines import tla
 from rung.providers import Provider
-from rung.runners import tla
 
 
 class ScriptedProvider(Provider):

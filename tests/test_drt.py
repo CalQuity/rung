@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from rung.runners import drt
+from rung.engines import drt
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "lease-queue"
 
@@ -37,9 +37,7 @@ def _reference(tmp_path: Path) -> drt.Side:
 
 def test_finds_and_shrinks_the_lease_bug(tmp_path: Path) -> None:
     impl = drt.Side(f"{sys.executable} -m leasequeue.drt", EXAMPLE)
-    result = drt.run(
-        _reference(tmp_path), impl, alphabet=["0", "1", "2", "3", "4"], cases=500, max_len=8, seed=7
-    )
+    result = drt.run(_reference(tmp_path), impl, alphabet=["0", "1", "2", "3", "4"], cases=500, max_len=8, seed=7)
     assert result.verdict == "fail"
     assert result.minimal is not None
     # claim(w1), expire, complete(w1): a worker completes on its own expired lease.

@@ -46,11 +46,19 @@ LANGUAGES = {
     ".swift": "Swift",
 }
 # Words that tend to appear where state transitions, leases and retries live.
-STATEFUL = re.compile(
-    r"\b(state|status|transition|retry|retries|backoff|lease|lock|claim|reconcil\w*|"
-    r"idempoten\w*|queue|dispatch|timeout|expire[sd]?|ack|commit|rollback)\b",
-    re.I,
-)
+STATEFUL_WORDS = frozenset({
+    "state", "status", "transition", "retry", "retries", "backoff", "lease", "leases", "lock", "locks",
+    "claim", "claimed", "queue", "dispatch", "timeout", "expire", "expired", "expires", "ack", "nack",
+    "commit", "rollback", "reconcile", "reconciliation", "idempotent", "idempotency", "attempt", "attempts",
+})  # fmt: skip
+_WORD = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])")
+
+
+def stateful_terms(code: str) -> list[str]:
+    """Protocol-flavoured words in identifiers, splitting snake_case and camelCase (`leaseValid` -> lease)."""
+    return [w for w in (m.lower() for m in _WORD.findall(code)) if w in STATEFUL_WORDS]
+
+
 SIDE_EFFECTS = re.compile(
     r"\b(open|requests|httpx|fetch|subprocess|socket|cursor|execute|session|write|print|"
     r"datetime\.now|time\.time|random)\b"
@@ -81,8 +89,11 @@ class Inspection:
     def primary_language(self) -> str:
         return max(self.languages, key=self.languages.get) if self.languages else "unknown"
 
+    def to_dict(self) -> dict:
+        return asdict(self)
+
     def to_json(self) -> str:
-        return json.dumps(asdict(self), indent=2)
+        return json.dumps(self.to_dict(), indent=2)
 
 
 def walk(root: Path):
@@ -92,6 +103,23 @@ def walk(root: Path):
             continue
         if path.is_file():
             yield path, rel
+
+
+_STRINGS_AND_COMMENTS = re.compile(
+    r'"""[\s\S]*?"""'  # Python triple-quoted strings
+    r"|'''[\s\S]*?'''"
+    r'|"(?:\\.|[^"\\\n])*"'  # double-quoted strings
+    r"|'(?:\\.|[^'\\\n])*'"  # single-quoted strings
+    r"|`(?:\\.|[^`\\])*`"  # template literals
+    r"|/\*[\s\S]*?\*/"  # block comments
+    r"|//[^\n]*"  # line comments
+    r"|#[^\n]*"
+)
+
+
+def code_only(text: str) -> str:
+    """Strip string literals and comments so keyword counts reflect code, not prose."""
+    return _STRINGS_AND_COMMENTS.sub(" ", text)
 
 
 def _read(path: Path, limit: int = 200_000) -> str:
@@ -139,12 +167,13 @@ def survey(root: Path) -> Inspection:
         if suffix not in LANGUAGES or "test" in path.stem.lower() or "tests" in rel.parts:
             continue
         text = _read(path)
+        code = code_only(text)
         lines = text.count("\n") + 1
-        hits = len(STATEFUL.findall(text))
+        hits = len(stateful_terms(code))
         if hits >= 6:
             protocol.append(Candidate(posix, hits, f"{hits} state/retry/lease terms in {lines} lines"))
-        effects = len(SIDE_EFFECTS.findall(text))
-        functions = len(re.findall(r"^\s*(?:def|function|fn|func)\s", text, re.M))
+        effects = len(SIDE_EFFECTS.findall(code))
+        functions = len(re.findall(r"^\s*(?:def|function|fn|func)\s", code, re.M))
         if functions >= 2 and effects == 0 and lines <= 600:
             model.append(Candidate(posix, functions, f"{functions} functions and no I/O; a small pure core"))
 

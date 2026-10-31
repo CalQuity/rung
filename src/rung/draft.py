@@ -14,8 +14,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from rung.engines import lean, tla
 from rung.providers import Provider
-from rung.runners import lean, tla
 
 FENCE = re.compile(r"```[\w+-]*\s+file=(\S+)\s*\n(.*?)```", re.S)
 
@@ -125,8 +125,7 @@ def draft_tla(
         cfg_name = next((n for n in produced if n.endswith(".cfg")), None)
         if not spec_name or not cfg_name:
             prompt += (
-                "\n\nYour reply did not contain both a ```tla file=...``` and a "
-                "```cfg file=...``` block. Try again."
+                "\n\nYour reply did not contain both a ```tla file=...``` and a ```cfg file=...``` block. Try again."
             )
             continue
         files = _safe_write(out_dir, produced)
@@ -149,9 +148,7 @@ def draft_tla(
         problem = (
             (result.reason + "\n" + result.output[-2000:])
             if result.verdict == "error"
-            else (
-                "TLC explored at most one state, so the invariants are vacuous. Make Init and Next reachable."
-            )
+            else ("TLC explored at most one state, so the invariants are vacuous. Make Init and Next reachable.")
         )
         prompt += (
             f"\n\nTLC rejected your previous spec:\n{problem}\n"

@@ -1,39 +1,27 @@
-"""The verification ladder and the planner that picks rungs for a repository.
+"""Recommend checks for a repository, cheapest and most widely useful first.
 
-Rungs are ordered from cheapest to strongest. Cheap rungs apply everywhere;
-the formal rungs (TLA+, Lean) are reserved for the few places where a mistake
-is expensive and the behaviour can be stated precisely. A plan is a ranked
-list of recommendations, each tied to concrete files and a reason.
+The ladder is applied by escalation, not by climbing every rung everywhere.
+Every repository benefits from the cheap rungs: tests recorded as evidence,
+security scanners gated on new findings, vetted dependencies, fix proofs.
+Formal methods are recommended only where the survey finds code they pay off
+for: TLA+ for stateful protocols, a Lean model for small pure cores.
 """
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass, field
 
+from rung.presets import PRESETS
 from rung.survey import Inspection
 
 LADDER = (
-    (
-        "architecture",
-        "Make the wrong shortcut impossible: import boundaries and lint rules, enforced in CI.",
-    ),
-    (
-        "runtime",
-        "Drive the real app the way a user does and keep the evidence: transcripts, screenshots, video.",
-    ),
-    (
-        "properties",
-        "State invariants as property-based tests and kill weak tests with mutation testing.",
-    ),
-    ("protocol", "Model stateful protocols in TLA+ and model-check every interleaving with TLC."),
-    (
-        "model",
-        "Write a small executable Lean model, prove its laws, and differentially test the code against it.",
-    ),
-    (
-        "ledger",
-        "Bind every verdict to the exact code and spec it checked; it expires when either changes.",
-    ),
+    ("tests", "Record the test suite as evidence; prove that each bug fix's test catches the bug."),
+    ("security", "Gate on new secrets, vulnerable or invented dependencies, and risky CI workflows."),
+    ("architecture", "Make the wrong shortcut impossible: import boundaries and lint rules, in CI."),
+    ("runtime", "Drive the real app like a user and keep the evidence: transcripts, screenshots, video."),
+    ("protocol", "Model stateful code (queues, retries, leases, sync) in TLA+ and check every interleaving."),
+    ("model", "Prove the laws of a small pure core in Lean and hold the real code to it on random inputs."),
 )
 
 
@@ -47,95 +35,90 @@ class Recommendation:
     command: str = ""
 
 
-def plan(info: Inspection) -> list[Recommendation]:
+def _scanner_rec(tool: str, check_id: str, why: str) -> Recommendation:
+    preset = PRESETS[tool]
+    installed = shutil.which(tool) is not None
+    command = f"rung add scan {check_id} --tool {tool}"
+    if not installed:
+        why += f" Install it first: {preset.install}."
+    return Recommendation("security", f"Scan for {preset.purpose}", why, effort="low", command=command)
+
+
+def plan(info: Inspection, existing: set[str] | None = None) -> list[Recommendation]:
+    """Recommendations for a surveyed repository, skipping check ids that already exist."""
+    existing = existing or set()
     recs: list[Recommendation] = []
     lang = info.primary_language
 
+    if info.test_commands and "tests" not in existing:
+        recs.append(Recommendation(
+            "tests", "Record the test suite as a check",
+            "A green run becomes a ledger entry tied to the exact code it ran against, and goes stale "
+            "when that code changes.",
+            command=f"rung add command tests --run '{info.test_commands[0]}'",
+        ))  # fmt: skip
+    if info.test_commands:
+        recs.append(Recommendation(
+            "tests", "Prove bug-fix tests catch the bug",
+            "Agents often write regression tests that pass with or without the fix. `rung prove` runs the "
+            "branch's new tests on the merge base, where they must fail, and on the branch, where they must pass.",
+            command=f"rung prove '{info.test_commands[0]}'",
+        ))  # fmt: skip
+
+    if "secrets" not in existing:
+        recs.append(_scanner_rec("gitleaks", "secrets", "Leaked keys are the most common agent-introduced incident."))
+    if "vulnerable-deps" not in existing:
+        recs.append(_scanner_rec("osv-scanner", "vulnerable-deps", "Known-vulnerable dependency versions."))
+    if "deps" not in existing:
+        recs.append(Recommendation(
+            "security", "Vet every newly added dependency",
+            "Agents sometimes add packages that do not exist; attackers register those names. New packages "
+            "must exist on their registry and be at least 30 days old unless a person allows them.",
+            command="rung add deps deps",
+        ))  # fmt: skip
+    if info.ci and "workflows" not in existing and any(p.startswith(".github/workflows/") for p in info.ci):
+        recs.append(_scanner_rec("zizmor", "workflows", "CI workflows run with secrets and write access."))
+    if lang in ("Python", "TypeScript", "JavaScript", "Go", "Java", "Ruby") and "code-patterns" not in existing:
+        recs.append(_scanner_rec("semgrep", "code-patterns", "Injection, SSRF and unsafe deserialization patterns."))
+
     if not info.lint:
-        recs.append(
-            Recommendation(
-                "architecture",
-                "Add a linter and import-boundary rules",
-                f"No lint configuration found. Agents copy the patterns they see; for {lang}, "
-                "a linter plus layer rules (e.g. import-linter, eslint no-restricted-imports) "
-                "stops the shortcut before review.",
-                effort="low",
-            )
-        )
+        recs.append(Recommendation(
+            "architecture", "Add a linter and import-boundary rules",
+            f"No lint configuration found. Agents copy the patterns they see; for {lang}, a linter plus "
+            "layer rules stops the shortcut before review. Record it with `rung add command lint --run ...`.",
+        ))  # fmt: skip
 
     if info.surfaces and info.surfaces != ["library"]:
-        recs.append(
-            Recommendation(
-                "runtime",
-                f"Generate a runtime verification skill for the {info.surfaces[0]}",
-                "A passing build is not proof of behaviour. Give your agent a project-local skill "
-                "that launches the app, drives one feature end to end and keeps the evidence, and "
-                "require it to run once before it counts. Record its evidence script as a check.",
-                effort="medium",
-                command="rung add runtime --run '<your evidence script>'",
-            )
-        )
-
-    if info.test_commands:
-        recs.append(
-            Recommendation(
-                "properties",
-                "Record the existing test suite as a check",
-                "Tests become a ledger entry, so a green run is tied to the code it ran against.",
-                effort="low",
-                command=f"rung add tests --run '{info.test_commands[0]}'",
-            )
-        )
+        recs.append(Recommendation(
+            "runtime", f"Record runtime evidence for the {info.surfaces[0]}",
+            "Write a script that launches the app, drives one feature end to end, and saves what it saw to "
+            "$RUNG_EVIDENCE_DIR (a transcript, response bodies, a screenshot or a video). It must record "
+            "something to pass.",
+            effort="medium", command="rung add evidence runtime --run '<your drive script>'",
+        ))  # fmt: skip
 
     if info.protocol_candidates:
         top = info.protocol_candidates[:3]
-        recs.append(
-            Recommendation(
-                "protocol",
-                "Model the stateful core in TLA+",
-                "These files carry state, retries, leases or reconciliation: the bugs that tests "
-                "rarely reach because they need a specific interleaving. "
-                + "; ".join(f"{c.path} ({c.reason})" for c in top),
-                targets=[c.path for c in top],
-                effort="high",
-                command=f"rung draft tla {top[0].path}",
-            )
-        )
-
+        recs.append(Recommendation(
+            "protocol", "Model the stateful core in TLA+",
+            "These files look like they hold state, retries or leases, where bugs need a specific "
+            "interleaving that tests rarely reach: " + "; ".join(c.path for c in top) + ". Worth it only if "
+            "a concurrency bug here would be expensive.",
+            targets=[c.path for c in top], effort="high", command=f"rung draft tla {top[0].path}",
+        ))  # fmt: skip
     if info.model_candidates:
         top = info.model_candidates[:3]
-        recs.append(
-            Recommendation(
-                "model",
-                "Model the pure core in Lean and test the code against it",
-                "Small, side-effect-free logic is where an executable Lean model pays off: prove "
-                "its laws once, then require the real code to agree with it on random inputs. "
-                + "; ".join(f"{c.path} ({c.reason})" for c in top),
-                targets=[c.path for c in top],
-                effort="high",
-                command=f"rung draft lean {top[0].path}",
-            )
-        )
+        recs.append(Recommendation(
+            "model", "Model a pure core in Lean and test the code against it",
+            "Small, side-effect-free logic (pricing, permissions, parsers, reducers) is where a proven model "
+            "pays off: " + "; ".join(c.path for c in top) + ".",
+            targets=[c.path for c in top], effort="high", command=f"rung draft lean {top[0].path}",
+        ))  # fmt: skip
 
-    if "bend" in info.formal:
-        recs.append(
-            Recommendation(
-                "model",
-                "Check the existing Bend laws",
-                "This repo has Bend files; Rung can record `bend PROOF.bend` as a check.",
-                targets=info.formal["bend"][:3],
-                effort="low",
-            )
-        )
-
-    recs.append(
-        Recommendation(
-            "ledger",
-            "Gate merges on fresh verdicts",
-            "Add `rung check --ci` to CI. It fails when any verdict is failing or stale, so an "
-            "edit to covered code cannot ride on an old green run.",
-            effort="low",
-            command="rung check --ci",
-        )
-    )
+    recs.append(Recommendation(
+        "ledger", "Gate pull requests on fresh verdicts",
+        "In CI, `rung check --changed` runs what a branch touches and blocks only what it introduces; "
+        "`rung report` writes the pull request comment.",
+        command="rung check --changed",
+    ))  # fmt: skip
     return recs

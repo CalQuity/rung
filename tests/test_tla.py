@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from rung.runners import tla
+from rung.engines import tla
 
 VIOLATION = """\
 TLC2 Version 2.19
@@ -60,8 +60,7 @@ def test_parses_success_with_thousands_separators() -> None:
 
 def test_deadlock_is_a_failure() -> None:
     out = (
-        "Error: Deadlock reached.\nError: The behavior up to this point is:\n"
-        "State 1: <Initial predicate>\n/\\ x = 0\n"
+        "Error: Deadlock reached.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\n/\\ x = 0\n"
     )
     result = tla.parse_output(out, returncode=11)
     assert result.verdict == "fail" and result.violated == "deadlock"

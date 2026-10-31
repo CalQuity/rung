@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -26,3 +27,27 @@ covers = ["src/*.py"]
 """
     )
     return tmp_path
+
+
+def git(root: Path, *args: str) -> str:
+    return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True).stdout
+
+
+@pytest.fixture
+def repo(tmp_path: Path) -> Path:
+    """A git repository on `main` with one commit, ready for branch-based tests."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    git(root, "init", "-q", "-b", "main")
+    git(root, "config", "user.email", "dev@example.com")
+    git(root, "config", "user.name", "Dev")
+    git(root, "config", "commit.gpgsign", "false")
+    (root / "README.md").write_text("demo\n")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "init")
+    return root
+
+
+def commit_all(root: Path, message: str) -> None:
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", message)

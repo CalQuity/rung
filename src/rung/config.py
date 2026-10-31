@@ -11,11 +11,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from rung.errors import RungError
+
 CONFIG_NAME = "rung.toml"
-CHECK_KINDS = ("tla", "lean", "drt", "command", "evidence")
+CHECK_KINDS = ("command", "evidence", "scan", "deps", "tla", "lean", "drt")
 
 
-class ConfigError(ValueError):
+class ConfigError(RungError, ValueError):
     """`rung.toml` is missing, malformed, or declares an invalid check."""
 
 

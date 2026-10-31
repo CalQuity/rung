@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rung.runners import lean
+from rung.engines import lean
 
 
 def test_scan_flags_escape_hatches(tmp_path: Path) -> None:

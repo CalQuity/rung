@@ -129,9 +129,7 @@ class CodexCLI(Provider):
             if self.config.model:
                 cmd += ["-m", self.config.model]
             cmd.append("-")
-            proc = subprocess.run(
-                cmd, input=full, cwd=cwd or tmp, capture_output=True, text=True, timeout=timeout
-            )
+            proc = subprocess.run(cmd, input=full, cwd=cwd or tmp, capture_output=True, text=True, timeout=timeout)
             if proc.returncode != 0:
                 raise RuntimeError(f"codex exited {proc.returncode}: {proc.stderr.strip()[-500:]}")
             return out.read_text().strip() if out.exists() else proc.stdout.strip()
@@ -149,8 +147,7 @@ class OpenAICompatible(Provider):
         has_key = bool(os.environ.get(self.config.api_key_env))
         return LoginState(
             True,
-            f"{self.config.base_url} (key from ${self.config.api_key_env}: "
-            f"{'set' if has_key else 'not set'})",
+            f"{self.config.base_url} (key from ${self.config.api_key_env}: {'set' if has_key else 'not set'})",
         )
 
     def login(self) -> int:
@@ -160,9 +157,7 @@ class OpenAICompatible(Provider):
     def complete(self, prompt: str, *, system: str = "", cwd: Path | None = None, timeout: int = 900) -> str:
         if not self.config.base_url:
             raise ToolMissing("set [llm] base_url for the openai-compatible provider")
-        messages = ([{"role": "system", "content": system}] if system else []) + [
-            {"role": "user", "content": prompt}
-        ]
+        messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
         body = json.dumps({"model": self.config.model or "default", "messages": messages}).encode()
         headers = {"Content-Type": "application/json"}
         if key := os.environ.get(self.config.api_key_env):
@@ -194,9 +189,5 @@ def get(config: LLMConfig) -> Provider:
 
 def detect() -> list[str]:
     """Providers usable on this machine right now, best first."""
-    found = [
-        name
-        for name, cls in (("claude-cli", ClaudeCLI), ("codex-cli", CodexCLI))
-        if cls(LLMConfig()).available()
-    ]
+    found = [name for name, cls in (("claude-cli", ClaudeCLI), ("codex-cli", CodexCLI)) if cls(LLMConfig()).available()]
     return [*found, "openai-compatible", "none"]

@@ -26,9 +26,7 @@ def render(job: Job) -> str:
     def opt(v: int | None) -> str:
         return "-" if v is None else str(v)
 
-    return (
-        f"owner={opt(job.owner)} valid={int(job.lease_valid)} done={int(job.done)} result={opt(job.result)}"
-    )
+    return f"owner={opt(job.owner)} valid={int(job.lease_valid)} done={int(job.done)} result={opt(job.result)}"
 
 
 def main() -> None:

@@ -13,11 +13,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from rung import gitutil
 
 LEDGER_PATH = Path(".rung") / "ledger.jsonl"
 GENESIS = "0" * 64
@@ -31,34 +32,8 @@ def file_digest(path: Path) -> str:
         return "missing"
 
 
-def expand(root: Path, patterns: list[str]) -> list[str]:
-    """Resolve glob patterns (relative to `root`) into a sorted list of relative files.
-
-    A pattern that matches nothing is kept literally, so a deleted covered file
-    shows up as "missing" and stales the verdict instead of silently vanishing.
-    """
-    out: set[str] = set()
-    for pattern in patterns:
-        matches = [p for p in root.glob(pattern) if p.is_file() and ".lake" not in p.parts]
-        if matches:
-            out.update(p.relative_to(root).as_posix() for p in matches)
-        else:
-            out.add(pattern)
-    return sorted(out)
-
-
 def snapshot(root: Path, patterns: list[str]) -> dict[str, str]:
-    return {rel: file_digest(root / rel) for rel in expand(root, patterns)}
-
-
-def git_commit(root: Path) -> str:
-    try:
-        out = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, check=True
-        )
-        return out.stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return ""
+    return {rel: file_digest(root / rel) for rel in gitutil.expand(root, patterns)}
 
 
 def _entry_hash(entry: dict[str, Any]) -> str:
@@ -95,7 +70,7 @@ def append(
         "verdict": verdict,
         "summary": summary,
         "at": datetime.now(UTC).isoformat(timespec="seconds"),
-        "commit": git_commit(root),
+        "commit": gitutil.head(root),
         "covers": covers,
         "specs": specs,
         "evidence": evidence or [],

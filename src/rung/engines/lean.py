@@ -50,9 +50,7 @@ class LeanResult:
 def find_lake() -> str:
     lake = shutil.which("lake") or str(Path.home() / ".elan" / "bin" / "lake")
     if not os.access(lake, os.X_OK):
-        raise ToolMissing(
-            "lake is not installed. Install Lean with elan (https://lean-lang.org/install/) and re-run."
-        )
+        raise ToolMissing("lake is not installed. Install Lean with elan (https://lean-lang.org/install/) and re-run.")
     return lake
 
 
@@ -83,18 +81,14 @@ def parse_axioms(output: str) -> dict[str, list[str]]:
     return axioms
 
 
-def audit_axioms(
-    lake: str, project: Path, modules: list[str], theorems: list[str]
-) -> tuple[dict[str, list[str]], str]:
+def audit_axioms(lake: str, project: Path, modules: list[str], theorems: list[str]) -> tuple[dict[str, list[str]], str]:
     """Ask Lean itself which axioms each theorem depends on."""
     source = "\n".join(f"import {m}" for m in modules) + "\n\n"
     source += "\n".join(f"#print axioms {t}" for t in theorems) + "\n"
     audit = project / ".lake" / "rung_audit.lean"
     audit.parent.mkdir(parents=True, exist_ok=True)
     audit.write_text(source)
-    proc = subprocess.run(
-        [lake, "env", "lean", str(audit)], cwd=project, capture_output=True, text=True, timeout=600
-    )
+    proc = subprocess.run([lake, "env", "lean", str(audit)], cwd=project, capture_output=True, text=True, timeout=600)
     output = proc.stdout + proc.stderr
     return parse_axioms(output), output
 
