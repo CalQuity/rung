@@ -60,6 +60,27 @@ skill only tells you how to use it.
 """
 
 
+VERIFY_SKILL = """---
+name: verify-{slug}
+description: >-
+  Drive {project} the way a user does and record evidence. Use after any user-facing
+  change (UI, API, CLI), and before saying such a change works.
+---
+
+# Verify {project}
+
+`.rung/verify/drive.py` launches the app, drives a feature end to end and records
+evidence. `.rung/verify/FEATURES.md` maps each feature to how a user reaches it, how
+to drive it, and what observable state proves it works.
+
+- Run `rung check {check_id}`. A pass means the script ran and left evidence; the
+  evidence paths are in the output and the ledger.
+- Changed a feature the script does not drive yet? Extend `drive.py` and FEATURES.md,
+  then run `rung check {check_id}` again. Never weaken what the script asserts.
+- A failure is a product bug until shown otherwise. Fix the app, not the script.
+"""
+
+
 def install(root: Path, *, hooks: bool = False) -> list[Path]:
     written = []
     skill_path = root / ".claude" / "skills" / "rung" / "SKILL.md"
@@ -82,6 +103,15 @@ def install(root: Path, *, hooks: bool = False) -> list[Path]:
     if hooks:
         written.append(install_stop_hook(root))
     return written
+
+
+def install_verify_skill(root: Path, project: str, check_id: str) -> Path:
+    """A project-specific skill pointing agents at the proven drive script and its feature map."""
+    slug = "".join(ch if ch.isalnum() else "-" for ch in project.lower()).strip("-") or "app"
+    path = root / ".claude" / "skills" / f"verify-{slug}" / "SKILL.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(VERIFY_SKILL.format(slug=slug, project=project, check_id=check_id))
+    return path
 
 
 def install_stop_hook(root: Path) -> Path:

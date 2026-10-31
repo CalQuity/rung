@@ -81,7 +81,7 @@ def parse_files(text: str) -> dict[str, str]:
     return {name: body.rstrip() + "\n" for name, body in FENCE.findall(text)}
 
 
-def _safe_write(base: Path, files: dict[str, str]) -> list[Path]:
+def safe_write(base: Path, files: dict[str, str]) -> list[Path]:
     written = []
     base = base.resolve()
     for name, body in files.items():
@@ -128,7 +128,7 @@ def draft_tla(
                 "\n\nYour reply did not contain both a ```tla file=...``` and a ```cfg file=...``` block. Try again."
             )
             continue
-        files = _safe_write(out_dir, produced)
+        files = safe_write(out_dir, produced)
         result = tla.run(out_dir / spec_name, out_dir / cfg_name)
         if result.verdict == "fail":
             return DraftResult(
@@ -182,7 +182,7 @@ def draft_lean(
         if "Main.lean" not in produced or not any(n.startswith("lakefile") for n in produced):
             prompt += "\n\nYour reply was missing Main.lean or the lakefile. Reply in the required format."
             continue
-        files = _safe_write(out_dir, produced)
+        files = safe_write(out_dir, produced)
         result = lean.run(out_dir, theorems)
         if result.verdict == "pass":
             alphabet = []

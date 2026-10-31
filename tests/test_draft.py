@@ -42,7 +42,7 @@ def test_parse_files_reads_fenced_blocks() -> None:
 
 def test_refuses_paths_outside_the_output_dir(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="outside"):
-        draft._safe_write(tmp_path, {"../escape.tla": "x"})
+        draft.safe_write(tmp_path, {"../escape.tla": "x"})
 
 
 def _source(tmp_path: Path) -> Path:
@@ -94,3 +94,38 @@ def test_vacuous_spec_is_sent_back(tmp_path: Path, monkeypatch) -> None:
     result = draft.draft_tla(provider, tmp_path, [_source(tmp_path)], tmp_path / "spec")
     assert result.rounds == 2
     assert "vacuous" in provider.prompts[1]
+
+
+DRIVE_OK = """```python file=drive.py
+import os, pathlib
+out = pathlib.Path(os.environ["RUNG_EVIDENCE_DIR"])
+(out / "transcript.txt").write_text("$ app --version\\napp 1.0\\n")
+```
+```markdown file=FEATURES.md
+# Features
+## version
+- How a user reaches it: `app --version`
+```
+SOURCES: src/**/*.py
+"""
+DRIVE_NO_EVIDENCE = DRIVE_OK.replace('(out / "transcript.txt").write_text("$ app --version\\napp 1.0\\n")', "pass")
+
+
+def test_runtime_draft_registers_only_after_the_script_proves_itself(tmp_path: Path) -> None:
+    from rung import runtime, survey
+
+    provider = ScriptedProvider([DRIVE_NO_EVIDENCE, DRIVE_OK])
+    result = runtime.draft_runtime(provider, tmp_path, survey.survey(tmp_path), focus=[])
+    assert result.ok and result.rounds == 2
+    assert result.covers == ["src/**/*.py"]
+    assert any(e.endswith("transcript.txt") for e in result.evidence)
+    assert "recorded no evidence" in provider.prompts[1]  # the failure was fed back for repair
+    assert (tmp_path / ".rung" / "verify" / "FEATURES.md").exists()
+
+
+def test_runtime_draft_gives_up_without_registering(tmp_path: Path) -> None:
+    from rung import runtime, survey
+
+    provider = ScriptedProvider([DRIVE_NO_EVIDENCE] * 2)
+    result = runtime.draft_runtime(provider, tmp_path, survey.survey(tmp_path), focus=[], max_rounds=2)
+    assert not result.ok and result.rounds == 2

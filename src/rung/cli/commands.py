@@ -22,6 +22,7 @@ from rung import (
     prove,
     providers,
     report,
+    runtime,
     survey,
 )
 from rung.checkers.scan import ScanChecker
@@ -377,8 +378,37 @@ def _lean_exe(project: Path) -> str:
     return exes[0].get("name", "") if exes else ""
 
 
+def _draft_runtime(args, cfg: Config, out: Output) -> int:
+    provider = providers.get(cfg.llm)
+    info = survey.survey(cfg.root)
+    check_id = args.id or "runtime"
+    out.line(f"Drafting a runtime verification script with {cfg.llm.provider}; Rung runs it until it proves itself.")
+    result = runtime.draft_runtime(
+        provider, cfg.root, info, focus=args.files, check_id=check_id, intent=args.intent or ""
+    )
+    out.emit({"ok": result.ok, "message": result.message, "rounds": result.rounds, "covers": result.covers,
+              "files": [str(f.relative_to(cfg.root)) for f in result.files], "evidence": result.evidence})  # fmt: skip
+    out.line(f"{'OK' if result.ok else 'FAILED'} after {result.rounds} round(s): {result.message}")
+    for f in result.files:
+        out.detail(f"wrote {f.relative_to(cfg.root)}", indent=2)
+    for e in result.evidence:
+        out.detail(f"evidence {e}", indent=2)
+    if not result.ok:
+        out.line("The last script is kept for you to finish by hand; it is not registered as a check.")
+        return GATE_FAILED
+    run = f"python3 {(runtime.VERIFY_DIR / 'drive.py').as_posix()}"
+    _add_check(cfg, Check(check_id, "evidence", result.covers, {"run": run, "timeout": 600}), out)
+    skill = agents.install_verify_skill(cfg.root, cfg.name, check_id)
+    out.line(f"wrote {skill.relative_to(cfg.root)} so agents verify user-facing changes with `rung check {check_id}`.")
+    return OK
+
+
 def cmd_draft(args, out: Output) -> int:
     cfg = _config(args)
+    if args.kind == "runtime":
+        return _draft_runtime(args, cfg, out)
+    if not args.files:
+        raise ConfigError(f"`rung draft {args.kind}` needs the source files to model")
     provider = providers.get(cfg.llm)
     root = cfg.root
     sources = [(root / p).resolve() for p in args.files]
