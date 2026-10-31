@@ -267,7 +267,7 @@ def _lean_exe(project: Path) -> str:
 
 def cmd_add(args) -> int:
     config = _config(args)
-    _add_check(config, Check(args.id, "command", args.covers or [], {"run": args.run}))
+    _add_check(config, Check(args.id, args.kind, args.covers or [], {"run": args.run}))
     return 0
 
 
@@ -340,6 +340,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("add", help="declare a command (test suite, evidence script) as a check")
     s.add_argument("id")
+    s.add_argument(
+        "--kind",
+        choices=["command", "evidence"],
+        default="command",
+        help="`evidence`: the script must write artifacts to $RUNG_EVIDENCE_DIR",
+    )
     s.add_argument("--run", required=True)
     s.add_argument("--covers", nargs="*")
     s.set_defaults(func=cmd_add)

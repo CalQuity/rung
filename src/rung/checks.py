@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import shlex
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 from rung import ledger
@@ -19,6 +21,7 @@ class Outcome:
     verdict: str
     summary: str
     lines: list[str]
+    evidence: dict[str, str] = field(default_factory=dict)  # artifact path -> sha256
 
 
 def spec_files(check: Check) -> list[str]:
@@ -31,8 +34,6 @@ def spec_files(check: Check) -> list[str]:
     if check.kind == "lean":
         project = check.require("project").rstrip("/")
         return [f"{project}/**/*.lean", f"{project}/lakefile.*", f"{project}/lean-toolchain"]
-    if check.kind == "drt":
-        return list(check.get("specs", []))
     return list(check.get("specs", []))
 
 
@@ -107,7 +108,48 @@ def _run_command(root: Path, check: Check) -> Outcome:
     return Outcome(check, verdict, f"`{command}` exited {proc.returncode}", tail)
 
 
-_RUNNERS = {"tla": _run_tla, "lean": _run_lean, "drt": _run_drt, "command": _run_command}
+def _run_evidence(root: Path, check: Check) -> Outcome:
+    """Run a script that drives the real app and must leave artifacts behind.
+
+    The script gets `RUNG_EVIDENCE_DIR`; anything it writes there (a Playwright
+    video, a terminal transcript, screenshots, response bodies) is hashed into
+    the ledger. A script that exits 0 but records nothing fails: a claim of
+    "it works" without evidence is exactly what this rung exists to reject.
+    """
+    command = check.require("run")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    out_dir = root / ".rung" / "evidence" / check.id / stamp
+    out_dir.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run(
+        shlex.split(command),
+        cwd=root / check.get("cwd", "."),
+        env={**os.environ, "RUNG_EVIDENCE_DIR": str(out_dir)},
+        capture_output=True,
+        text=True,
+        timeout=int(check.get("timeout", 1800)),
+    )
+    (out_dir / "run.log").write_text(proc.stdout + proc.stderr)
+    artifacts = {
+        p.relative_to(root).as_posix(): ledger.file_digest(p)
+        for p in sorted(out_dir.rglob("*"))
+        if p.is_file() and p.name != "run.log"
+    }
+    lines = [f"evidence: {path}" for path in artifacts]
+    if proc.returncode != 0:
+        tail = (proc.stdout + proc.stderr).strip().splitlines()[-10:]
+        return Outcome(check, "fail", f"`{command}` exited {proc.returncode}", lines + tail, artifacts)
+    if not artifacts:
+        return Outcome(check, "fail", "the script exited 0 but recorded no evidence", lines)
+    return Outcome(check, "pass", f"{len(artifacts)} artifact(s) recorded", lines, artifacts)
+
+
+_RUNNERS = {
+    "tla": _run_tla,
+    "lean": _run_lean,
+    "drt": _run_drt,
+    "command": _run_command,
+    "evidence": _run_evidence,
+}
 
 
 def run_check(config: Config, check: Check) -> Outcome:
@@ -129,6 +171,7 @@ def run_check(config: Config, check: Check) -> Outcome:
         covers=covers,
         specs=specs,
         summary=outcome.summary,
+        evidence=[f"{path} sha256:{digest}" for path, digest in outcome.evidence.items()],
         details={"lines": outcome.lines[:60]},
     )
     return outcome

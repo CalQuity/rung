@@ -60,3 +60,24 @@ def test_ledger_command_reports_intact_chain(project: Path, capsys) -> None:
 def test_no_config_is_a_clean_error(tmp_path: Path, capsys) -> None:
     assert run(tmp_path, "status") == 2
     assert "rung init" in capsys.readouterr().err
+
+
+def test_evidence_check_hashes_artifacts_into_the_ledger(project: Path) -> None:
+    script = project / "drive.py"
+    script.write_text(
+        "import os, pathlib\n"
+        "out = pathlib.Path(os.environ['RUNG_EVIDENCE_DIR'])\n"
+        "(out / 'transcript.txt').write_text('$ app --help\\nusage: app\\n')\n"
+    )
+    run(project, "add", "drive", "--kind", "evidence", "--run", f"{sys.executable} drive.py")
+    assert run(project, "check", "drive") == 0
+    entry = ledger.read(project)[-1]
+    assert entry["verdict"] == "pass"
+    assert entry["evidence"][0].startswith(".rung/evidence/drive/")
+    assert "transcript.txt sha256:" in entry["evidence"][0]
+
+
+def test_evidence_check_without_artifacts_fails(project: Path) -> None:
+    run(project, "add", "claims", "--kind", "evidence", "--run", f"{sys.executable} -c 'pass'")
+    assert run(project, "check", "claims") == 1
+    assert "recorded no evidence" in ledger.read(project)[-1]["summary"]

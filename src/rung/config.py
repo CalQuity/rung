@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 CONFIG_NAME = "rung.toml"
-CHECK_KINDS = ("tla", "lean", "drt", "command")
+CHECK_KINDS = ("tla", "lean", "drt", "command", "evidence")
 
 
 class ConfigError(ValueError):

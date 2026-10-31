@@ -9,6 +9,8 @@ build/
 # Rung scratch space; the ledger itself (.rung/ledger.jsonl) is meant to be committed.
 .rung/cache/
 .rung/runs/
+# Evidence artifacts can be large; the ledger keeps their hashes. Upload them from CI.
+.rung/evidence/
 
 # Lean and TLC build output
 .lake/
