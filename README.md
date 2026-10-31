@@ -42,6 +42,7 @@ rung init                     # survey the repo, choose a model provider, log in
 rung skill                    # teach Claude Code / Codex / Cursor the rules
 rung draft tla src/queue.py --intent "a job result always comes from the lease holder"
 rung check                    # run every check, record verdicts
+rung add e2e --kind evidence --run './scripts/drive.sh'   # must write to $RUNG_EVIDENCE_DIR
 rung status --ci              # in CI: fail unless every verdict is fresh
 ```
 
@@ -89,10 +90,11 @@ closes the common shortcuts:
 
 ## Status
 
-Engineering preview. The CLI, ledger, laws and the TLA+, Lean, differential-test
-and command runners work; drafting with a model works for TLA+ and Lean. The
-portal and the runtime-evidence recorder are in progress; see
-[docs/ROADMAP.md](docs/ROADMAP.md).
+Engineering preview (0.1). Working: the CLI, ledger and laws; the TLC, Lean,
+differential-test, command and evidence runners; drafting TLA+ and Lean with a
+model. Next: counterexamples turned into regression tests and videos, trace
+validation, and the portal. See [docs/ROADMAP.md](docs/ROADMAP.md), and
+[docs/DESIGN.md](docs/DESIGN.md) for how and why it works.
 
 ## Credits
 
