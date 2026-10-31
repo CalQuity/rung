@@ -25,6 +25,10 @@ SKIP_DIRS = frozenset({
 })  # fmt: skip
 
 
+# Files Rung itself maintains; a check's own definition is hashed into its verdict instead.
+RUNG_STATE_FILES = frozenset({"rung.toml", "LAWS.md"})
+
+
 class GitError(RungError):
     """A git operation failed or the directory is not a repository."""
 
@@ -133,7 +137,8 @@ def expand(root: Path, patterns: list[str]) -> list[str]:
     """
     if not patterns:
         return []
-    files = list_files(root)
+    # Rung's own state never counts as covered code: writing a verdict must not stale another.
+    files = [f for f in list_files(root) if not f.startswith(".rung/") and f not in RUNG_STATE_FILES]
     out: set[str] = set()
     for pattern in patterns:
         matches = [f for f in files if glob_match(pattern, f)]

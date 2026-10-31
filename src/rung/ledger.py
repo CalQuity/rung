@@ -59,6 +59,7 @@ def append(
     summary: str,
     evidence: list[str] | None = None,
     details: dict[str, Any] | None = None,
+    definition: str = "",
 ) -> dict[str, Any]:
     """Append one verdict to the ledger and return the written entry."""
     if verdict not in ("pass", "fail", "error"):
@@ -73,6 +74,7 @@ def append(
         "commit": gitutil.head(root),
         "covers": covers,
         "specs": specs,
+        "definition": definition,
         "evidence": evidence or [],
         "details": details or {},
         "prev": entries[-1]["hash"] if entries else GENESIS,
@@ -110,8 +112,14 @@ class Status:
         return self.state == "fresh"
 
 
-def status(root: Path, check_id: str, covers: list[str], specs: list[str]) -> Status:
-    """Compare a check's latest verdict with the files as they are now."""
+def definition_hash(kind: str, covers: list[str], options: dict[str, Any]) -> str:
+    """A hash of how a check is declared; editing its options must stale its verdict."""
+    body = json.dumps({"kind": kind, "covers": covers, "options": options}, sort_keys=True, default=str)
+    return hashlib.sha256(body.encode()).hexdigest()[:16]
+
+
+def status(root: Path, check_id: str, covers: list[str], specs: list[str], definition: str = "") -> Status:
+    """Compare a check's latest verdict with the files, and its declaration, as they are now."""
     latest = next((e for e in reversed(read(root)) if e["check"] == check_id), None)
     if latest is None:
         return Status(check_id, "never", None, [])
@@ -120,4 +128,6 @@ def status(root: Path, check_id: str, covers: list[str], specs: list[str]) -> St
     now = snapshot(root, covers) | snapshot(root, specs)
     then = latest["covers"] | latest["specs"]
     changed = sorted(p for p in set(now) | set(then) if now.get(p) != then.get(p))
+    if definition and latest.get("definition", definition) != definition:
+        changed.append("(the check's definition in rung.toml)")
     return Status(check_id, "stale" if changed else "fresh", latest, changed)

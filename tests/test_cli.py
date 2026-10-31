@@ -81,3 +81,28 @@ def test_evidence_check_without_artifacts_fails(project: Path) -> None:
     run(project, "add", "evidence", "claims", "--run", f"{sys.executable} -c 'pass'")
     assert run(project, "check", "claims") == 1
     assert "recorded no evidence" in ledger.read(project)[-1]["summary"]
+
+
+def test_editing_a_check_stales_only_that_check(project: Path) -> None:
+    run(project, "add", "command", "other", "--run", f"{sys.executable} -c 'pass'")
+    run(project, "check")
+    text = (
+        (project / "rung.toml")
+        .read_text()
+        .replace('-c \'pass\'"\ncovers = ["src/*.py"]', '-c \'pass\' "\ncovers = ["src/*.py"]', 1)
+    )
+    (project / "rung.toml").write_text(text)
+    from rung import checks, config
+
+    cfg = config.load(project)
+    states = {s.check_id: s.state for s in checks.statuses(cfg)}
+    assert states == {"unit": "stale", "other": "fresh"}
+
+
+def test_writing_verdicts_never_stales_a_whole_repo_check(project: Path) -> None:
+    run(project, "add", "command", "everything", "--run", f"{sys.executable} -c 'pass'", "--covers", "**/*")
+    run(project, "check")
+    from rung import checks, config
+
+    cfg = config.load(project)
+    assert all(s.state == "fresh" for s in checks.statuses(cfg))

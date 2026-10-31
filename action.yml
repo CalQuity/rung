@@ -1,0 +1,86 @@
+name: Rung
+description: Run Rung checks on a pull request, gate on what it introduces, and post one sticky report comment.
+branding:
+  icon: check-square
+  color: green
+
+inputs:
+  checks:
+    description: Space-separated check ids to run (default all checks touched by the change).
+    default: ""
+  comment:
+    description: Post or update a pull request comment with the report.
+    default: "true"
+  package:
+    description: What to install with `uv tool install` (a version spec, or a path).
+    default: rung
+  working-directory:
+    description: Directory containing rung.toml.
+    default: "."
+
+outputs:
+  passed:
+    description: '"true" when every selected check passed.'
+    value: ${{ steps.check.outputs.passed }}
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+    - name: Install Rung
+      shell: bash
+      env:
+        PACKAGE: ${{ inputs.package }}
+      run: uv tool install "$PACKAGE"
+
+    - name: Run checks
+      id: check
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        BASE_REF: ${{ github.base_ref }}
+        CHECKS: ${{ inputs.checks }}
+      run: |
+        set +e
+        args=()
+        if [ -n "$BASE_REF" ]; then
+          git fetch --no-tags --depth=1 origin "$BASE_REF" || true
+          args+=(--changed --base "origin/$BASE_REF")
+        fi
+        # shellcheck disable=SC2086 # CHECKS is a space-separated list of ids
+        rung check $CHECKS "${args[@]}"
+        code=$?
+        if [ "$code" -eq 0 ]; then echo "passed=true" >> "$GITHUB_OUTPUT"; else echo "passed=false" >> "$GITHUB_OUTPUT"; fi
+        echo "code=$code" >> "$GITHUB_OUTPUT"
+
+    - name: Write report
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        rung report > "$RUNNER_TEMP/rung-report.md"
+        cat "$RUNNER_TEMP/rung-report.md" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Post or update the pull request comment
+      if: inputs.comment == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+        PR: ${{ github.event.pull_request.number }}
+      run: |
+        existing=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+          --jq '.[] | select(.body | startswith("<!-- rung-report -->")) | .id' | head -n 1)
+        if [ -n "$existing" ]; then
+          gh api -X PATCH "repos/$REPO/issues/comments/$existing" -F "body=@$RUNNER_TEMP/rung-report.md" > /dev/null
+        else
+          gh pr comment "$PR" --repo "$REPO" --body-file "$RUNNER_TEMP/rung-report.md"
+        fi
+
+    - name: Gate
+      if: steps.check.outputs.passed != 'true'
+      shell: bash
+      env:
+        CODE: ${{ steps.check.outputs.code }}
+      run: |
+        echo "Rung checks failed (exit $CODE). See the report above."
+        exit 1

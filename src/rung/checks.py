@@ -31,6 +31,10 @@ def specs(check: Check) -> list[str]:
     return checkers.get(check.kind).specs(check)
 
 
+def definition(check: Check) -> str:
+    return ledger.definition_hash(check.kind, check.covers, check.options)
+
+
 def touched_by(check: Check, changed: set[str]) -> bool:
     """Does a change to `changed` files affect this check? Checks covering nothing always run."""
     patterns = covers(check) + specs(check)
@@ -68,6 +72,7 @@ def run_check(config: Config, check: Check, *, base: str | None = None) -> Resul
         specs=before[1],
         summary=outcome.summary,
         evidence=[f"{path} sha256:{digest}" for path, digest in outcome.evidence.items()],
+        definition=definition(check),
         details={
             "lines": outcome.lines[:60],
             "base": base or "",
@@ -78,7 +83,7 @@ def run_check(config: Config, check: Check, *, base: str | None = None) -> Resul
 
 
 def status(config: Config, check: Check) -> ledger.Status:
-    return ledger.status(config.root, check.id, covers(check), specs(check))
+    return ledger.status(config.root, check.id, covers(check), specs(check), definition(check))
 
 
 def statuses(config: Config) -> list[ledger.Status]:

@@ -1,0 +1,44 @@
+# Rung verifies itself with the same checks it recommends to others.
+[project]
+name = "rung"
+
+[llm]
+provider = "none"
+
+[[check]]
+id = "tests"
+kind = "command"
+run = "uv run pytest -q"
+covers = ["src/**", "tests/**", "examples/**", "pyproject.toml"]
+
+[[check]]
+id = "lint"
+kind = "command"
+run = "uv run ruff check ."
+covers = ["src/**/*.py", "tests/**/*.py", "pyproject.toml"]
+
+[[check]]
+id = "format"
+kind = "command"
+run = "uv run ruff format --check ."
+covers = ["src/**/*.py", "tests/**/*.py", "pyproject.toml"]
+
+[[check]]
+id = "secrets"
+kind = "scan"
+tool = "gitleaks"
+
+[[check]]
+id = "vulnerable-deps"
+kind = "scan"
+tool = "osv-scanner"
+
+[[check]]
+id = "workflows"
+kind = "scan"
+tool = "zizmor"
+
+[[check]]
+id = "deps"
+kind = "deps"
+min_age_days = 30
