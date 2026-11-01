@@ -137,8 +137,12 @@ def expand(root: Path, patterns: list[str]) -> list[str]:
     """
     if not patterns:
         return []
-    # Rung's own state never counts as covered code: writing a verdict must not stale another.
-    files = [f for f in list_files(root) if not f.startswith(".rung/") and f not in RUNG_STATE_FILES]
+    # Rung's own state and build output never count as covered code: writing a verdict or building a
+    # Lean model must not stale another verdict, even where the repository does not ignore them.
+    files = [
+        f for f in list_files(root)
+        if not f.startswith(".rung/") and f not in RUNG_STATE_FILES and not SKIP_DIRS.intersection(f.split("/"))
+    ]  # fmt: skip
     out: set[str] = set()
     for pattern in patterns:
         matches = [f for f in files if glob_match(pattern, f)]

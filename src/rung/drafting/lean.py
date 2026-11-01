@@ -56,6 +56,7 @@ def draft(
             prompt += "\n\nYour reply was missing Main.lean, lakefile.toml or drt_adapter.py."
             continue
         produced["lean-toolchain"] = toolchain + "\n"  # never the model's choice
+        produced[".gitignore"] = ".lake/\n"  # build output must never be committed or stale a verdict
         files = safe_write(out_dir, produced)
         theorems = [t.strip() for t in reply["theorems"] if t.strip()]
         alphabet = [str(a).strip() for a in reply["alphabet"] if str(a).strip()]

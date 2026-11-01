@@ -117,3 +117,16 @@ def test_a_failing_check_shows_its_stderr_too(project: Path) -> None:
     assert run(project, "check", "noisy") == 1
     lines = ledger.read(project)[-1]["details"]["lines"]
     assert lines[0] == "step 1 ok" and lines[-1] == "expected version 1.0, got none"
+
+
+def test_build_output_never_stales_a_whole_repo_check(project: Path) -> None:
+    run(project, "add", "command", "everything", "--run", f"{sys.executable} -c 'pass'", "--covers", "**/*")
+    run(project, "check", "everything")
+    build = project / "spec" / "lean" / ".lake" / "build"
+    build.mkdir(parents=True)
+    (build / "model").write_text("binary")
+    from rung.checks import runner
+    from rung.core import config
+
+    cfg = config.load(project)
+    assert runner.status(cfg, cfg.check("everything")).state == "fresh"
