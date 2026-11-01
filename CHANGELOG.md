@@ -3,7 +3,7 @@
 All notable changes to Rung. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 
-## 0.1.2 (unreleased)
+## 0.1.2 (2026-11-01)
 
 The first release on PyPI, as `rung-cli`.
 
