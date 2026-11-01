@@ -44,6 +44,11 @@ def _scanner_rec(tool: str, check_id: str, why: str) -> Recommendation:
     return Recommendation("security", f"Scan for {preset.purpose}", why, effort="low", command=command)
 
 
+def static_check_id(project_path: str, kind: str) -> str:
+    """`typecheck` at the root, `frontend-typecheck` for a sub-project."""
+    return kind if project_path == "." else f"{project_path.replace('/', '-')}-{kind}"
+
+
 def plan(info: Inspection, existing: set[str] | None = None) -> list[Recommendation]:
     """Recommendations for a surveyed repository, skipping check ids that already exist."""
     existing = existing or set()
@@ -71,6 +76,27 @@ def plan(info: Inspection, existing: set[str] | None = None) -> list[Recommendat
             "Agents often write regression tests that pass with or without the fix. `rung prove` runs the "
             "branch's new tests on the merge base, where they must fail, and on the branch, where they must pass.",
             command=f"rung prove{cwd} '{first.test_command}'",
+        ))  # fmt: skip
+
+    for project in info.projects:
+        for kind, command in project.static:
+            name = static_check_id(project.path, kind)
+            if name in existing:
+                continue
+            cwd = "" if project.path == "." else f" --cwd {project.path} --covers '{project.path}/**'"
+            recs.append(Recommendation(
+                "architecture", f"Record {command!r} as a check",
+                "The project already configures it; recorded as a check, an agent cannot finish with it failing, "
+                "and the `shortcuts` check stops it being silenced.",
+                command=f"rung add command {name}{cwd} --run '{command}'",
+            ))  # fmt: skip
+    if "shortcuts" not in existing:
+        recs.append(Recommendation(
+            "tests", "Block the shortcuts agents take to get to green",
+            "New `@ts-ignore`, `# type: ignore`, `as any`, lint disables, skipped or focused tests, deleted tests, "
+            "lowered coverage thresholds and relaxed type-checker settings block; existing ones do not. No tool "
+            "to install.",
+            command="rung add shortcuts shortcuts",
         ))  # fmt: skip
 
     if "secrets" not in existing:

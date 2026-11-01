@@ -6,7 +6,7 @@ import re
 from datetime import date, timedelta
 from pathlib import Path
 
-from rung.checks import findings, runner
+from rung.checks import findings, registry, runner
 from rung.checks.presets import PRESETS
 from rung.checks.scan import ScanChecker
 from rung.cli.commands.common import OK, add_check, load_config
@@ -68,9 +68,11 @@ def cmd_add(args, out: Output) -> int:
 def cmd_baseline(args, out: Output) -> int:
     cfg = load_config(args)
     check = cfg.check(args.check)
-    if check.kind != "scan":
-        raise ConfigError("baselines apply to `scan` checks")
-    found = ScanChecker().collect(cfg.root, check, check.get_int("timeout", 900))
+    if check.kind not in ("scan", "shortcuts"):
+        raise ConfigError("baselines apply to `scan` and `shortcuts` checks")
+    checker = registry.get(check.kind)
+    assert isinstance(checker, ScanChecker)
+    found = checker.collect(cfg.root, check, check.get_int("timeout", 900))
     path = findings.save_baseline(cfg.root, check.id, found, git.head(cfg.root))
     out.emit({"check": check.id, "findings": len(found), "path": str(path.relative_to(cfg.root))})
     out.line(f"Recorded {len(found)} existing finding(s) for {check.id!r} as accepted ({path.relative_to(cfg.root)}).")

@@ -24,6 +24,13 @@ The first release on PyPI, as `rung-cli`.
 - The GitHub Action lists pull request edits to policy files (rung.toml, LAWS.md, waivers,
   baselines, scanner configs); `policy-changes: fail` fails the gate on them.
 - A pre-commit hook (`.pre-commit-hooks.yaml`).
+- A `shortcuts` check that blocks new type-checker silencers (`@ts-ignore`, `# type: ignore`,
+  `as any`), lint disables, skipped, focused and deleted tests, lowered coverage thresholds and
+  relaxed type-checker settings. `rung init` adds it, plus the type checkers and linters the
+  project already configures.
+- `rung draft property`: Hypothesis or fast-check properties for a law, kept only when they pass
+  on the real code and catch deliberate one-token bugs in it.
+- Drafted checks record the model that actually answered (`drafted_by`).
 - Attested evidence: an `evidence` check without `run` takes recordings an agent made with its own
   browser or computer-use tool (Claude in Chrome, Codex, computer use), or a person made by hand,
   through `rung attest <check> <files> --by <tool> --note ...`. The verdict holds until a covered

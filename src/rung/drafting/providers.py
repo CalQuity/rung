@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import tomllib
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -76,6 +77,11 @@ class Provider:
 
     def __init__(self, config: LLMConfig) -> None:
         self.config = config
+        self.models_used: set[str] = set()  # the models that actually answered, as each tool reports them
+
+    def models(self) -> str:
+        """The models that answered so far, else the configured one, else "default"."""
+        return ", ".join(sorted(self.models_used)) or self.config.model or "default"
 
     def available(self) -> bool:
         return False
@@ -137,6 +143,7 @@ class ClaudeCLI(Provider):
             ) from exc
         if envelope.get("is_error"):
             raise ProviderError(f"claude reported an error: {str(envelope.get('result'))[:500]}")
+        self.models_used.update(envelope.get("modelUsage") or {})
         result = envelope.get("structured_output")
         if result is None:
             raise ProviderError("claude returned no structured output")
@@ -182,8 +189,22 @@ class CodexCLI(Provider):
                 result = json.loads(out.read_text())
             except (OSError, json.JSONDecodeError) as exc:
                 raise ProviderError("codex did not return the requested JSON") from exc
+        if model := self.config.model or _codex_default_model():
+            self.models_used.add(model)
         check_shape(result, schema)
         return result
+
+
+def _codex_default_model() -> str:
+    """The model `codex exec` uses without `-m`, from its config (with the reasoning effort, if set)."""
+    path = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "config.toml"
+    try:
+        config = tomllib.loads(path.read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return ""
+    model = str(config.get("model") or "")
+    effort = config.get("model_reasoning_effort")
+    return f"{model} ({effort} effort)" if model and effort else model
 
 
 class OpenAICompatible(Provider):
@@ -239,6 +260,8 @@ class OpenAICompatible(Provider):
             payload = self._post(body, timeout)
         except urllib.error.URLError as exc:
             raise ProviderError(f"cannot reach {self.config.base_url}: {exc.reason}") from exc
+        if payload.get("model"):
+            self.models_used.add(str(payload["model"]))
         content = payload["choices"][0]["message"]["content"]
         match = re.search(r"\{[\s\S]*\}", content)
         try:

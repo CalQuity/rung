@@ -75,6 +75,19 @@ def cmd_init(args, out: Output) -> int:
             covers = [] if project.path == "." else [f"{project.path}/**"]
             cfg.checks.append(Check(check_id, "command", covers, options))
             added.append(check_id)
+        # The type checkers and linters the project already configures, and the shortcuts that silence them.
+        for project in info.projects:
+            for kind, command in project.static:
+                check_id = plan.static_check_id(project.path, kind)
+                if any(c.id == check_id for c in cfg.checks):
+                    continue
+                options = {"run": command} | ({} if project.path == "." else {"cwd": project.path})
+                covers = [] if project.path == "." else [f"{project.path}/**"]
+                cfg.checks.append(Check(check_id, "command", covers, options))
+                added.append(check_id)
+        if info.languages:
+            cfg.checks.append(Check("shortcuts", "shortcuts", [], {}))
+            added.append("shortcuts")
 
     save(cfg)
     (root / ".rung").mkdir(exist_ok=True)
