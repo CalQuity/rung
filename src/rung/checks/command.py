@@ -13,13 +13,18 @@ from rung.core.config import Check
 
 
 def tail(proc: subprocess.CompletedProcess[str], lines: int = 15) -> list[str]:
-    """The end of stdout, where test runners and linters print their verdict.
+    """The end of the output, where test runners and scripts print their verdict.
 
-    Stderr is used only when stdout is empty: tools like `uv run` write build
-    chatter to stderr, which would otherwise push the actual failure out of view.
+    A passing run shows the end of stdout (stderr only if stdout is empty), because tools like
+    `uv run` write build chatter to stderr. A failing run shows the end of both: a script that
+    prints progress to stdout usually reports the actual failure on stderr.
     """
-    text = proc.stdout.strip() or proc.stderr.strip()
-    return text.splitlines()[-lines:]
+    out, err = proc.stdout.strip().splitlines(), proc.stderr.strip().splitlines()
+    if proc.returncode == 0 or not err:
+        return (out or err)[-lines:]
+    if not out:
+        return err[-lines:]
+    return [*out[-(lines - 6) :], "stderr:", *err[-5:]]
 
 
 def _run(ctx: Context, check: Check, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:

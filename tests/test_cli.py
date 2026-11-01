@@ -109,3 +109,11 @@ def test_writing_verdicts_never_stales_a_whole_repo_check(project: Path) -> None
 
     cfg = config.load(project)
     assert all(s.state == "fresh" for s in runner.statuses(cfg))
+
+
+def test_a_failing_check_shows_its_stderr_too(project: Path) -> None:
+    script = "import sys; print('step 1 ok'); sys.exit('expected version 1.0, got none')"
+    run(project, "add", "command", "noisy", "--run", f'{sys.executable} -c "{script}"')
+    assert run(project, "check", "noisy") == 1
+    lines = ledger.read(project)[-1]["details"]["lines"]
+    assert lines[0] == "step 1 ok" and lines[-1] == "expected version 1.0, got none"
