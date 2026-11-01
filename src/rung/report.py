@@ -23,6 +23,7 @@ def build(config: Config) -> dict[str, Any]:
 
     rows = []
     new_findings = []
+    below_threshold = 0
     for check in config.checks:
         s = statuses[check.id]
         latest = s.entry or {}
@@ -37,6 +38,8 @@ def build(config: Config) -> dict[str, Any]:
         for f in (latest.get("details") or {}).get("findings", []):
             if f.get("status") == "new":
                 new_findings.append({"check": check.id, **f})
+            elif f.get("status") == "new-below-threshold":
+                below_threshold += 1
 
     law_rows = []
     for law in laws.load(config.root):
@@ -69,6 +72,7 @@ def build(config: Config) -> dict[str, Any]:
             "laws_held": held,
             "laws_approved": approved,
             "new_findings": len(new_findings),
+            "new_below_threshold": below_threshold,
         },
     }
 
@@ -81,7 +85,8 @@ def markdown(data: dict[str, Any]) -> str:
         "",
         f"**{s['checks_fresh']}/{s['checks_total']}** checks fresh · "
         f"**{s['laws_held']}/{s['laws_approved']}** approved laws held · "
-        f"**{s['new_findings']}** new findings",
+        f"**{s['new_findings']}** new blocking findings"
+        + (f" ({s['new_below_threshold']} more below the blocking level)" if s["new_below_threshold"] else ""),
         "",
     ]
     if not data["ledger_intact"]:
@@ -102,7 +107,7 @@ def markdown(data: dict[str, Any]) -> str:
     out.append("")
 
     if data["new_findings"]:
-        out += ["<details><summary>New findings</summary>", ""]
+        out += ["<details><summary>New blocking findings</summary>", ""]
         for f in data["new_findings"][:50]:
             where = f"{f['path']}:{f['line']}" if f.get("line") else f.get("path", "")
             out.append(f"- **{f['level']}** `{f['rule']}` in `{where}` ({f['check']}): {f.get('message', '')[:200]}")

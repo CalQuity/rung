@@ -113,7 +113,8 @@ class ScanChecker(Checker):
         for w in t.expired:
             lines.append(f"EXPIRED waiver {w.fingerprint} ({w.reason}), expired {w.expires}")
 
-        records = [f.to_dict() | {"status": "new"} for f in t.blocking + t.nonblocking]
+        records = [f.to_dict() | {"status": "new"} for f in t.blocking]
+        records += [f.to_dict() | {"status": "new-below-threshold"} for f in t.nonblocking]
         records += [f.to_dict() | {"status": "waived"} for f in t.waived]
         if t.blocking:
             return Outcome("fail", f"{len(t.blocking)} new finding(s) at or above `{self.fail_on(check)}`",

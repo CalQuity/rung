@@ -57,7 +57,7 @@ def test_report_markdown_summarizes_checks_and_laws(repo: Path) -> None:
     checks.run_check(cfg, cfg.check("unit"))
     data = report.build(cfg)
     assert data["summary"] == {"checks_fresh": 1, "checks_total": 1, "laws_held": 1, "laws_approved": 1,
-                               "new_findings": 0}  # fmt: skip
+                               "new_findings": 0, "new_below_threshold": 0}  # fmt: skip
     md = report.markdown(data)
     assert md.startswith(report.COMMENT_MARKER)
     assert "Core works." in md and "`unit`" in md
