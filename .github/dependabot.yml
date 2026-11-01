@@ -1,0 +1,19 @@
+version: 2
+updates:
+  # A cooldown keeps brand-new releases out until they have been public for a week,
+  # the same rule `rung check` applies to newly added dependencies.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
