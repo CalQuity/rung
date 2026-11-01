@@ -104,6 +104,30 @@ A refund never exceeds the original charge, even under concurrent retries.
 `rung laws` shows whether each law currently **holds**: approved, enforced, and every enforcing
 verdict fresh. Agents may propose laws; only people approve them.
 
+## A verification kit for your running app
+
+`rung draft runtime --intent "apply a coupon at checkout and see the total update"` gives your
+project a verification kit, written by the model and registered as a check only once it has worked
+against the real app:
+
+- **`.rung/verify/drive.py`**, a script that starts the app on a free port, drives a feature the way
+  a user does (Playwright for web UIs, HTTP or CLI calls otherwise) and asserts on what a user would
+  see. It never calls internal functions or test-only endpoints.
+- **`.rung/verify/FEATURES.md`**, a feature map: for each user-facing feature, how a user reaches it,
+  how the script drives it, what observable state proves it works, and the gotchas (seed data,
+  logins, flaky spots).
+- **A project verification skill** (`.claude/skills/verify-<project>/`) that tells the project's
+  coding agents to drive the app after any user-facing change, extend the script and feature map
+  when they add a feature, and treat a failure as a product bug rather than weaken the script.
+- **Recordings.** Every run writes its evidence to a fresh directory: a video of the browser session
+  (`--require .webm` demands one), screenshots, request and response logs, a transcript and a
+  structured `result.json`. Their hashes go into the verdict, which stays valid only while the code
+  it covers is unchanged.
+
+Where a script cannot reach a feature (a login flow, a native app), an agent can drive it with its
+own browser or computer-use tool and record it with `rung attest <check> <files> --by <tool>`. Such
+evidence is recorded with who captured it and is never re-run, so it is weaker than a script.
+
 ## Property tests that are tested themselves
 
 `rung draft property pricing.py --intent "a total is never negative and equals the discounted sum"`
