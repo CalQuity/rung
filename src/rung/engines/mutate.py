@@ -8,6 +8,9 @@ lines, never inside strings or comments), so every mutant is a plausible one-tok
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import re
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -105,14 +108,56 @@ def mutants(path: Path, limit: int = 12, lines: set[int] | None = None) -> list[
 
 
 @contextmanager
-def applied(mutant: Mutant) -> Iterator[None]:
-    """Write the mutant into its file for the duration of the block, and always restore the original."""
+def applied(mutant: Mutant, backup_dir: Path | None = None) -> Iterator[None]:
+    """Write the mutant into its file for the duration of the block, and always restore the original.
+
+    With `backup_dir`, the original is saved there first, so a process killed mid-mutant (where no
+    `finally` runs) leaves something `recover` can put back.
+    """
     original = mutant.path.read_bytes()
+    backup = None
+    if backup_dir is not None:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup = backup_dir / (hashlib.sha256(str(mutant.path).encode()).hexdigest()[:16] + ".json")
+        payload = {"path": str(mutant.path), "original": base64.b64encode(original).decode()}
+        write_atomic(backup, json.dumps(payload))
     lines = original.decode().splitlines(keepends=True)
     current = lines[mutant.line - 1]
     lines[mutant.line - 1] = mutant.mutated + current[len(current.rstrip("\r\n")) :]
+    _drop_bytecode(mutant.path)
     write_atomic(mutant.path, "".join(lines))
     try:
         yield
     finally:
         mutant.path.write_bytes(original)
+        _drop_bytecode(mutant.path)
+        if backup is not None:
+            backup.unlink(missing_ok=True)
+
+
+def _drop_bytecode(source: Path) -> None:
+    """Delete cached bytecode for `source`.
+
+    Python trusts a `.pyc` whose recorded mtime (whole seconds) and size match the source, so a mutant
+    and the original written within the same second at the same size would otherwise share bytecode,
+    and the "real" code would run as the mutant.
+    """
+    if source.suffix == ".py":
+        for pyc in (source.parent / "__pycache__").glob(f"{source.stem}.*.pyc"):
+            pyc.unlink(missing_ok=True)
+
+
+def recover(backup_dir: Path) -> list[Path]:
+    """Restore every source file a killed run left mutated; returns the files restored."""
+    restored = []
+    for backup in sorted(backup_dir.glob("*.json")) if backup_dir.is_dir() else []:
+        try:
+            payload = json.loads(backup.read_text())
+            target = Path(payload["path"])
+            target.write_bytes(base64.b64decode(payload["original"]))
+            _drop_bytecode(target)
+        except (OSError, ValueError, KeyError):
+            continue  # an unreadable backup is kept for a person to look at
+        backup.unlink()
+        restored.append(target)
+    return restored

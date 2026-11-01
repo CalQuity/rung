@@ -97,3 +97,16 @@ def test_a_property_that_fails_on_the_real_code_is_a_finding(pricing: Path) -> N
     result, _ = property_draft.draft(provider, pricing, [pricing / "pricing.py"], "pricing")
     assert result.ok and "test case" in result.trace.lower()
     assert result.rounds == 1  # never sent back to the model to make the failure go away
+
+
+def test_a_draft_killed_mid_mutant_is_repaired_on_the_next_run(pricing: Path) -> None:
+    from rung.core.errors import RungError
+
+    src = pricing / "pricing.py"
+    (mutant, *_) = mutate.mutants(src)
+    context = mutate.applied(mutant, property_draft.backup_dir(pricing))
+    context.__enter__()  # the process dies here: no __exit__, the mutant stays in the file
+    assert src.read_text() != PRICING
+    with pytest.raises(RungError, match=r"restored pricing\.py"):
+        property_draft.draft(ScriptedProvider([]), pricing, [src], "pricing")
+    assert src.read_text() == PRICING
