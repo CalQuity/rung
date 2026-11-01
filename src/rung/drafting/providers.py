@@ -189,8 +189,9 @@ class CodexCLI(Provider):
                 result = json.loads(out.read_text())
             except (OSError, json.JSONDecodeError) as exc:
                 raise ProviderError("codex did not return the requested JSON") from exc
+        # Codex does not report which model answered; record what was requested, and say so.
         if model := self.config.model or _codex_default_model():
-            self.models_used.add(model)
+            self.models_used.add(f"{model}, as configured")
         check_shape(result, schema)
         return result
 

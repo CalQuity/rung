@@ -29,8 +29,10 @@ The first release on PyPI, as `rung-cli`.
   relaxed type-checker settings. `rung init` adds it, plus the type checkers and linters the
   project already configures.
 - `rung draft property`: Hypothesis or fast-check properties for a law, kept only when they pass
-  on the real code and catch deliberate one-token bugs in it.
-- Drafted checks record the model that actually answered (`drafted_by`).
+  on the real code and catch at least half of the deliberate one-token bugs planted in a disposable
+  copy of the project (under pytest, Vitest, Jest or `node --test`).
+- Drafted checks record the model: the one Claude Code reports having used, or Codex's configured
+  model, marked as such (`drafted_by`).
 - Attested evidence: an `evidence` check without `run` takes recordings an agent made with its own
   browser or computer-use tool (Claude in Chrome, Codex, computer use), or a person made by hand,
   through `rung attest <check> <files> --by <tool> --note ...`. The verdict holds until a covered

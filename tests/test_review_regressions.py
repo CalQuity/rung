@@ -441,3 +441,38 @@ def test_zero_byte_artifacts_are_not_evidence(repo: Path) -> None:
     cfg = _toml(repo, f'[[check]]\nid = "drive"\nkind = "evidence"\nrun = "{PY} -c \\"{script}\\""\n')
     result = runner.run_check(cfg, cfg.check("drive"))
     assert result.verdict == "fail" and "no evidence" in result.outcome.summary
+
+
+def test_r3_setup_finds_both_type_checkers_and_skips_solution_tsconfigs(tmp_path: Path) -> None:
+    from rung.analysis import survey
+
+    (tmp_path / "mypy.ini").write_text("[mypy]\n")
+    (tmp_path / "pyrightconfig.json").write_text("{}\n")
+    web = tmp_path / "web"
+    web.mkdir()
+    (web / "package.json").write_text('{"devDependencies": {"typescript": "5", "eslint": "9"}}')
+    (web / "tsconfig.json").write_text('{"files": [], "references": [{"path": "./app"}]}')
+    (web / "eslint.config.mjs").write_text("export default []\n")
+    info = survey.survey(tmp_path)
+    by_path = {p.path: p for p in info.projects}
+    assert [k for k, _ in by_path["."].static] == ["typecheck", "mypy"]
+    assert [k for k, _ in by_path["web"].static] == ["lint"]
+    assert by_path["web"].unrecorded
+
+
+def test_r3_a_command_that_would_not_load_is_never_saved(tmp_path: Path) -> None:
+    from rung.core.config import Check, Config, ConfigError, LLMConfig, save
+
+    cfg = Config(tmp_path, "t", LLMConfig(), [Check("tests", "command", [], {"run": "true", "require": [".png"]})])
+    with pytest.raises(ConfigError, match="unknown option `require`"):
+        save(cfg)
+    assert not (tmp_path / "rung.toml").exists()
+
+
+def test_r3_quoted_punctuation_is_not_shell_syntax() -> None:
+    from rung.core.config import ConfigError, check_command, safe_id
+
+    check_command("t", "run", 'node -e "console.log(1);"')
+    with pytest.raises(ConfigError):
+        check_command("t", "run", "npm test; echo done")
+    assert safe_id("apps/web app-lint") == "apps-web-app-lint"

@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 
 from rung.analysis.survey import Inspection
 from rung.checks.presets import PRESETS
+from rung.core.config import safe_id
 
 LADDER = (
     ("tests", "Record the test suite as evidence; prove that each bug fix's test catches the bug."),
@@ -46,7 +47,7 @@ def _scanner_rec(tool: str, check_id: str, why: str) -> Recommendation:
 
 def static_check_id(project_path: str, kind: str) -> str:
     """`typecheck` at the root, `frontend-typecheck` for a sub-project."""
-    return kind if project_path == "." else f"{project_path.replace('/', '-')}-{kind}"
+    return kind if project_path == "." else safe_id(f"{project_path.replace('/', '-')}-{kind}")
 
 
 def plan(info: Inspection, existing: set[str] | None = None) -> list[Recommendation]:
@@ -57,7 +58,7 @@ def plan(info: Inspection, existing: set[str] | None = None) -> list[Recommendat
 
     tested = [p for p in info.projects if p.test_command]
     for project in tested:
-        name = "tests" if project.path == "." else f"{project.path.replace('/', '-')}-tests"
+        name = static_check_id(project.path, "tests")
         if name in existing:
             continue
         label = "the" if project.path == "." else f"the {project.path}"
@@ -89,6 +90,12 @@ def plan(info: Inspection, existing: set[str] | None = None) -> list[Recommendat
                 "The project already configures it; recorded as a check, an agent cannot finish with it failing, "
                 "and the `shortcuts` check stops it being silenced.",
                 command=f"rung add command {name}{cwd} --run '{command}'",
+            ))  # fmt: skip
+        where = "" if project.path == "." else f" in {project.path}"
+        for tool in project.unrecorded:
+            recs.append(Recommendation(
+                "architecture", f"Record a check for {tool.split(' ', 1)[0]}{where} by hand",
+                f"Configured but not recorded automatically: {tool}.",
             ))  # fmt: skip
     if "shortcuts" not in existing:
         recs.append(Recommendation(

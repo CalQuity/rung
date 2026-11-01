@@ -1,21 +1,21 @@
 {
- "at": "2026-11-01T08:28:28+00:00",
+ "at": "2026-11-01T09:41:56+00:00",
  "check": "shortcuts",
- "commit": "b5a987022addeee73093e987d13eea723640a07e",
+ "commit": "1e7c4e2435d82e5abccde7e65db4065d1f60607d",
  "context": "",
  "definition": "00f78a9c42745e01",
  "details": {
   "base": "",
   "findings": [],
   "lines": [
-   "1 shortcut(s) in the code; compared with merge base ef8af2676a with the default branch: 0 new blocking, 0 waived, 1 removed"
+   "1 shortcut(s) in the code; compared with merge base fa91a339e2: 0 new blocking, 0 waived, 0 removed"
   ]
  },
  "evidence": [],
- "hash": "c0a4b6d2144c2dafa510ba87235ea7e7c7784e3879f3948b67920fd684bdd4a3",
+ "hash": "96b0454d85cb307666f98958589d6e6dcaa74d4b7fd6581018bcad972114082f",
  "inputs": {
-  "digest": "497f5904f8b5a117ac2e723cbffbfc64ec95576382eff7012ea5be1a663ac1e7",
-  "files": 129
+  "digest": "0116365954f22be454a919d70230ea80613fba74387e638e89f73c4d4e513799",
+  "files": 131
  },
  "kind": "shortcuts",
  "summary": "no new shortcuts",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -63,6 +64,12 @@ def test_mutants_change_one_token_and_never_strings_or_comments(tmp_path: Path) 
     assert found == {"x = a <= b  # a < b", "z = p or q"}
 
 
+def test_generics_and_arrows_are_never_mutated(tmp_path: Path) -> None:
+    src = tmp_path / "g.ts"
+    src.write_text("const id = <T>(v: T): Array<T> => [v]\nconst ok = a < b\n")
+    assert {m.mutated for m in mutate.mutants(src)} == {"const ok = a <= b"}
+
+
 def test_an_applied_mutant_is_always_restored(tmp_path: Path) -> None:
     src = tmp_path / "m.py"
     src.write_text("x = a < b\r\n")
@@ -74,13 +81,20 @@ def test_an_applied_mutant_is_always_restored(tmp_path: Path) -> None:
 
 
 def test_classify_separates_findings_from_broken_tests() -> None:
-    assert property_draft.classify(0, "1 passed") == "pass"
-    assert property_draft.classify(1, "Falsifying example: test_x(n=0)") == "finding"
-    assert property_draft.classify(1, "Failing test case: test_x(n=0)\nAssertionError") == "finding"
-    assert property_draft.classify(1, "Failing test case: test_x(n=0)\nNameError: name 'totl'") == "error"
-    assert property_draft.classify(5, "no tests ran") == "error"
-    assert property_draft.classify(0, "\u2139 tests 0\n\u2139 pass 0") == "error"  # node --test found nothing
-    assert property_draft.classify(1, "Error: Property failed after 3 tests\n{ seed: 1 }") == "finding"
+    src, test = ["pricing.py"], "test_p.py"
+    c = property_draft.classify
+    assert c(0, "1 passed in 0.1s", src, test) == "pass"
+    assert c(0, "1 skipped in 0.1s", src, test) == "error"  # nothing ran
+    assert c(0, "\u2139 tests 0\n\u2139 pass 0", src, test) == "error"
+    assert c(1, "Falsifying example: test_x(n=0)\ntest_p.py:9: AssertionError", src, test) == "finding"
+    # A NameError raised in the code under test is a bug in the code, not a broken test.
+    assert c(1, "Failing test case: test_x(n=0)\npricing.py:3: NameError", src, test) == "finding"
+    assert c(1, "Failing test case: test_x(n=0)\ntest_p.py:7: NameError", src, test) == "error"
+    failed = "Error: Property failed after 1 tests\n"
+    broken = failed + "TypeError: x.missingMethod is not a function\n    at fn (tests/p.test.ts:5:7)"
+    assert c(1, broken, ["pricing.ts"], "p.test.ts") == "error"
+    assert c(1, failed + "    at total (src/pricing.ts:4:9)", ["pricing.ts"], "p.test.ts") == "finding"
+    assert c(2, "ERROR collecting", src, test) == "error"
 
 
 def test_a_property_no_mutant_can_fail_is_sent_back_and_a_strong_one_is_kept(pricing: Path) -> None:
@@ -90,8 +104,46 @@ def test_a_property_no_mutant_can_fail_is_sent_back_and_a_strong_one_is_kept(pri
     assert result.rounds == 2
     assert "pass when the code is broken" in provider.prompts[-1]
     assert "caught" in result.message
-    assert target.test_file.read_text() == STRONG
-    assert (pricing / "pricing.py").read_text() == PRICING  # every mutant was restored
+    assert (pricing / target.test_file).read_text() == STRONG
+
+
+def test_the_developers_files_are_never_mutated_and_existing_tests_never_overwritten(pricing: Path) -> None:
+    from rung.core.config import ConfigError
+
+    seen: list[str] = []
+
+    class Watching(ScriptedProvider):
+        def complete_json(self, prompt: str, **kwargs: Any) -> dict[str, Any]:
+            seen.append((pricing / "pricing.py").read_text())
+            return super().complete_json(prompt, **kwargs)
+
+    provider = Watching([_reply(WEAK), _reply(STRONG)])
+    result, _ = property_draft.draft(provider, pricing, [pricing / "pricing.py"], "p")
+    assert result.ok
+    assert set(seen) == {PRICING} and (pricing / "pricing.py").read_text() == PRICING
+    with pytest.raises(ConfigError, match="already exists"):
+        property_draft.draft(ScriptedProvider([]), pricing, [pricing / "pricing.py"], "p")
+
+
+def test_a_mutant_that_breaks_the_import_is_not_counted_as_caught(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "m"\n\n[tool.pytest.ini_options]\npythonpath = ["."]\n')
+    (tmp_path / "flags.py").write_text("READY = True\nif READY:\n    def f(x):\n        return x\n")
+    weak = (
+        "from hypothesis import given, settings, strategies as st\nfrom flags import f\n\n\n"
+        "@settings(max_examples=20, deadline=None)\n@given(st.integers())\ndef test_f_is_callable(x):\n"
+        "    assert callable(f)\n"
+    )
+    result, _ = property_draft.draft(ScriptedProvider([_reply(weak)]), tmp_path, [tmp_path / "flags.py"], "flags")
+    assert "INCONCLUSIVE" in result.message
+    assert any("not counted" in w for w in result.warnings)
+
+
+def test_a_failed_draft_is_kept_aside_not_written_into_the_tests(pricing: Path) -> None:
+    provider = ScriptedProvider([_reply(WEAK)] * 2)
+    result, target = property_draft.draft(provider, pricing, [pricing / "pricing.py"], "pricing", max_rounds=2)
+    assert not result.ok
+    assert not (pricing / target.test_file).exists()
+    assert result.files and ".rung/cache/drafts" in result.files[0].as_posix()
 
 
 def test_a_property_that_fails_on_the_real_code_is_a_finding(pricing: Path) -> None:
@@ -99,19 +151,6 @@ def test_a_property_that_fails_on_the_real_code_is_a_finding(pricing: Path) -> N
     result, _ = property_draft.draft(provider, pricing, [pricing / "pricing.py"], "pricing")
     assert result.ok and "test case" in result.trace.lower()
     assert result.rounds == 1  # never sent back to the model to make the failure go away
-
-
-def test_a_draft_killed_mid_mutant_is_repaired_on_the_next_run(pricing: Path) -> None:
-    from rung.core.errors import RungError
-
-    src = pricing / "pricing.py"
-    (mutant, *_) = mutate.mutants(src)
-    context = mutate.applied(mutant, property_draft.backup_dir(pricing))
-    context.__enter__()  # the process dies here: no __exit__, the mutant stays in the file
-    assert src.read_text() != PRICING
-    with pytest.raises(RungError, match=r"restored pricing\.py"):
-        property_draft.draft(ScriptedProvider([]), pricing, [src], "pricing")
-    assert src.read_text() == PRICING
 
 
 @pytest.mark.parametrize(

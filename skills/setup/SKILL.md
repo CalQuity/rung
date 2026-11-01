@@ -95,8 +95,8 @@ its edits are not freshly passing. The hook needs `rung` on the PATH Claude Code
 ## 6. Optional: evidence and formal checks
 
 Only where they pay off, and only with a model provider configured:
-- **A user-facing app:** `rung draft runtime --intent "<one feature a user cares about>"`. Rung keeps
-  the generated drive script only after it has run and left evidence. Add `--require .webm` for a video.
+- **A user-facing app:** `rung draft runtime --intent "<one feature a user cares about>"`. Rung registers
+  the generated drive script as a check only after it has run and left evidence. Add `--require .webm` for a video.
   Where a script cannot reach the feature (a login flow, a native app), an agent with a browser or
   computer-use tool (Claude in Chrome, Codex, computer use) can drive and record it instead: `rung add
   evidence <id> --covers <files> --require .gif` without `--run`, then `rung attest <id> <files> --by

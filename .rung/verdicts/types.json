@@ -1,0 +1,24 @@
+{
+ "at": "2026-11-01T09:41:31+00:00",
+ "check": "types",
+ "commit": "1e7c4e2435d82e5abccde7e65db4065d1f60607d",
+ "context": "",
+ "definition": "4aba395ea89ca35e",
+ "details": {
+  "base": "",
+  "findings": [],
+  "lines": [
+   "0 errors, 0 warnings, 0 informations"
+  ]
+ },
+ "evidence": [],
+ "hash": "74ea9aafd911b1999ebe036a147edc3a541638ea1ada0f95a7a7183b1d38b54a",
+ "inputs": {
+  "digest": "3236ee1540067f003fb0627ca2b5a0f0c1f5defa80a3973adee302c15914901d",
+  "files": 54
+ },
+ "kind": "command",
+ "summary": "`uv run pyright` exited 0",
+ "valid_until": "",
+ "verdict": "pass"
+}

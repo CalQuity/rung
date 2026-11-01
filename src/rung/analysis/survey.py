@@ -137,7 +137,12 @@ def _package_json(root: Path) -> dict:
         return {}
 
 
-MANIFESTS = frozenset({"pyproject.toml", "package.json", "go.mod", "Cargo.toml", "pytest.ini", "setup.py"})
+PY_TOOL_CONFIGS = ("ruff.toml", ".ruff.toml", "mypy.ini", ".mypy.ini", "pyrightconfig.json")
+MANIFESTS = frozenset(
+    {"pyproject.toml", "package.json", "go.mod", "Cargo.toml", "pytest.ini", "setup.py", *PY_TOOL_CONFIGS}
+)
+ESLINT_CONFIGS = ("eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", "eslint.config.ts", ".eslintrc",
+                  ".eslintrc.json", ".eslintrc.js", ".eslintrc.cjs")  # fmt: skip
 MAX_PROJECT_DEPTH = 6  # monorepos nest packages (packages/web/app); deeper is almost always fixtures
 _NO_TEST_SCRIPT = "no test specified"
 LINT_FILES = (
@@ -157,6 +162,14 @@ class Project:
     lint: list[str] = field(default_factory=list)
     # Static checks the project has already configured, as (kind, command): kind is typecheck or lint.
     static: list[tuple[str, str]] = field(default_factory=list)
+    # Tools that are configured but could not be recorded as a check, with the reason.
+    unrecorded: list[str] = field(default_factory=list)
+
+
+def _is_solution_config(path: Path) -> bool:
+    """A tsconfig with `"files": []` and `references`: it type-checks nothing by itself."""
+    text = path.read_text(errors="ignore")
+    return '"references"' in text and re.search(r'"files"\s*:\s*\[\s*\]', text) is not None
 
 
 def _node_runner(d: Path) -> str:
@@ -175,7 +188,7 @@ def _detect_project(root: Path, rel: str) -> Project | None:
     pyproject = _read(d / "pyproject.toml")
     pkg = _package_json(d)
 
-    if pyproject or (d / "setup.py").exists() or (d / "pytest.ini").exists():
+    if pyproject or any((d / n).exists() for n in ("setup.py", "pytest.ini", *PY_TOOL_CONFIGS)):
         project.ecosystems.append("python")
         has_tests = "pytest" in pyproject or (d / "pytest.ini").exists() or (d / "tests").is_dir()
         if has_tests:
@@ -189,10 +202,12 @@ def _detect_project(root: Path, rel: str) -> Project | None:
         if "import-linter" in pyproject or (d / ".importlinter").exists():
             project.lint.append("import-linter")
         run = "uv run " if (d / "uv.lock").exists() else "python -m "
-        if "[tool.pyright" in pyproject or (d / "pyrightconfig.json").exists():
+        pyright = "[tool.pyright" in pyproject or (d / "pyrightconfig.json").exists()
+        mypy = "[tool.mypy" in pyproject or (d / "mypy.ini").exists() or (d / ".mypy.ini").exists()
+        if pyright:
             project.static.append(("typecheck", f"{run}pyright"))
-        elif "[tool.mypy" in pyproject or (d / "mypy.ini").exists() or (d / ".mypy.ini").exists():
-            project.static.append(("typecheck", f"{run}mypy ."))
+        if mypy:  # both can be configured; each gets its own check
+            project.static.append(("mypy" if pyright else "typecheck", f"{run}mypy ."))
         if "[tool.ruff" in pyproject or (d / "ruff.toml").exists() or (d / ".ruff.toml").exists():
             project.static.append(("lint", f"{run}ruff check ."))
         if "import-linter" in project.lint:
@@ -217,9 +232,16 @@ def _detect_project(root: Path, rel: str) -> Project | None:
         if typecheck:
             project.static.append(("typecheck", f"{runner} run {typecheck}"))
         elif "typescript" in deps and (d / "tsconfig.json").exists():
-            project.static.append(("typecheck", f"{'npx' if runner == 'npm' else runner + ' exec'} tsc --noEmit"))
+            if _is_solution_config(d / "tsconfig.json"):
+                # `tsc --noEmit` on a solution config checks nothing; leave it to the developer.
+                project.unrecorded.append("tsc (tsconfig.json only references other projects; add a typecheck script)")
+            else:
+                project.static.append(("typecheck", f"{'npx' if runner == 'npm' else runner + ' exec'} tsc --noEmit"))
+        npx = "npx" if runner == "npm" else f"{runner} exec"
         if "lint" in scripts:
             project.static.append(("lint", f"{runner} run lint"))
+        elif any((d / n).exists() for n in ESLINT_CONFIGS) and "eslint" in deps:
+            project.static.append(("lint", f"{npx} eslint ."))
     if (d / "go.mod").exists():
         project.ecosystems.append("go")
         project.test_command = project.test_command or "go test ./..."

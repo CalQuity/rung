@@ -39,8 +39,11 @@ Checks never use a model: every verdict comes from a deterministic tool. A model
 or rejects. You choose it: `provider` picks Claude Code, Codex or an OpenAI-compatible endpoint, and
 `model` is passed through as that tool's `--model` / `-m`. Left empty, the tool's own default applies
 (Claude Code's default model, or the model in `~/.codex/config.toml`). Each drafted check records
-`drafted_by = "<provider>:<model>"`. Replies are schema-constrained JSON (`--json-schema`,
-`--output-schema`, or `response_format`).
+`drafted_by = "<provider>:<model>"`: the model Claude Code reports having used, or, for Codex,
+which does not report it, the configured one (marked "as configured"). Replies are
+schema-constrained JSON (`--json-schema`, `--output-schema`, or `response_format`); an HTTP server
+that rejects `response_format` is asked for JSON in the prompt instead, and the reply is checked
+against the schema.
 
 ### Checks
 
@@ -49,7 +52,8 @@ patterns (`*`, `**`, `?`, `[abc]`) for the files whose change makes its verdict 
 and `evidence` checks with no `covers` cover the whole project, so any change stales them; narrow
 `covers` to keep them fresh longer. A scan's verdict also depends on its baseline and the waivers
 file, and expires when a waiver it relied on expires. Rung validates `rung.toml` before running
-anything and rejects wrong types instead of guessing. Rung's own files (`.rung/`, `rung.toml`, `LAWS.md`) are never part of coverage.
+anything and rejects wrong types instead of guessing. Rung's outputs (`.rung/verdicts/`, `.rung/evidence/`, `.rung/cache/`) are never part of coverage;
+inputs such as `.rung/verify/` scripts, baselines and waivers can be.
 Instead each verdict records a hash of its check's declaration, so editing a check stales only
 that check. `timeout` (seconds) is accepted by every kind.
 

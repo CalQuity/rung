@@ -17,6 +17,11 @@ inputs:
   working-directory:
     description: Directory containing rung.toml.
     default: "."
+  policy-paths:
+    description: >-
+      More files that decide the gate, space-separated (e.g. a semgrep rules file a scan check uses).
+      rung.toml, LAWS.md, waivers, baselines and gitleaks/semgrep ignore files are always included.
+    default: ""
   policy-changes:
     description: >-
       What to do when the pull request edits what decides the gate (rung.toml, LAWS.md, waivers,
@@ -73,10 +78,12 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         BASE_REF: ${{ github.base_ref }}
+        POLICY_PATHS: ${{ inputs.policy-paths }}
       run: |
         # The PR's own rung.toml, waivers and baselines decide its gate, so a reviewer must see edits to them.
+        read -ra extra <<< "$POLICY_PATHS"
         changed=$(git diff --name-only "origin/$BASE_REF...HEAD" -- rung.toml LAWS.md .rung/waivers.toml \
-          .rung/baselines .gitleaks.toml .gitleaksignore .semgrep.yml .semgrepignore)
+          .rung/baselines .gitleaks.toml .gitleaksignore .semgrep.yml .semgrepignore "${extra[@]}")
         if [ -n "$changed" ]; then
           echo "changed=true" >> "$GITHUB_OUTPUT"
           while read -r file; do echo "::warning file=$file::This pull request changes what decides the Rung gate"; done <<< "$changed"

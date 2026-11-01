@@ -23,8 +23,8 @@ rung prove "pytest tests/test_refunds.py" --expect "refund exceeded charge"
 
 - **Runtime evidence.** `rung draft runtime --intent "create, read, update and delete an order"`.
   The model writes `.rung/verify/drive.py`, which starts the server on a free port, drives the
-  endpoints over HTTP and saves every request and response. Rung keeps the script only after it
-  has passed.
+  endpoints over HTTP and saves every request and response. Rung registers it as a check only
+  after it has passed.
 - **Contract fuzzing.** If you have an OpenAPI schema, add a property-based API test as a command:
   `rung add command api-contract --run "schemathesis run openapi.yaml --url http://localhost:8000"`.
   Start the server inside a wrapper script if needed.

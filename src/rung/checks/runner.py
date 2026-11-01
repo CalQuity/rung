@@ -135,12 +135,15 @@ def attest(config: Config, check: Check, files: list[Path], *, by: str, note: st
         raise ConfigError(f"check {check.id!r} requires evidence ending in {', '.join(missing)}")
     root = config.root
     cover_patterns, spec_patterns = covers(check), specs(check)
+    before = (ledger.snapshot(root, cover_patterns), ledger.snapshot(root, spec_patterns))
     out_dir = evidence_dir(root, check.id)
     artifacts: dict[str, str] = {}
     for i, f in enumerate(files):
         target = out_dir / f"{i + 1:02d}-{f.name}"
         shutil.copyfile(f, target)
         artifacts[target.relative_to(root).as_posix()] = ledger.file_digest(target)
+    if (ledger.snapshot(root, cover_patterns), ledger.snapshot(root, spec_patterns)) != before:
+        raise RungError("files the check covers changed while the evidence was being recorded; attest again")
     summary = redact(f"attested by {by.strip()}: {len(artifacts)} artifact(s), not re-run by Rung")
     lines = [f"evidence: {path}" for path in artifacts] + ([redact(f"note: {note}")] if note else [])
     ledger.record(
@@ -148,8 +151,8 @@ def attest(config: Config, check: Check, files: list[Path], *, by: str, note: st
         check_id=check.id,
         kind=check.kind,
         verdict="pass",
-        covers=ledger.snapshot(root, cover_patterns),
-        specs=ledger.snapshot(root, spec_patterns),
+        covers=before[0],
+        specs=before[1],
         summary=summary,
         evidence=[f"{path} sha256:{digest}" for path, digest in artifacts.items()],
         definition=definition(check),

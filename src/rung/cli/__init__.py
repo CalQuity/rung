@@ -121,7 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--intent", help="what the code must guarantee, or (runtime) which feature to drive")
     s.add_argument("--require", nargs="*", help="(runtime) evidence the script must leave, e.g. .webm for a video")
     s.add_argument("--id")
-    s.add_argument("--out")
+    s.add_argument("--out", help="where to write the result: a directory (tla, lean) or a test file (property)")
     s.add_argument("--model", help="model for this draft only (default: [llm] model in rung.toml, else the CLI's)")
     return p
 
