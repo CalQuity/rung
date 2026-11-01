@@ -119,6 +119,22 @@ def target_for(root: Path, sources: list[Path], slug: str) -> Target:
     raise ConfigError(f"property tests are drafted for Python and TypeScript/JavaScript, not {first.suffix} files")
 
 
+def undeclared(target: Target) -> list[str]:
+    """A warning when the project does not declare the property library its own test run will import."""
+    if target.language == "python":
+        manifest = target.project / "pyproject.toml"
+        text = manifest.read_text() if manifest.exists() else ""
+        if "hypothesis" not in text.lower():
+            fix = (
+                "uv add --dev hypothesis"
+                if (target.project / "uv.lock").exists()
+                else "add it to your dev dependencies"
+            )
+            return [f"hypothesis is not a declared dependency, so the project's own test run will fail to import "
+                    f"{target.test_file.name}: {fix}"]  # fmt: skip
+    return []  # fast-check is required up front for TypeScript
+
+
 def classify(returncode: int, output: str) -> str:
     """pass, finding (a property failed on real code) or error (the test itself is broken)."""
     if returncode == 0 and not re.search(r"\bno tests ran\b|No test files found", output):
@@ -195,7 +211,7 @@ def draft(
         total = caught + len(survivors)
         if total == 0 or (caught and (caught / total >= GOOD_ENOUGH or round_no == max_rounds)):
             score = f"caught {caught} of {total} deliberate bugs" if total else "no mutants could be made"
-            warnings = [f"survived: {m.describe}" for m in survivors]
+            warnings = [f"survived: {m.describe}" for m in survivors] + undeclared(target)
             result = DraftResult(True, f"properties hold on the real code and {score}", [target.test_file],
                                  round_no, notes=notes, laws=laws, warnings=warnings)  # fmt: skip
             return result, target
