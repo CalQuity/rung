@@ -280,3 +280,13 @@ def test_property_test_with_a_home_path_is_sent_back(tmp_path: Path) -> None:
 
 def _touch(root: Path) -> None:
     (root / "q.py").write_text("def claim():\n    pass\n")
+
+
+def test_a_requests_transport_adapter_is_not_a_route() -> None:
+    from rung.drafting import routes
+
+    files = {
+        "scraper.py": 'session = requests.Session()\nsession.mount("https://", HTTPAdapter(max_retries=3))\n',
+        "app.py": 'app.mount("/static", StaticFiles(directory="static"))\n',
+    }
+    assert [(r.method, r.path) for r in routes.discover(files)] == [("MOUNT", "/static")]
