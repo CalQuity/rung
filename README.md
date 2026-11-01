@@ -36,7 +36,7 @@ a change does what was meant. Rung's answer is three habits.
 ## Quick start
 
 ```bash
-uv tool install rung              # or: pipx install rung
+uv tool install git+https://github.com/CalQuity/rung   # PyPI release coming
 cd your-repo
 rung init                         # survey the repo, wire up installed scanners, choose a model
 rung check                        # run everything and record verdicts
@@ -105,7 +105,7 @@ three-step case only the differential test finds.
 - uses: actions/checkout@v4
   with:
     fetch-depth: 0
-- uses: <owner>/rung@v0
+- uses: CalQuity/rung@v0.1.0
 ```
 
 The action runs the checks a pull request touches against its merge base. It keeps a single

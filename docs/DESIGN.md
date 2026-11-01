@@ -37,12 +37,55 @@ exact code it covers, and it should expire on its own.**
 
 | Rung | Check kind | Evidence |
 |---|---|---|
+| Tests | `command`, plus `rung prove` for bug fixes | Exit status; a fix proof shows the new test fails on the merge base |
+| Security | `scan` (any SARIF analyzer), `deps` | New findings relative to the merge base or a baseline; registry facts for new packages |
 | Architecture | `command` running a linter or import-boundary tool | Exit status |
-| Runtime | `evidence` running a script that drives the real app | Hashed artifacts: video, transcript, screenshots |
-| Properties | `command` running property-based tests | Exit status |
+| Runtime | `evidence` running a script that drives the real app | Hashed artifacts: transcripts, request/response pairs, screenshots, video |
 | Protocol | `tla` | TLC result over every reachable state; counterexample trace |
 | Model | `lean` + `drt` | Kernel-checked theorems with audited axioms; agreement with the code on random inputs |
 | Ledger | always | Hash-chained, content-addressed verdicts |
+
+The ladder is applied by escalation, not climbed everywhere. Every repository gets the cheap
+rungs. TLA+ is recommended only for code that holds state across steps, and Lean only for
+small pure cores.
+
+### Gating on what changed
+
+A gate that fails on every existing problem gets switched off, so Rung gates on what a branch
+introduces. For a `scan` check, `--changed` or `--base` runs the analyzer on the merge base in a
+temporary git worktree as well as on the branch, and compares the two. Without a base, findings
+are compared with a committed baseline (`rung baseline`), if one exists.
+
+The comparison uses fingerprints that survive unrelated edits. A fingerprint is built from the
+tool, the rule, the file, and the flagged code snippet, or the message with version numbers
+removed. Line numbers are left out because they move with every edit. Tool line hashes are a
+last resort, because several tools hash the whole file. Duplicate fingerprints are counted, so
+a second copy of the same secret is still new.
+
+A finding a team chooses to keep is waived with a reason, an approver and an expiry date.
+Expired waivers stop applying and are reported. Agents are told never to add waivers.
+
+### Fix proofs
+
+A regression test that passes before the fix proves nothing, and agents write such tests often.
+`rung prove` copies the branch's changed test files onto the merge base, runs them there where
+they must fail, then runs them on the branch where they must pass. `--expect` names text the
+failure must contain, so an import error does not count as the bug being caught.
+
+### Runtime evidence that proves itself
+
+`rung draft runtime` has the model write a drive script and a feature map. Rung runs the script
+as an `evidence` check and feeds failures back until it passes and records evidence; only then
+is it registered. This is the rule from Lauren Tan's pstack, that a verification skill never
+executed is only a draft, enforced by the checker rather than stated in a prompt.
+
+### Agents
+
+Guidance (a skill and an AGENTS.md section) says how to use Rung and which shortcuts are off
+limits. Enforcement is a Claude Code `Stop` hook: when an agent tries to finish, `rung hook
+stop` checks whether the checks covering its uncommitted edits are fresh. If not, the agent is
+told what to run and cannot stop yet. The hook fails open on anything unexpected, and lets the
+agent stop the second time in a turn, so it can never trap one.
 
 ### Why both TLA+ and Lean
 
@@ -86,7 +129,10 @@ Lean theorem plus a differential test, and a test suite, all at once. Agents may
 - Drafting with Claude Code runs with all tools disabled (`--tools ""`); with Codex it
   runs in a read-only sandbox. The model reads only the source excerpts Rung sends.
 - Model replies may only write files inside the chosen output directory.
-- Spec and proof checking runs locally. Nothing is uploaded.
+- Spec and proof checking runs locally. Nothing is uploaded. The `deps` check sends package
+  names to PyPI and npm; the scanners make whatever network calls they make themselves
+  (zizmor runs with `--offline`).
+- Gitleaks always runs with `--redact`.
 
 ## What Rung is not
 

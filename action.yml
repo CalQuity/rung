@@ -12,8 +12,8 @@ inputs:
     description: Post or update a pull request comment with the report.
     default: "true"
   package:
-    description: What to install with `uv tool install` (a version spec, or a path).
-    default: rung
+    description: What to install with `uv tool install`. Empty installs the version of this action itself.
+    default: ""
   working-directory:
     description: Directory containing rung.toml.
     default: "."
@@ -31,7 +31,8 @@ runs:
       shell: bash
       env:
         PACKAGE: ${{ inputs.package }}
-      run: uv tool install "$PACKAGE"
+        ACTION_PATH: ${{ github.action_path }}
+      run: uv tool install "${PACKAGE:-$ACTION_PATH}"
 
     - name: Run checks
       id: check
