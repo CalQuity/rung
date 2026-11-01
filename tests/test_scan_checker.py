@@ -89,3 +89,12 @@ def test_missing_scanner_names_how_to_install(repo: Path, monkeypatch) -> None:
     cfg = config.load(repo)
     result = runner.run_check(cfg, cfg.check("secrets"))
     assert result.verdict == "error" and "brew install gitleaks" in result.outcome.summary
+
+
+def test_findings_in_ignored_files_are_not_project_findings(repo: Path) -> None:
+    cfg = _setup(repo)
+    (repo / ".gitignore").write_text("cache/\n")
+    (repo / "cache").mkdir()
+    (repo / "cache" / "compiled.py").write_text("TOKEN = 'TODO-SECRET in a build artifact'\n")
+    base = git.merge_base(repo, "main")
+    assert runner.run_check(cfg, cfg.check("secrets"), base=base).verdict == "pass"

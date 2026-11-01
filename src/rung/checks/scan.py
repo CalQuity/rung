@@ -21,6 +21,14 @@ from rung.engines import sarif
 MAX_LISTED = 10
 
 
+def project_findings(root: Path, found: list[sarif.Finding]) -> list[sarif.Finding]:
+    """Drop findings in files git ignores (caches, build output); scanners like `gitleaks dir` read them."""
+    if not found or not git.is_repo(root):
+        return found
+    files = set(git.list_files(root))
+    return [f for f in found if not f.path or f.path in files or not (root / f.path).is_file()]
+
+
 class ScanChecker(Checker):
     kind = "scan"
     summary = "Run a SARIF analyzer (secrets, dependencies, code patterns) and gate on new findings"
@@ -83,7 +91,7 @@ class ScanChecker(Checker):
             raise RungError(
                 f"`{command}` exited {result.returncode} and reported no findings; it likely failed: {detail}"
             )
-        return found
+        return project_findings(cwd, found)
 
     def run(self, ctx: Context, check: Check) -> Outcome:
         timeout = check.get_int("timeout", 900)
