@@ -130,3 +130,21 @@ def test_build_output_never_stales_a_whole_repo_check(project: Path) -> None:
 
     cfg = config.load(project)
     assert runner.status(cfg, cfg.check("everything")).state == "fresh"
+
+
+def test_s1_init_registers_detected_test_suites(tmp_path: Path) -> None:
+    (tmp_path / "backend" / "tests").mkdir(parents=True)
+    (tmp_path / "backend" / "pyproject.toml").write_text('[project]\nname = "b"\ndependencies = ["pytest"]\n')
+    assert run(tmp_path, "init", "--provider", "none") == 0
+    from rung.core import config
+
+    check = config.load(tmp_path).check("backend-tests")
+    assert check.get("cwd") == "backend" and check.covers == ["backend/**"]
+
+
+def test_s4_add_emits_json(project: Path, capsys) -> None:
+    import json
+
+    capsys.readouterr()
+    assert run(project, "--json", "add", "command", "lint", "--run", "true") == 0
+    assert json.loads(capsys.readouterr().out)["check"] == "lint"

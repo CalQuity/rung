@@ -61,3 +61,13 @@ def test_toolchain_prefers_override_then_newest_release(monkeypatch) -> None:
 
     monkeypatch.setattr(lean.subprocess, "run", lambda *a, **k: Listing())
     assert lean.toolchain() == "leanprover/lean4:v4.35.0"
+
+
+def test_strings_mentioning_sorry_are_not_escape_hatches(tmp_path: Path) -> None:
+    (tmp_path / "M.lean").write_text('def msg : String := "sorry, no axiom here"\n')
+    assert lean.scan_sources(tmp_path) == []
+
+
+def test_audit_imports_come_from_the_lakefile(tmp_path: Path) -> None:
+    (tmp_path / "lakefile.toml").write_text('name = "m"\n[[lean_lib]]\nname = "Model"\n')
+    assert lean.lake_libraries(tmp_path) == ["Model"]

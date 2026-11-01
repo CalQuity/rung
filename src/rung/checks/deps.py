@@ -41,6 +41,12 @@ def _normalize_pypi(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+def requirement_name(spec: str) -> str:
+    """The normalized package name in a requirement such as `playwright>=1.40`, or empty."""
+    m = _REQ_NAME.match(spec)
+    return _normalize_pypi(m.group(1)) if m else ""
+
+
 def _pep508_names(specs: list[str]) -> set[str]:
     names = set()
     for spec in specs:

@@ -19,10 +19,12 @@ import json
 import shlex
 import shutil
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 from rung import guides
 from rung.analysis.survey import Inspection
+from rung.checks import deps
 from rung.checks.base import Context
 from rung.checks.command import EvidenceChecker
 from rung.core import git
@@ -44,6 +46,29 @@ FORMAT = """
 Return `files` with `drive.py` and `FEATURES.md`, `sources` with globs of the source files the driven
 feature depends on, `requirements` with the Python packages the script imports beyond the standard
 library (e.g. `playwright`; empty if none), and `notes` with anything the developer should know."""
+
+
+MIN_PACKAGE_AGE_DAYS = 30
+
+
+def vet_requirements(requirements: list[str]) -> list[str]:
+    """Problems with packages a model wants to install: missing from PyPI, or too new to trust.
+
+    The same rule the `deps` check applies to a project's own dependencies: a model can invent a
+    package name, and an attacker can register it.
+    """
+    problems = []
+    for spec in requirements:
+        name = deps.requirement_name(spec)
+        if not name:
+            problems.append(f"{spec!r} is not a package requirement")
+            continue
+        published = deps.first_published(deps.Package("pypi", name))
+        if published is None:
+            problems.append(f"{name} does not exist on PyPI")
+        elif (age := (datetime.now(UTC) - published).days) < MIN_PACKAGE_AGE_DAYS:
+            problems.append(f"{name} was first published {age} day(s) ago")
+    return problems
 
 
 def run_command(requirements: list[str]) -> str:
@@ -139,7 +164,15 @@ def draft_runtime(
             continue
         files = safe_write(out_dir, produced)
         covers = [g.strip() for g in reply["sources"] if g.strip()]
-        run = run_command([p.strip() for p in reply["requirements"] if p.strip()])
+        requirements = [p.strip() for p in reply["requirements"] if p.strip()]
+        if problems := vet_requirements(requirements):
+            prompt += (
+                "\n\nRung will not install these requirements: "
+                + "; ".join(problems)
+                + ". Use only established packages (or none). Return the same fields."
+            )
+            continue
+        run = run_command(requirements)
         check = Check(check_id, "evidence", covers, {"run": run, "timeout": 900, "require": list(require)})
         outcome = EvidenceChecker().run(Context(root=root), check)
         if outcome.verdict == "pass":

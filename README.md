@@ -1,9 +1,14 @@
 # Rung
 
-**Prove your code works, not just that it builds.** Rung is a command-line tool for codebases
-where coding agents write a lot of the code. It runs your tests, security scanners, runtime
-checks, TLA+ model checks and Lean proofs. It records each result in a ledger tied to the
-exact bytes it checked, and it blocks a pull request only on what that pull request breaks.
+**Know what has actually been verified, and against which code.** Rung is a command-line tool
+for codebases where coding agents write a lot of the code. It runs your tests, security scanners,
+runtime checks, TLA+ model checks and Lean proofs, and records each result in a ledger tied to
+the exact bytes it checked. A result expires the moment those bytes change, and a pull request
+is blocked only on what it introduces.
+
+What a pass means depends on the check: a test suite proves what its tests assert, TLC proves an
+invariant over every state of a model, a Lean proof holds for the model it is about. Rung makes
+each of those explicit and keeps them current; it cannot make a weak test strong.
 
 ```console
 $ rung check --changed
@@ -124,7 +129,9 @@ action, use `rung check --changed` and `rung report`.
 `rung agents` writes a Claude Code skill and an `AGENTS.md` section, which Codex, Cursor and
 others read. With `--hooks` it also installs a Claude Code `Stop` hook. An agent whose edits
 touch a check that is not freshly passing is told which `rung check` to run, and cannot finish
-until it has. The guidance can be ignored; the hook cannot.
+until it has. This is a best-effort local guard: it lets the agent stop on a second attempt (so it
+can never trap one), allows the stop if Rung itself cannot run, and looks at uncommitted edits.
+CI with `rung check --changed` is the enforcement boundary.
 
 Drafting uses a model you already have. `rung init` reuses your `claude` or `codex` login, or
 any OpenAI-compatible endpoint, including local models. Rung never stores credentials.
@@ -158,9 +165,15 @@ Configuration lives in `rung.toml`; see [docs/CONFIG.md](https://github.com/CalQ
 - A checker never reports `pass` unless its tool confirmed the result. Missing tools and
   malformed output are errors, and so is a TLA+ spec that reaches only one state.
 - A file that changes while a check runs voids the verdict.
-- Gitleaks always runs with `--redact`; secret values never reach output, reports or the ledger.
+- Gitleaks always runs with `--redact`, and secret-looking values (tokens, keys, credentials in
+  URLs) are masked before command output is stored in the ledger. That masking is best effort:
+  commands should not print secrets.
 - Waivers need a reason, an approver and an expiry date. Expired waivers stop applying.
-- Ledger entries are hash-chained, and `rung ledger` detects a rewritten history.
+- Ledger entries are hash-chained, so an entry edited or removed in the middle is detected, and a
+  broken chain makes every verdict untrusted. The chain is an integrity aid, not an authenticated
+  audit trail: whoever can rewrite the whole file can rehash it, so review changes to `.rung/` and
+  `LAWS.md` like any other change (CODEOWNERS helps).
+- Approving a law or adding a waiver is a file edit, not an authenticated signature.
 - Rung collects no telemetry.
 
 Rung's own repository is checked by Rung: see [`rung.toml`](https://github.com/CalQuity/rung/blob/main/rung.toml) and [`LAWS.md`](https://github.com/CalQuity/rung/blob/main/LAWS.md).

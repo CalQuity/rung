@@ -226,3 +226,19 @@ def test_runtime_context_reaches_sub_projects(tmp_path: Path) -> None:
     text = runtime.gather_context(tmp_path, survey.survey(tmp_path), ["frontend/package.json"])
     assert "--- frontend/src/app/page.tsx ---" in text and "<h1>Books</h1>" in text
     assert text.index("frontend/src/app/page.tsx") < text.index("aaa_demo/f000.json")
+
+
+def test_sec2_runtime_requirements_are_vetted_before_anything_is_installed(tmp_path: Path, monkeypatch) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from rung.checks import deps
+
+    ages = {"playwright": 900}
+    monkeypatch.setattr(deps, "first_published", lambda pkg: (
+        datetime.now(UTC) - timedelta(days=ages[pkg.name]) if pkg.name in ages else None))  # fmt: skip
+    assert runtime.vet_requirements(["playwright>=1.40"]) == []
+    assert runtime.vet_requirements(["playwrite-pro"]) == ["playwrite-pro does not exist on PyPI"]
+    bad = {**DRIVE_OK, "requirements": ["playwrite-pro"]}
+    provider = ScriptedProvider([bad, DRIVE_OK])
+    result = runtime.draft_runtime(provider, tmp_path, survey.survey(tmp_path), focus=[], max_rounds=2)
+    assert result.ok and result.rounds == 2 and "will not install" in provider.prompts[1]

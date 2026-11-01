@@ -22,7 +22,8 @@ def ask(question: str, default: str = "") -> str:
     if not sys.stdin.isatty():
         return default
     suffix = f" [{default}]" if default else ""
-    return input(f"{question}{suffix}: ").strip() or default
+    print(f"{question}{suffix}: ", end="", file=sys.stderr, flush=True)
+    return input().strip() or default
 
 
 def resolve_base(root: Path, base: str | None) -> str:
@@ -35,4 +36,6 @@ def add_check(config: Config, check: Check, out: Output) -> None:
     replaced = any(c.id == check.id for c in config.checks)
     config.checks = [c for c in config.checks if c.id != check.id] + [check]
     save(config)
+    out.emit({"check": check.id, "kind": check.kind, "covers": check.covers, "options": check.options,
+              "replaced": replaced})  # fmt: skip
     out.line(f"{'Updated' if replaced else 'Added'} check {check.id!r} ({check.kind}) in {CONFIG_NAME}.")

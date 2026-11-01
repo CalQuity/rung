@@ -42,6 +42,7 @@ _THEOREM = re.compile(r"^(?:theorem|lemma)\s+(\S+)([\s\S]*?):=\s*([\s\S]*?)(?=^\
 KNOWN_GOOD_TOOLCHAIN = "leanprover/lean4:v4.35.0"
 
 _BLOCK_COMMENT = re.compile(r"/-.*?-/", re.S)
+_STRING = re.compile(r'"(?:\\.|[^"\\])*"')
 _LINE_COMMENT = re.compile(r"--[^\n]*")
 _AXIOMS_LINE = re.compile(r"'([^']+)' depends on axioms: \[([^\]]*)\]")
 _NO_AXIOMS_LINE = re.compile(r"'([^']+)' does not depend on any axioms")
@@ -84,6 +85,17 @@ def toolchain() -> str:
     return "leanprover/lean4:v" + ".".join(newest)
 
 
+def lake_libraries(project: Path) -> list[str]:
+    """The `[[lean_lib]]` names in `lakefile.toml`: the modules to import when auditing theorems."""
+    try:
+        import tomllib
+
+        data = tomllib.loads((project / "lakefile.toml").read_text())
+    except (OSError, ValueError):
+        return []
+    return [lib["name"] for lib in data.get("lean_lib", []) if isinstance(lib, dict) and lib.get("name")]
+
+
 def weak_theorems(project: Path) -> list[str]:
     """Theorems whose entire proof is a one-liner that would prove the statement about anything."""
     weak = []
@@ -97,7 +109,8 @@ def weak_theorems(project: Path) -> list[str]:
 
 
 def strip_comments(source: str) -> str:
-    return _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub("", source))
+    """Remove comments and string literals, so a word inside either is never mistaken for code."""
+    return _LINE_COMMENT.sub("", _STRING.sub('""', _BLOCK_COMMENT.sub("", source)))
 
 
 def scan_sources(project: Path) -> list[str]:
@@ -146,7 +159,7 @@ def run(project: Path, theorems: list[str], *, timeout: int = 1800) -> LeanResul
     findings = scan_sources(project)
     axioms: dict[str, list[str]] = {}
     if theorems:
-        modules = sorted({t.rsplit(".", 1)[0] for t in theorems if "." in t})
+        modules = lake_libraries(project) or sorted({t.rsplit(".", 1)[0] for t in theorems if "." in t})
         axioms, audit_out = audit_axioms(lake, project, modules, theorems)
         output += "\n" + audit_out
         for theorem in theorems:

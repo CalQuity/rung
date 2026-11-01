@@ -17,7 +17,10 @@ from rung.core.config import Check, ConfigError
 def cmd_laws(args, out: Output) -> int:
     cfg = load_config(args)
     if args.approve:
-        laws.set_status(cfg.root, args.approve, "approved")
+        try:
+            laws.set_status(cfg.root, args.approve, "approved")
+        except KeyError as exc:
+            raise ConfigError(f"no law {args.approve!r} in {laws.LAWS_FILE}") from exc
         out.line(f"Approved {args.approve}.")
     statuses = {s.check_id: s for s in runner.statuses(cfg)}
     rows = [(law, *laws.state(law, statuses)) for law in laws.load(cfg.root)]
@@ -78,7 +81,12 @@ def cmd_waive(args, out: Output) -> int:
     check = cfg.check(args.check)
     if not re.fullmatch(r"[0-9a-f]{16}", args.fingerprint):
         raise ConfigError("a fingerprint is the 16-character hex id shown in brackets by `rung check`")
-    expires = date.fromisoformat(args.until) if args.until else date.today() + timedelta(days=args.days)
+    try:
+        expires = date.fromisoformat(args.until) if args.until else date.today() + timedelta(days=args.days)
+    except ValueError as exc:
+        raise ConfigError(f"--until must be a date like 2026-12-31, not {args.until!r}") from exc
+    if expires < date.today():
+        raise ConfigError("a waiver must expire in the future")
     approver = args.approved_by or git.user_name(cfg.root)
     if not approver:
         raise ConfigError("cannot tell who approves this waiver; pass --approved-by")

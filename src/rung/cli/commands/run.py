@@ -29,7 +29,9 @@ def cmd_check(args, out: Output) -> int:
         changed = git.changed_files(cfg.root, base)
     selected = runner.select(cfg, args.ids, changed)
     if args.ci:
-        selected = [c for c in selected if not runner.status(cfg, c).trusted]
+        # Reuse a verdict only if it is fresh and was made against the same comparison base.
+        view = ledger.View(cfg.root)
+        selected = [c for c in selected if not runner.status(cfg, c, base=base or "", view=view).trusted]
     if not cfg.checks:
         out.error(f"no checks declared in {CONFIG_NAME}; see `rung plan` or `rung add`")
         return GATE_FAILED

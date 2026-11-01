@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
 
 from rung import agents
@@ -21,9 +22,10 @@ def _choose_provider(requested: str | None) -> LLMConfig:
     if requested:
         return LLMConfig(provider=requested)
     options = providers.detect()
-    print("\nWhich model should draft specs, proofs and explanations?")
+    # Prompts go to stderr so `--json` output on stdout stays one clean document.
+    print("\nWhich model should draft specs, proofs and explanations?", file=sys.stderr)
     for i, name in enumerate(options, 1):
-        print(f"  {i}. {name:18} {providers.PROVIDERS[name]}")
+        print(f"  {i}. {name:18} {providers.PROVIDERS[name]}", file=sys.stderr)
     picked = ask("Choose", "1")
     name = options[int(picked) - 1] if picked.isdigit() and 0 < int(picked) <= len(options) else picked
     if name not in providers.PROVIDERS:
@@ -64,6 +66,15 @@ def cmd_init(args, out: Output) -> int:
                 added.append(check_id)
         cfg.checks.append(Check("deps", "deps", [], {"min_age_days": 30}))
         added.append("deps")
+        # Record each detected test suite, covering its own project directory.
+        for project in info.projects:
+            if not project.test_command:
+                continue
+            check_id = "tests" if project.path == "." else f"{project.path.replace('/', '-')}-tests"
+            options = {"run": project.test_command} | ({} if project.path == "." else {"cwd": project.path})
+            covers = [] if project.path == "." else [f"{project.path}/**"]
+            cfg.checks.append(Check(check_id, "command", covers, options))
+            added.append(check_id)
 
     save(cfg)
     (root / ".rung").mkdir(exist_ok=True)
