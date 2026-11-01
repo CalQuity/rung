@@ -9,3 +9,6 @@ to drive it, and what observable state proves it works.
 - Changed a feature the script does not drive yet? Extend `drive.py` and FEATURES.md,
   then run `rung check {check_id}` again. Never weaken what the script asserts.
 - A failure is a product bug until shown otherwise. Fix the app, not the script.
+- A feature the script cannot reach? Drive it with your browser or computer-use tool, record it,
+  and `rung attest <check> <files> --by <tool> --note "<what you saw>"` (an evidence check
+  declared without `run`).

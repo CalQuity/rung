@@ -396,3 +396,48 @@ def test_r2_unexpected_exceptions_exit_2_without_a_traceback(
     monkeypatch.delenv("RUNG_DEBUG", raising=False)
     assert cli.main(["doctor"]) == 2
     assert "unexpected error" in capsys.readouterr().err
+
+
+def test_attested_evidence_holds_until_the_code_changes(repo: Path) -> None:
+    (repo / "src").mkdir()
+    (repo / "src" / "page.tsx").write_text("export default 1\n")
+    cfg = _toml(repo, '[[check]]\nid = "ui"\nkind = "evidence"\nrequire = [".gif"]\ncovers = ["src/**"]\n')
+    check = cfg.check("ui")
+    assert runner.run_check(cfg, check).verdict == "error"  # nothing attested yet
+
+    gif = repo / "demo.gif"
+    gif.write_bytes(b"GIF89a...")
+    result = runner.attest(cfg, check, [gif], by="claude-in-chrome", note="saved a draft")
+    assert result.verdict == "pass" and "claude-in-chrome" in result.outcome.summary
+    assert runner.status(cfg, check).trusted
+    assert runner.run_check(cfg, check).verdict == "pass"  # not re-run, still held
+
+    (repo / "src" / "page.tsx").write_text("export default 2\n")
+    assert not runner.status(cfg, check).trusted
+    assert runner.run_check(cfg, check).verdict == "error"
+
+
+def test_attest_refuses_scripted_checks_missing_types_and_empty_files(repo: Path) -> None:
+    from rung.core.config import ConfigError
+
+    cfg = _toml(
+        repo,
+        '[[check]]\nid = "ui"\nkind = "evidence"\nrequire = [".gif"]\n\n'
+        f'[[check]]\nid = "drive"\nkind = "evidence"\nrun = "{PY} -c \\"pass\\""\n',
+    )
+    png, empty = repo / "shot.png", repo / "blank.gif"
+    png.write_bytes(b"\x89PNG")
+    empty.write_bytes(b"")
+    with pytest.raises(ConfigError, match=r"requires evidence ending in \.gif"):
+        runner.attest(cfg, cfg.check("ui"), [png], by="computer-use")
+    with pytest.raises(ConfigError, match="non-empty"):
+        runner.attest(cfg, cfg.check("ui"), [empty], by="computer-use")
+    with pytest.raises(ConfigError, match="not an attested"):
+        runner.attest(cfg, cfg.check("drive"), [png], by="computer-use")
+
+
+def test_zero_byte_artifacts_are_not_evidence(repo: Path) -> None:
+    script = "import os, pathlib; (pathlib.Path(os.environ['RUNG_EVIDENCE_DIR']) / 'x.webm').touch()"
+    cfg = _toml(repo, f'[[check]]\nid = "drive"\nkind = "evidence"\nrun = "{PY} -c \\"{script}\\""\n')
+    result = runner.run_check(cfg, cfg.check("drive"))
+    assert result.verdict == "fail" and "no evidence" in result.outcome.summary

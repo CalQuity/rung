@@ -64,10 +64,17 @@ that check. `timeout` (seconds) is accepted by every kind.
 
 | Field | Default | |
 |---|---|---|
-| `run` | required | Script that drives the app; it gets `RUNG_EVIDENCE_DIR` |
+| `run` | | Script that drives the app; it gets `RUNG_EVIDENCE_DIR`. Omit it for an attested check |
 | `require` | `[]` | Artifact suffixes that must be present, e.g. `[".webm"]` |
 
-Passes only if the script exits 0 **and** wrote at least one artifact.
+With `run`, passes only if the script exits 0 **and** wrote at least one non-empty artifact.
+
+Without `run`, the check is **attested**: an agent drives the feature with its own browser or
+computer-use tool (Claude in Chrome, Codex, computer use) or a person does it by hand, and records the
+files with `rung attest <id> <files> --by <tool> --note "<what was seen>"`. The verdict stores who
+attested and each file's hash, and holds until a covered file changes; `rung check` cannot re-run it,
+so a stale attested check stays an error until someone attests again. Prefer a script wherever one
+can reach the feature.
 
 ### `scan`
 

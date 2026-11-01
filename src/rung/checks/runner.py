@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 from rung.checks import registry
 from rung.checks.base import Context, Outcome
+from rung.checks.command import evidence_dir, is_attested, missing_required
 from rung.core import git, ledger
-from rung.core.config import Check, Config
+from rung.core.config import Check, Config, ConfigError
 from rung.core.errors import RungError
 from rung.core.redact import redact, redact_lines
 
@@ -60,6 +63,9 @@ def select(config: Config, ids: list[str], changed: set[str] | None) -> list[Che
 
 def run_check(config: Config, check: Check, *, base: str | None = None) -> Result:
     root = config.root
+    if is_attested(check) and (held := status(config, check)).trusted and held.entry:
+        # Attested evidence cannot be re-run; while its files are unchanged, the attestation stands.
+        return Result(check, Outcome("pass", held.entry.get("summary", "attested"), held.entry.get("evidence", [])))
     checker = registry.get(check.kind)
     cover_patterns, spec_patterns = checker.covers(check), checker.specs(check)
     before = (ledger.snapshot(root, cover_patterns), ledger.snapshot(root, spec_patterns))
@@ -107,3 +113,46 @@ def status(config: Config, check: Check, *, base: str | None = None, view: ledge
 def statuses(config: Config, *, base: str | None = None) -> list[ledger.Status]:
     view = ledger.View(config.root)
     return [status(config, c, base=base, view=view) for c in config.checks]
+
+
+def attest(config: Config, check: Check, files: list[Path], *, by: str, note: str = "") -> Result:
+    """Record evidence an agent or a person captured (a browser recording, screenshots) for an attested check.
+
+    The files are copied into `.rung/evidence/` and hashed into the verdict, which binds them to the
+    code as it is now. Nothing is re-run: the verdict says who recorded what, not that Rung saw it work.
+    """
+    if not is_attested(check):
+        raise ConfigError(
+            f'check {check.id!r} is not an attested evidence check (kind = "evidence" without `run`); '
+            "scripted checks record their own evidence with `rung check`"
+        )
+    if not by.strip():
+        raise ConfigError("say which tool or person recorded the evidence with --by")
+    empty = [str(f) for f in files if not f.is_file() or f.stat().st_size == 0]
+    if empty:
+        raise ConfigError(f"not a non-empty file: {', '.join(empty)}")
+    if missing := missing_required(check, (f.name for f in files)):
+        raise ConfigError(f"check {check.id!r} requires evidence ending in {', '.join(missing)}")
+    root = config.root
+    cover_patterns, spec_patterns = covers(check), specs(check)
+    out_dir = evidence_dir(root, check.id)
+    artifacts: dict[str, str] = {}
+    for i, f in enumerate(files):
+        target = out_dir / f"{i + 1:02d}-{f.name}"
+        shutil.copyfile(f, target)
+        artifacts[target.relative_to(root).as_posix()] = ledger.file_digest(target)
+    summary = redact(f"attested by {by.strip()}: {len(artifacts)} artifact(s), not re-run by Rung")
+    lines = [f"evidence: {path}" for path in artifacts] + ([redact(f"note: {note}")] if note else [])
+    ledger.record(
+        root,
+        check_id=check.id,
+        kind=check.kind,
+        verdict="pass",
+        covers=ledger.snapshot(root, cover_patterns),
+        specs=ledger.snapshot(root, spec_patterns),
+        summary=summary,
+        evidence=[f"{path} sha256:{digest}" for path, digest in artifacts.items()],
+        definition=definition(check),
+        details={"lines": lines, "attested_by": by.strip(), "note": redact(note)},
+    )
+    return Result(check, Outcome("pass", summary, lines, artifacts))

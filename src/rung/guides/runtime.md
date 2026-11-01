@@ -53,6 +53,25 @@ Write everything into `Path(os.environ["RUNG_EVIDENCE_DIR"])`. Evidence must sur
   - Call `context.close()` before `browser.close()`: Playwright writes the video only when the
     context closes. The video is a `.webm` file in the evidence directory.
 
+## Recording with your own browser or computer-use tool
+
+A script is the default because anyone can re-run it. When a script cannot reach the feature (a
+login flow, a native app, a canvas UI, an OAuth redirect), drive it yourself instead, with whatever
+the session has: Claude in Chrome (record a GIF with `gif_creator`, screenshots), Codex's browser or
+computer use, Claude computer use, or Playwright MCP. Then:
+
+- Declare the check without `run`: `rung add evidence <id> --covers "<files behind the feature>"
+  --require .gif` (or `.png`, `.webm`). Narrow covers matter: the attestation holds until one of them
+  changes.
+- Save the recording and screenshots to files, then record them:
+  `rung attest <id> demo.gif step-2.png --by claude-in-chrome --note "Saved a draft invoice; it
+  appeared in the list with status Draft"`.
+- The note states what you drove and what you saw, as plainly as an assertion. If you did not see
+  the expected result, do not attest; report the bug.
+
+Rung records who attested and hashes the files, but it cannot re-run a recording, so this is weaker
+than a script: say in your summary that the evidence is attested.
+
 ## Structure of drive.py
 
 Organise the script as small functions a later agent can reuse: `launch()` (start what is needed and

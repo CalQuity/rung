@@ -2,12 +2,12 @@
 
 from rung.cli.commands.common import GATE_FAILED, OK
 from rung.cli.commands.draft import cmd_draft
-from rung.cli.commands.manage import cmd_add, cmd_baseline, cmd_laws, cmd_waive
+from rung.cli.commands.manage import cmd_add, cmd_attest, cmd_baseline, cmd_laws, cmd_waive
 from rung.cli.commands.run import cmd_check, cmd_ledger, cmd_prove, cmd_report, cmd_status
 from rung.cli.commands.setup import cmd_agents, cmd_doctor, cmd_hook, cmd_init, cmd_plan
 
 __all__ = [
-    "GATE_FAILED", "OK", "cmd_add", "cmd_agents", "cmd_baseline", "cmd_check", "cmd_doctor", "cmd_draft",
+    "GATE_FAILED", "OK", "cmd_add", "cmd_agents", "cmd_attest", "cmd_baseline", "cmd_check", "cmd_doctor", "cmd_draft",
     "cmd_hook", "cmd_init", "cmd_laws", "cmd_ledger", "cmd_plan", "cmd_prove", "cmd_report", "cmd_status",
     "cmd_waive",
 ]  # fmt: skip
