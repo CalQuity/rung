@@ -95,6 +95,10 @@ def test_classify_separates_findings_from_broken_tests() -> None:
     assert c(1, broken, ["pricing.ts"], "p.test.ts") == "error"
     assert c(1, failed + "    at total (src/pricing.ts:4:9)", ["pricing.ts"], "p.test.ts") == "finding"
     assert c(2, "ERROR collecting", src, test) == "error"
+    # A plain assert the model wrote, failing on the real code, is a finding too (no generated example).
+    assert c(1, "E       assert -1 == 0\ntest_p.py:12: AssertionError\n1 failed", src, test) == "finding"
+    # A mutant that stops the module compiling is not a caught bug.
+    assert c(1, "Transform failed with 1 error:\nsrc/pricing.ts:3:10", ["pricing.ts"], "p.test.ts") == "error"
 
 
 def test_a_property_no_mutant_can_fail_is_sent_back_and_a_strong_one_is_kept(pricing: Path) -> None:
