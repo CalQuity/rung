@@ -50,6 +50,7 @@ class RuntimeDraft:
     rounds: int = 0
     covers: list[str] = field(default_factory=list)
     evidence: list[str] = field(default_factory=list)
+    notes: str = ""
 
 
 def gather_context(root: Path, info: Inspection, focus: list[str]) -> str:
@@ -98,7 +99,8 @@ def draft_runtime(
         check = Check(check_id, "evidence", covers, {"run": run, "timeout": 600})
         outcome = EvidenceChecker().run(Context(root=root), check)
         if outcome.verdict == "pass":
-            return RuntimeDraft(True, outcome.summary, files, round_no, covers, list(outcome.evidence))
+            return RuntimeDraft(True, outcome.summary, files, round_no, covers, list(outcome.evidence),
+                                reply["notes"].strip())  # fmt: skip
         prompt += (
             f"\n\nRung ran your script and it did not prove the feature ({outcome.summary}):\n"
             + "\n".join(outcome.lines[-30:])

@@ -42,6 +42,7 @@ class DraftResult:
     theorems: list[str] = field(default_factory=list)
     alphabet: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    notes: str = ""  # what the model wants the developer to know
 
 
 def files_of(reply: dict[str, Any]) -> dict[str, str]:

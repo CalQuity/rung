@@ -31,6 +31,18 @@ run = "pytest -q"
 covers = ["src/**", "tests/**"]
 ```
 
+### Models
+
+Checks never use a model: every verdict comes from a deterministic tool. A model is used only by
+`rung draft`, to write a first version of a spec, proof or drive script that a checker then accepts
+or rejects. You choose it: `provider` picks Claude Code, Codex or an OpenAI-compatible endpoint, and
+`model` is passed through as that tool's `--model` / `-m`. Left empty, the tool's own default applies
+(Claude Code's default model, or the model in `~/.codex/config.toml`). Each drafted check records
+`drafted_by = "<provider>:<model>"`. Replies are schema-constrained JSON (`--json-schema`,
+`--output-schema`, or `response_format`).
+
+### Checks
+
 Every check has `id`, `kind` and optionally `covers`: glob patterns (`**` allowed) for the files
 whose change makes its verdict stale. A check with no `covers` and no spec files runs on every
 `--changed` run. Rung's own files (`.rung/`, `rung.toml`, `LAWS.md`) are never part of coverage.

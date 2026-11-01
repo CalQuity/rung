@@ -89,7 +89,7 @@ def draft(
             )
             continue
         base = DraftResult(True, result.reason, files, round_no, theorems=theorems, alphabet=alphabet,
-                           warnings=result.warnings)  # fmt: skip
+                           warnings=result.warnings, notes=reply["notes"].strip())  # fmt: skip
         if check.verdict == "fail" and check.minimal:
             m = check.minimal
             base.message = (

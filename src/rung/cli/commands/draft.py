@@ -16,6 +16,11 @@ from rung.drafting import providers, runtime
 from rung.drafting import tla as tla_draft
 
 
+def drafted_by(cfg: Config) -> str:
+    """Which provider and model drafted an artifact, recorded on the check it creates."""
+    return f"{cfg.llm.provider}:{cfg.llm.model or 'default'}"
+
+
 def _slug(paths: list[str]) -> str:
     return re.sub(r"[^a-z0-9]+", "-", Path(paths[0]).stem.lower()).strip("-") or "spec"
 
@@ -33,13 +38,16 @@ def _draft_runtime(args, cfg: Config, out: Output) -> int:
     provider = providers.get(cfg.llm)
     info = survey.survey(cfg.root)
     check_id = args.id or "runtime"
-    out.line(f"Drafting a runtime verification script with {cfg.llm.provider}; Rung runs it until it proves itself.")
+    out.line(f"Drafting a runtime verification script with {drafted_by(cfg)}; Rung runs it until it proves itself.")
     result = runtime.draft_runtime(
         provider, cfg.root, info, focus=args.files, check_id=check_id, intent=args.intent or ""
     )
     out.emit({"ok": result.ok, "message": result.message, "rounds": result.rounds, "covers": result.covers,
               "files": [str(f.relative_to(cfg.root)) for f in result.files], "evidence": result.evidence})  # fmt: skip
     out.line(f"{'OK' if result.ok else 'FAILED'} after {result.rounds} round(s): {result.message}")
+    if result.notes:
+        out.line("Notes from the model:")
+        out.detail(result.notes, indent=2)
     for f in result.files:
         out.detail(f"wrote {f.relative_to(cfg.root)}", indent=2)
     for e in result.evidence:
@@ -48,7 +56,11 @@ def _draft_runtime(args, cfg: Config, out: Output) -> int:
         out.line("The last script is kept for you to finish by hand; it is not registered as a check.")
         return GATE_FAILED
     run = f"python3 {(runtime.VERIFY_DIR / 'drive.py').as_posix()}"
-    add_check(cfg, Check(check_id, "evidence", result.covers, {"run": run, "timeout": 600}), out)
+    add_check(
+        cfg,
+        Check(check_id, "evidence", result.covers, {"run": run, "timeout": 600, "drafted_by": drafted_by(cfg)}),
+        out,
+    )
     skill = agents.install_verify_skill(cfg.root, cfg.name, check_id)
     out.line(f"wrote {skill.relative_to(cfg.root)} so agents verify user-facing changes with `rung check {check_id}`.")
     return OK
@@ -70,13 +82,16 @@ def cmd_draft(args, out: Output) -> int:
     check_id = args.id or f"{_slug(rel)}-{args.kind}"
     target = root / (args.out or f"spec/{args.kind}/{_slug(rel)}")
     target.mkdir(parents=True, exist_ok=True)
-    out.line(f"Drafting {args.kind} for {', '.join(rel)} with {cfg.llm.provider} ...")
+    out.line(f"Drafting {args.kind} for {', '.join(rel)} with {drafted_by(cfg)} ...")
 
     drafter = tla_draft.draft if args.kind == "tla" else lean_draft.draft
     result = drafter(provider, root, sources, target, intent=args.intent or "")
     out.emit({"ok": result.ok, "message": result.message, "rounds": result.rounds, "trace": result.trace,
               "files": [str(f.relative_to(root)) for f in result.files]})  # fmt: skip
     out.line(f"{'OK' if result.ok else 'FAILED'} after {result.rounds} round(s): {result.message}")
+    if result.notes:
+        out.line("Notes from the model:")
+        out.detail(result.notes, indent=2)
     for f in result.files:
         out.detail(f"wrote {f.relative_to(root)}", indent=2)
     if result.trace:
@@ -89,11 +104,18 @@ def cmd_draft(args, out: Output) -> int:
     if args.kind == "tla":
         spec = next(f for f in result.files if f.suffix == ".tla")
         cfg_file = next(f for f in result.files if f.suffix == ".cfg")
-        options = {"spec": spec.relative_to(root).as_posix(), "config": cfg_file.relative_to(root).as_posix()}
+        options = {"spec": spec.relative_to(root).as_posix(), "config": cfg_file.relative_to(root).as_posix(),
+                   "drafted_by": drafted_by(cfg)}  # fmt: skip
         add_check(cfg, Check(check_id, "tla", rel, options), out)
     else:
         project = target.relative_to(root).as_posix()
-        add_check(cfg, Check(check_id, "lean", [], {"project": project, "theorems": result.theorems}), out)
+        add_check(
+            cfg,
+            Check(
+                check_id, "lean", [], {"project": project, "theorems": result.theorems, "drafted_by": drafted_by(cfg)}
+            ),
+            out,
+        )
         exe = _lean_exe(target)
         if exe and result.alphabet and (target / "drt_adapter.py").exists():
             options = {

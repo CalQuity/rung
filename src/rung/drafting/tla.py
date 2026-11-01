@@ -62,7 +62,8 @@ def draft(
     )
     files: list[Path] = []
     for round_no in range(1, max_rounds + 1):
-        produced = files_of(provider.complete_json(prompt, schema=SCHEMA, system=system, cwd=root))
+        reply = provider.complete_json(prompt, schema=SCHEMA, system=system, cwd=root)
+        produced, notes = files_of(reply), reply["notes"].strip()
         spec_name = next((n for n in produced if n.endswith(".tla")), None)
         cfg_name = next((n for n in produced if n.endswith(".cfg")), None)
         if not spec_name or not cfg_name:
@@ -78,10 +79,11 @@ def draft(
                 files,
                 round_no,
                 tla.render_trace(result.trace),
+                notes=notes,
             )
         if result.verdict == "pass" and result.distinct_states > 1:
             return DraftResult(True, f"model-checked {result.distinct_states} distinct states, no violation",
-                               files, round_no)  # fmt: skip
+                               files, round_no, notes=notes)  # fmt: skip
         problem = (
             (result.reason + "\n" + result.output[-2000:])
             if result.verdict == "error"
