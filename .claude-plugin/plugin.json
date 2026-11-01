@@ -1,7 +1,7 @@
 {
   "name": "rung",
   "description": "Set up Rung in a repository: record tests and security scans as checks, gate pull requests in CI, and teach coding agents the verification rules.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "author": { "name": "CalQuity" },
   "homepage": "https://github.com/CalQuity/rung",
   "repository": "https://github.com/CalQuity/rung",

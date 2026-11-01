@@ -3,6 +3,18 @@
 All notable changes to Rung. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 
+## 0.1.3 (2026-11-01)
+
+### Fixed
+- `rung draft property`: a plain `assert` the model wrote that fails on the real code is now a
+  finding for a person, not a broken test. Before, a failure without Hypothesis's "Falsifying
+  example" marker was sent back to the model to rewrite, up to four times, which could hide the bug
+  the tests had found. A mutant that stops the module compiling is still not counted as caught.
+
+### Documentation
+- The README describes the runtime verification kit: the drive script, the `FEATURES.md` feature
+  map, the project verification skill for coding agents, and the recordings each run leaves.
+
 ## 0.1.2 (2026-11-01)
 
 The first release on PyPI, as `rung-cli`.
