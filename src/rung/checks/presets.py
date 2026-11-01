@@ -43,7 +43,9 @@ PRESETS: dict[str, Preset] = {
         Preset(
             "osv-scanner",
             "dependencies with known vulnerabilities",
-            "osv-scanner scan source -r . -f sarif --output-file {out}",
+            # --no-resolve scans manifests as written. Transitive resolution fails the whole scan when a
+            # manifest names a package the registry does not have; the `deps` check reports that package.
+            "osv-scanner scan source --no-resolve -r . -f sarif --output-file {out}",
             "brew install osv-scanner  |  https://github.com/google/osv-scanner",
             max_age_days=1,
             covers=[

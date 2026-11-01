@@ -90,6 +90,12 @@ can reach the feature.
 | `default_level` | preset's | Level for results the tool reports without one |
 | `covers` | preset's | gitleaks/semgrep: everything; osv-scanner: manifests and lockfiles; zizmor: workflows |
 
+The `osv-scanner` preset runs `osv-scanner scan source --no-resolve`: manifests and lockfiles are
+scanned as written, without resolving transitive dependencies, because one package the registry does
+not have (an invented or private name in `requirements.txt`) makes resolution fail the whole scan.
+The `deps` check is what reports such a package. A project that wants transitive resolution can set
+`run` to the command without `--no-resolve`.
+
 On `--changed` or `--base`, the scanner also runs on the merge base, in a temporary worktree,
 and only new findings count. Otherwise findings are compared with `.rung/baselines/<id>.json`
 if present. Without either, every finding counts as new.
