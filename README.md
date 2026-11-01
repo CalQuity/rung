@@ -48,6 +48,21 @@ rung check                        # run everything and record verdicts
 rung agents --hooks               # agents cannot finish while their changes are unverified
 ```
 
+Or let your coding agent do the setup. Rung ships a skill that installs the CLI, records your tests
+and scans, adds the CI gate and installs the agent rules, while leaving the decisions that are yours
+(accepting existing findings, approving laws) to you:
+
+```text
+# Claude Code (2.1.275+), inside a session:
+/plugin install rung --marketplace CalQuity/rung
+/rung:setup
+
+# Codex and other agents that read .agents/skills:
+mkdir -p ~/.agents/skills/rung-setup && curl -fsSL \
+  https://raw.githubusercontent.com/CalQuity/rung/main/skills/setup/SKILL.md \
+  | sed 's/^name: setup$/name: rung-setup/' > ~/.agents/skills/rung-setup/SKILL.md
+```
+
 Then let the model write a verification script for your app, which Rung keeps only once it has
 passed against the real app:
 
