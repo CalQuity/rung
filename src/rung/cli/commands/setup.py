@@ -72,7 +72,7 @@ def cmd_init(args, out: Output) -> int:
         for project in info.projects:
             if not project.test_command:
                 continue
-            check_id = "tests" if project.path == "." else f"{project.path.replace('/', '-')}-tests"
+            check_id = plan.static_check_id(project.path, "tests")
             options = {"run": project.test_command} | ({} if project.path == "." else {"cwd": project.path})
             covers = [] if project.path == "." else [f"{project.path}/**"]
             cfg.checks.append(Check(check_id, "command", covers, options))

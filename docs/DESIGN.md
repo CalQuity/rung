@@ -85,7 +85,8 @@ executed is only a draft, enforced by the checker rather than stated in a prompt
 
 Guidance (a skill and an AGENTS.md section) says how to use Rung and which shortcuts are off
 limits. Enforcement is a Claude Code `Stop` hook: when an agent tries to finish, `rung hook
-stop` checks whether the checks covering its uncommitted edits are fresh. If not, the agent is
+stop` checks whether the checks covering everything changed since the branch left its base
+(committed or not) are fresh. If not, the agent is
 told what to run and cannot stop yet. The hook fails open on anything unexpected, and lets the
 agent stop the second time in a turn, so it can never trap one.
 
@@ -128,9 +129,12 @@ Lean theorem plus a differential test, and a test suite, all at once. Agents may
 
 - Rung never stores credentials. CLI providers reuse the tool's own login; HTTP
   providers read a key from an environment variable named in `rung.toml`.
-- Drafting with Claude Code runs with all tools disabled (`--tools ""`); with Codex it
-  runs in a read-only sandbox. The model reads only the source excerpts Rung sends.
-- Model replies may only write files inside the chosen output directory.
+- Drafting with Claude Code runs with all tools disabled (`--tools ""`), so the model sees only
+  what Rung sends; Codex runs in a read-only sandbox and may read the repository.
+- Model replies are written only inside the chosen output directory. What Rung then *runs* is
+  model-written code: drive scripts and Lean builds run in the project, property tests in a
+  disposable copy with credential-looking variables removed. None of that is a security sandbox;
+  read generated code before trusting it.
 - Spec and proof checking runs locally. Nothing is uploaded. The `deps` check sends package
   names to PyPI and npm; the scanners make whatever network calls they make themselves
   (zizmor runs with `--offline`).

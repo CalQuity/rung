@@ -107,8 +107,23 @@ def find_root(start: Path) -> Path:
     raise ConfigError(f"no {CONFIG_NAME} in {start} or its parents; run `rung init`")
 
 
+def _unquoted_tokens(command: str) -> list[str]:
+    """Tokens with quoted text removed, so `node -e "a();"` is not mistaken for shell syntax."""
+    lexer = shlex.shlex(command, posix=False, punctuation_chars=False)
+    lexer.whitespace_split = True
+    try:
+        return [t for t in lexer if not (len(t) >= 2 and t[0] == t[-1] and t[0] in "'\"")]
+    except ValueError:
+        return command.split()
+
+
 SHELL_TOKENS = {"&&", "||", "|", ";", ">", ">>", "<", "2>", "2>&1", "&"}
 SHELLS = {"sh", "bash", "zsh", "dash", "fish", "cmd", "powershell", "pwsh"}
+
+
+def safe_id(text: str) -> str:
+    """A check id made from a path or name: unsupported characters become `-`."""
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip("-.")[:64] or "check"
 
 
 def check_command(check_id: str, key: str, command: str) -> None:
@@ -126,7 +141,8 @@ def check_command(check_id: str, key: str, command: str) -> None:
     if Path(argv[0]).name in SHELLS:
         return  # an explicit shell, e.g. sh -c "cd src && pytest", is the supported way
     problem = ""
-    if any(t in SHELL_TOKENS or t.startswith(("$(", "`")) or t.endswith(";") or "&&" in t or "||" in t for t in argv):
+    bare = _unquoted_tokens(command)
+    if any(t in SHELL_TOKENS or t.startswith(("$(", "`")) or t.endswith(";") or "&&" in t or "||" in t for t in bare):
         problem = "uses shell syntax (&&, |, ;, redirects)"
     elif "=" in argv[0] and not argv[0].startswith(("-", "/", ".")):
         problem = "starts with an environment assignment"
@@ -246,7 +262,15 @@ def write_atomic(path: Path, text: str) -> None:
 
 
 def save(config: Config) -> Path:
-    """Write `rung.toml`. Comments are not preserved; the file is regenerated from the parsed config."""
+    """Write `rung.toml`. Comments are not preserved; the file is regenerated from the parsed config.
+
+    Every check is validated exactly as `load` will validate it, so a command can never save a
+    configuration that the next command rejects.
+    """
+    for check in config.checks:
+        if not CHECK_ID.match(check.id):
+            raise ConfigError(f"check id {check.id!r} must be letters, digits, `.`, `_` or `-` (at most 64)")
+        _validate_check(check)
     text = dump(config)
     tomllib.loads(text)  # never write a file Rung itself could not read back
     path = config.root / CONFIG_NAME

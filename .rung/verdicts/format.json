@@ -1,0 +1,24 @@
+{
+ "at": "2026-11-01T09:41:31+00:00",
+ "check": "format",
+ "commit": "1e7c4e2435d82e5abccde7e65db4065d1f60607d",
+ "context": "",
+ "definition": "fa8c87f148e887c0",
+ "details": {
+  "base": "",
+  "findings": [],
+  "lines": [
+   "100 files already formatted"
+  ]
+ },
+ "evidence": [],
+ "hash": "2b97a6506d6d7833767c19b813e1adeb0ae0f09c7e0cd278b7a3d5d59b55bab8",
+ "inputs": {
+  "digest": "00405139f08ec5160df96e36a8d2e8a52ab64e11c999970fe884bffcec38aa07",
+  "files": 76
+ },
+ "kind": "command",
+ "summary": "`uv run ruff format --check .` exited 0",
+ "valid_until": "",
+ "verdict": "pass"
+}

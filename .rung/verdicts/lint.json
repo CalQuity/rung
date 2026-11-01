@@ -1,0 +1,24 @@
+{
+ "at": "2026-11-01T09:41:27+00:00",
+ "check": "lint",
+ "commit": "1e7c4e2435d82e5abccde7e65db4065d1f60607d",
+ "context": "",
+ "definition": "5e1ba0d80fc9fbf2",
+ "details": {
+  "base": "",
+  "findings": [],
+  "lines": [
+   "All checks passed!"
+  ]
+ },
+ "evidence": [],
+ "hash": "82ab8b275d1e127da0300849af56204f3673031fe35592596f55ee82362eb5de",
+ "inputs": {
+  "digest": "00405139f08ec5160df96e36a8d2e8a52ab64e11c999970fe884bffcec38aa07",
+  "files": 76
+ },
+ "kind": "command",
+ "summary": "`uv run ruff check .` exited 0",
+ "valid_until": "",
+ "verdict": "pass"
+}

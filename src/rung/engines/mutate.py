@@ -8,9 +8,6 @@ lines, never inside strings or comments), so every mutant is a plausible one-tok
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import json
 import re
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -24,11 +21,13 @@ PY = (".py",)
 JS = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
 
 # (pattern, replacement) pairs; the first group is kept, so patterns can require context.
+# Comparisons need spaces around them, as formatters write them, so generics (`Array<T>`), arrows
+# (`=>`) and shifts are never touched: those mutants would be syntax errors, not bugs.
 _COMMON = (
-    (r"(?<![<>=!])<(?![<=])", "<="),
-    (r"<=", "<"),
-    (r"(?<![-=>])>(?![>=])", ">="),
-    (r">=", ">"),
+    (r"(?<=\s)<(?=\s)", "<="),
+    (r"(?<=\s)<=(?=\s)", "<"),
+    (r"(?<=\s)>(?=\s)", ">="),
+    (r"(?<=\s)>=(?=\s)", ">"),
     (r"(?<=\s)\+(?=\s)", "-"),
     (r"(?<=\s)-(?=\s)", "+"),
     (r"(?<=\s)\*(?=\s)", "/"),
@@ -108,19 +107,13 @@ def mutants(path: Path, limit: int = 12, lines: set[int] | None = None) -> list[
 
 
 @contextmanager
-def applied(mutant: Mutant, backup_dir: Path | None = None) -> Iterator[None]:
-    """Write the mutant into its file for the duration of the block, and always restore the original.
+def applied(mutant: Mutant) -> Iterator[None]:
+    """Write the mutant into its file for the duration of the block, then restore the original.
 
-    With `backup_dir`, the original is saved there first, so a process killed mid-mutant (where no
-    `finally` runs) leaves something `recover` can put back.
+    Only ever call this on a disposable copy of the project (see `rung.drafting.sandbox`): a process
+    killed inside the block leaves the mutant in place.
     """
     original = mutant.path.read_bytes()
-    backup = None
-    if backup_dir is not None:
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        backup = backup_dir / (hashlib.sha256(str(mutant.path).encode()).hexdigest()[:16] + ".json")
-        payload = {"path": str(mutant.path), "original": base64.b64encode(original).decode()}
-        write_atomic(backup, json.dumps(payload))
     lines = original.decode().splitlines(keepends=True)
     current = lines[mutant.line - 1]
     lines[mutant.line - 1] = mutant.mutated + current[len(current.rstrip("\r\n")) :]
@@ -131,8 +124,6 @@ def applied(mutant: Mutant, backup_dir: Path | None = None) -> Iterator[None]:
     finally:
         mutant.path.write_bytes(original)
         _drop_bytecode(mutant.path)
-        if backup is not None:
-            backup.unlink(missing_ok=True)
 
 
 def _drop_bytecode(source: Path) -> None:
@@ -145,19 +136,3 @@ def _drop_bytecode(source: Path) -> None:
     if source.suffix == ".py":
         for pyc in (source.parent / "__pycache__").glob(f"{source.stem}.*.pyc"):
             pyc.unlink(missing_ok=True)
-
-
-def recover(backup_dir: Path) -> list[Path]:
-    """Restore every source file a killed run left mutated; returns the files restored."""
-    restored = []
-    for backup in sorted(backup_dir.glob("*.json")) if backup_dir.is_dir() else []:
-        try:
-            payload = json.loads(backup.read_text())
-            target = Path(payload["path"])
-            target.write_bytes(base64.b64decode(payload["original"]))
-            _drop_bytecode(target)
-        except (OSError, ValueError, KeyError):
-            continue  # an unreadable backup is kept for a person to look at
-        backup.unlink()
-        restored.append(target)
-    return restored

@@ -105,16 +105,19 @@ def _draft_property(args, cfg: Config, out: Output, sources: list[Path], rel: li
         f"Drafting property tests for {', '.join(rel)} with {drafted_by(cfg, provider)}; Rung runs them, then breaks "
         "the code on purpose to see whether they notice ..."
     )
-    result, target = property_draft.draft(provider, root, sources, _slug(rel), intent=args.intent or "")
-    test_rel = target.test_file.relative_to(root).as_posix()
+    result, target = property_draft.draft(
+        provider, root, sources, _slug(rel), intent=args.intent or "", out=args.out or ""
+    )
+    files = [f.relative_to(root).as_posix() for f in result.files]
     out.emit({"ok": result.ok, "message": result.message, "rounds": result.rounds, "trace": result.trace,
-              "files": [test_rel], "survivors": result.warnings, "run": target.command})  # fmt: skip
+              "files": files, "warnings": result.warnings, "run": target.command})  # fmt: skip
     out.line(f"{'OK' if result.ok else 'FAILED'} after {result.rounds} round(s): {result.message}")
     out.detail(f"drafted by {drafted_by(cfg, provider)}", indent=2)
     if result.notes:
         out.line("Notes from the model:")
         out.detail(result.notes, indent=2)
-    out.detail(f"wrote {test_rel}", indent=2)
+    for f in files:
+        out.detail(f"wrote {f}", indent=2)
     for w in result.warnings:
         out.detail(w, indent=2)
     if result.trace:
@@ -126,9 +129,13 @@ def _draft_property(args, cfg: Config, out: Output, sources: list[Path], rel: li
         return GATE_FAILED
     if not result.ok:
         return GATE_FAILED
-    cwd = target.project.relative_to(root).as_posix()
-    options = {"run": target.command, "drafted_by": drafted_by(cfg, provider)} | ({"cwd": cwd} if cwd != "." else {})
-    add_check(cfg, Check(check_id, "command", [*rel, test_rel], options), out)
+    # The verdict depends on the code under test, whatever it imports, and the runner's configuration:
+    # cover the whole project directory, and the test file itself.
+    covers = ["**/*"] if target.project == "." else [f"{target.project}/**"]
+    options = {"run": target.command, "drafted_by": drafted_by(cfg, provider), "specs": [target.test_file]}
+    if target.project != ".":
+        options["cwd"] = target.project
+    add_check(cfg, Check(check_id, "command", covers, options), out)
     if added := laws.propose(root, result.laws, [check_id]):
         out.line(f"Proposed {len(added)} law(s) in {laws.LAWS_FILE}: {', '.join(added)}.")
         out.line("Read each one; approve with `rung laws --approve <id>` only if it says what you mean.")

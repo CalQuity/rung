@@ -63,8 +63,8 @@ mkdir -p ~/.agents/skills/rung-setup && curl -fsSL \
   | sed 's/^name: setup$/name: rung-setup/' > ~/.agents/skills/rung-setup/SKILL.md
 ```
 
-Then let the model write a verification script for your app, which Rung keeps only once it has
-passed against the real app:
+Then let the model write a verification script for your app, which Rung registers as a check
+only once it has passed against the real app (a failed script is left for you to finish):
 
 ```bash
 rung draft runtime --intent "create, list and delete a todo through the HTTP API"
@@ -78,7 +78,7 @@ rung draft runtime --intent "create, list and delete a todo through the HTTP API
 | Bug fixes | `rung prove` | The new test passes *without* the fix, so it proves nothing |
 | Shortcuts to green | `shortcuts` | A change adds `@ts-ignore`, `# type: ignore`, `as any`, a lint disable, a skipped, focused or deleted test, a lowered coverage threshold or a relaxed type-checker setting |
 | Type checking and lint | `command` | The project's own `tsc`, pyright, mypy, ruff, ESLint, `go vet` or Clippy fails (`rung init` records the ones it finds configured) |
-| Laws on real code | `rung draft property` | A Hypothesis or fast-check property fails, or no deliberately broken copy of the code can fail it |
+| Laws on real code | `rung draft property` | A Hypothesis or fast-check property fails, or the properties catch fewer than half the deliberate bugs Rung plants |
 | Real behaviour (UI, API, CLI) | `evidence` | The drive script fails or records no evidence; `require = [".webm"]` demands a video. Without a script, an agent's browser or computer-use recording, attested with `rung attest`, holds until the code changes |
 | Secrets | `scan` (gitleaks) | A new secret appears |
 | Vulnerable dependencies | `scan` (osv-scanner) | A new known vulnerability appears |
@@ -110,12 +110,17 @@ verdict fresh. Agents may propose laws; only people approve them.
 has the model write Hypothesis (Python) or fast-check (TypeScript) properties for the laws, then:
 
 - runs them on the real code. A property that fails is a finding for you, never sent back to the
-  model to make it pass;
+  model to make it pass. So is any failure Rung cannot pin on the test's own code;
 - breaks the code on purpose, one token at a time (`<` to `<=`, `+` to `-`, `and` to `or`), and
-  runs them again. Properties that no broken copy can fail are too weak to catch anything, so the
-  surviving bugs go back to the model as the reason to strengthen them.
+  runs them again. Only a property failure counts as catching a bug; one that breaks the build or
+  times out is not counted. Properties that catch fewer than half go back to the model with the
+  bugs they missed. If no bug can be planted at all, the result says INCONCLUSIVE.
 
-The result is a `command` check and proposed laws in `LAWS.md`.
+All of this runs in a disposable copy of the project, without credential-looking environment
+variables, so your files are never mutated. That limits accidents; it is not a security sandbox,
+so read a drafted test before trusting it. The accepted test is written at the end (never over an
+existing file); a failed draft is kept in `.rung/cache/drafts/`. The result is a `command` check
+covering the project, and proposed laws in `LAWS.md`.
 
 ## Formal methods where they pay
 
@@ -154,7 +159,8 @@ jobs:
 The action runs the checks a pull request touches against its merge base. It keeps a single
 report comment up to date and fails only on what the pull request introduced. The pull request's
 own `rung.toml`, `LAWS.md`, waivers, baselines and scanner configs decide what it is checked
-against, so the action lists any edits to them in the report and as annotations; set
+against, so the action lists any edits to them in the report and as annotations (add other policy
+files, such as a semgrep rules file, with `policy-paths`); set
 `policy-changes: fail` to fail the gate on them until a reviewer accepts. Without the action, use
 `rung check --changed` and `rung report`.
 

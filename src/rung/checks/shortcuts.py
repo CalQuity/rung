@@ -58,26 +58,31 @@ class ShortcutsChecker(ScanChecker):
     def collect(self, cwd: Path, check: Check, timeout: int) -> list[sarif.Finding]:
         return engine.find(_working_files(cwd), check.get_list("allow"))
 
-    def _base(self, ctx: Context, check: Check) -> tuple[str | None, list[sarif.Finding] | None, str]:
-        """The commit to compare with (if any), the findings there, and how to describe it."""
+    def _commit(self, ctx: Context) -> str:
+        """The commit deleted tests and weakened settings are compared with: the base, else the default branch's."""
         if ctx.base:
-            return ctx.base, None, f"merge base {ctx.base[:10]}"
-        if (recorded := findings.load_baseline(ctx.root, check.id)) is not None:
-            return None, recorded, "the recorded baseline"
+            return ctx.base
         try:
-            commit = git.merge_base(ctx.root, git.default_base(ctx.root))
+            return git.merge_base(ctx.root, git.default_base(ctx.root))
         except git.GitError:
-            return None, None, ""
-        return commit, None, f"merge base {commit[:10]} with the default branch"
+            return ""
 
     def run(self, ctx: Context, check: Check) -> Outcome:
         allow = check.get_list("allow")
         head_files = _working_files(ctx.root)
         head = engine.find(head_files, allow)
-        commit, base, compared = self._base(ctx, check)
+        commit = self._commit(ctx)
+        base_files = _files_at(ctx.root, commit) if commit else []
+        # Findings are compared with the base, or with an accepted baseline when one is recorded; the
+        # structural comparisons (deleted tests, coverage, strictness) always use the base commit.
+        recorded = None if ctx.base else findings.load_baseline(ctx.root, check.id)
+        if recorded is not None:
+            base, compared = recorded, "the recorded baseline"
+        elif commit:
+            base, compared = engine.find(base_files, allow), f"merge base {commit[:10]}"
+        else:
+            base, compared = None, ""
         if commit:
-            base_files = _files_at(ctx.root, commit)
-            base = engine.find(base_files, allow)
             head += engine.compare(head_files, base_files, allow)
         t = findings.triage(check.id, head, base, findings.load_waivers(ctx.root),
                             fail_on=self.fail_on(check), today=date.today(), compared_with=compared)  # fmt: skip

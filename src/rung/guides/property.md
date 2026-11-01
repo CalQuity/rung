@@ -2,9 +2,10 @@
 
 A property test states something that must hold for **every** input, and lets a generator search
 for one where it does not: Hypothesis in Python, fast-check in TypeScript and JavaScript. Rung keeps
-a property only if it passes on the real code **and fails** when the code is broken on purpose
-(`<` turned into `<=`, `+` into `-`, `and` into `or`). A property that survives every such bug says
-too little, however true it is.
+a file only if its properties pass on the real code **and fail** on at least half of the deliberate
+one-token bugs it plants (`<` turned into `<=`, `+` into `-`, `and` into `or`). Only a failing
+property counts: a test that crashes or stops importing proves nothing. A property that survives
+every such bug says too little, however true it is.
 
 ## What makes a strong property
 
