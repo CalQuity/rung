@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+from rung.core.redact import redact
+
 LEVELS = ("none", "note", "warning", "error")
 
 
@@ -76,7 +78,32 @@ def _normalize_message(text: str) -> str:
     return " ".join(_VERSION.sub("N", _VERSIONED.sub("", text)).split())
 
 
-def _stable_token(result: dict[str, Any], location: dict[str, Any]) -> str:
+REDACTED_SNIPPETS = {"REDACTED", "[REDACTED]", "***", "<redacted>"}
+
+
+def _flagged_text_digest(root: Path, path: str, region: dict[str, Any]) -> str:
+    """A hash of the exact characters a finding points at, read from the file; the text is never kept.
+
+    Secret scanners redact their snippets, so without this every secret of one rule in one file
+    would share a fingerprint: replacing an accepted test token with a live one would look unchanged.
+    """
+    start, end = region.get("startLine"), region.get("endLine", region.get("startLine"))
+    if not start or not path:
+        return ""
+    try:
+        lines = (root / path).read_text(errors="ignore").splitlines()[start - 1 : end]
+    except OSError:
+        return ""
+    if not lines:
+        return ""
+    if region.get("endColumn"):
+        lines[-1] = lines[-1][: region["endColumn"] - 1]
+    if region.get("startColumn"):
+        lines[0] = lines[0][region["startColumn"] - 1 :]
+    return "flagged:" + hashlib.sha256("\n".join(lines).encode()).hexdigest()
+
+
+def _stable_token(result: dict[str, Any], location: dict[str, Any], root: Path, path: str) -> str:
     """What identifies a finding apart from its line number, which shifts with every edit.
 
     Order matters. The flagged code itself is the best identity. Next is the
@@ -84,9 +111,12 @@ def _stable_token(result: dict[str, Any], location: dict[str, Any]) -> str:
     `pkg@1.2.0` and later `pkg@1.2` is the same finding. Tool line hashes come
     last: several tools hash the whole file, so any edit to it changes them.
     """
-    snippet = location.get("region", {}).get("snippet", {}).get("text")
-    if snippet:
+    region = location.get("region", {})
+    snippet = region.get("snippet", {}).get("text")
+    if snippet and snippet.strip() not in REDACTED_SNIPPETS:
         return " ".join(snippet.split())
+    if snippet and (flagged := _flagged_text_digest(root, path, region)):
+        return flagged
     message = _normalize_message(result.get("message", {}).get("text") or "")
     if message:
         return message
@@ -164,8 +194,8 @@ def parse(sarif: str | dict[str, Any], root: Path, *, default_level: str = "warn
             physical = locations[0].get("physicalLocation", {})
             path = _relative(_uri(physical, run), root)
             line = int(physical.get("region", {}).get("startLine") or 0)
-            message = " ".join((result.get("message", {}).get("text") or "").split())
-            token = _stable_token(result, physical)
+            message = redact(" ".join((result.get("message", {}).get("text") or "").split()))
+            token = _stable_token(result, physical, root, path)
             digest = hashlib.sha256(f"{tool}\0{rule}\0{path}\0{token}".encode()).hexdigest()[:16]
             findings.append(Finding(tool, rule, level, path, line, message, digest))
     return findings
