@@ -33,7 +33,7 @@ from rung.core import proc
 from rung.core.config import ConfigError
 from rung.core.errors import RungError, ToolMissing
 from rung.drafting import sandbox
-from rung.drafting.common import LAWS, LAWS_FORMAT, DraftResult, schema, source_block
+from rung.drafting.common import LAWS, LAWS_FORMAT, DraftResult, machine_path_problem, schema, source_block
 from rung.drafting.providers import Provider
 from rung.engines import mutate
 
@@ -296,6 +296,9 @@ def draft(
             reply = provider.complete_json(prompt, schema=SCHEMA, system=system, cwd=root)
             notes, laws = reply["notes"].strip(), reply["laws"]
             body = re.sub(r"^```.*$\n?", "", reply["test"], flags=re.M).rstrip() + "\n"
+            if problem := machine_path_problem({target.test_file: body}):
+                prompt += problem
+                continue
             test_in_box.write_text(body)
             code, output = _run(target, box)
             if missing := _MISSING_PACKAGE.search(output):

@@ -10,6 +10,7 @@ hacking.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,7 @@ class DraftResult:
     warnings: list[str] = field(default_factory=list)
     notes: str = ""  # what the model wants the developer to know
     laws: list[dict[str, str]] = field(default_factory=list)  # proposed laws, for a person to approve
+    context: list[str] = field(default_factory=list)  # files Rung added to the prompt, e.g. SQL definitions
 
 
 def files_of(reply: dict[str, Any]) -> dict[str, str]:
@@ -84,3 +86,40 @@ def source_block(root: Path, sources: list[Path]) -> str:
         numbered = "\n".join(f"{i:4} {line}" for i, line in enumerate(src.read_text().splitlines(), 1))
         parts.append(f"--- {src.relative_to(root)} ---\n{numbered}")
     return "\n\n".join(parts)
+
+
+# Absolute paths that exist on one machine only: a home directory or a temporary directory.
+_MACHINE_PATH = re.compile(
+    r"(?<![\w.~-])(?:/(?:Users|home)/[^/\s'\"`]+/|[A-Za-z]:[\\/]+(?:Users|Windows[\\/]+Temp)[\\/]"
+    r"|/(?:private/)?(?:tmp|var/tmp)(?=[/\s'\"`]|$)|/(?:private/)?var/folders/)",
+    re.M,
+)
+
+
+def machine_paths(files: dict[str, str]) -> list[str]:
+    """`file:line: path` for each home or temporary directory path a model wrote into `files`.
+
+    Such a path works only on the machine that drafted the file (a fallback to the developer's own
+    checkout, a scratch file in /tmp), so a teammate's run or CI fails or reads the wrong thing.
+    """
+    found = []
+    for name, body in files.items():
+        if name.endswith(".md"):  # prose for people (a feature map) runs nowhere
+            continue
+        for n, line in enumerate(body.splitlines(), 1):
+            if m := _MACHINE_PATH.search(line):
+                found.append(f"{name}:{n}: {m.group(0)}")
+    return found
+
+
+def machine_path_problem(files: dict[str, str]) -> str:
+    """The repair request for a reply that hard-codes machine-specific paths, or "" when it has none."""
+    found = machine_paths(files)
+    if not found:
+        return ""
+    return (
+        "\n\nThese files hard-code absolute paths that exist only on one machine:\n"
+        + "\n".join(f"- {f}" for f in found)
+        + "\nUse paths relative to the script or the repository root (e.g. `Path(__file__).resolve().parent`), "
+        "or a temporary directory created at run time. Return the same fields."
+    )

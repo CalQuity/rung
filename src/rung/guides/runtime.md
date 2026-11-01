@@ -17,6 +17,13 @@ check: it passes only if the script exits 0 **and** leaves artifacts in `$RUNG_E
   log lines if it never comes up.
 - Exercise ONE user-facing feature end to end through its real interface: HTTP requests, CLI
   invocations, browser actions. Never internal functions or test-only endpoints.
+- Drive only routes that exist. The request lists the routes Rung found in the code (method, path,
+  `file:line`, and the prefixes routers are mounted under); use those paths and no others. If the
+  feature you were asked to drive is not among them, do not guess a URL and retry on 404s: say in
+  `notes` that the app has no such feature, and drive the closest feature it does have.
+- Keep paths portable: find the project relative to the script (`Path(__file__).resolve()`) or the
+  repository root, and create scratch space with `tempfile`. Rung rejects a script that hard-codes
+  a home or temporary directory path, because it would run on one machine only.
 - Check the observable result (status codes, response bodies, text on the page, persisted state)
   and exit 1 with a message on stderr naming what was expected and what happened. Exit 0 only on
   success. Never weaken an assertion to make the script pass.

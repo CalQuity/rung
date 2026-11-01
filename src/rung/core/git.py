@@ -121,6 +121,16 @@ def show_many(root: Path, commit: str, paths: list[str]) -> dict[str, bytes]:
     return out
 
 
+def commit_times(root: Path, paths: list[str]) -> dict[str, int]:
+    """The Unix time of the last commit that touched each path; uncommitted paths are left out."""
+    times = {}
+    for path in paths:
+        stamp = _git(root, "log", "-1", "--format=%ct", "--", path, check=False).strip()
+        if stamp.isdigit():
+            times[path] = int(stamp)
+    return times
+
+
 def files_at(root: Path, commit: str) -> list[str]:
     """Files under `root` as they were at `commit`."""
     return _paths(_git(root, "ls-tree", "-r", "-z", "--name-only", commit, "--", "."))

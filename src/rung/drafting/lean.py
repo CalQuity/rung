@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 from rung import guides
+from rung.drafting import sql_context
 from rung.drafting.common import (
     FILES,
     LAWS,
@@ -19,6 +20,7 @@ from rung.drafting.common import (
     STRINGS,
     DraftResult,
     files_of,
+    machine_path_problem,
     safe_write,
     schema,
     source_block,
@@ -52,8 +54,11 @@ def _drt_check(out_dir: Path, root: Path, exe: str, alphabet: list[str]) -> drt.
 
 
 def draft(
-    provider: Provider, root: Path, sources: list[Path], out_dir: Path, *, intent: str = "", max_rounds: int = 4
-) -> DraftResult:
+    provider: Provider, root: Path, sources: list[Path], out_dir: Path, *, intent: str = "", max_rounds: int = 4,
+    sql: sql_context.SqlContext | None = None,
+) -> DraftResult:  # fmt: skip
+    """Draft a model for `sources`; `sql` is the SQL behind their database calls (found here when not given)."""
+    sql = sql if sql is not None else sql_context.gather(root, sources)
     toolchain = lean.toolchain()
     system = guides.load("lean", lean_version=toolchain.split(":")[-1]) + FORMAT
     prompt = (
@@ -61,6 +66,7 @@ def draft(
         + (f"Laws the developer cares about: {intent}\n" if intent else "")
         + "\n"
         + source_block(root, sources)
+        + (f"\n\n{block}" if (block := sql.block(root)) else "")
     )
     files: list[Path] = []
     asked_for_stronger = False
@@ -69,6 +75,9 @@ def draft(
         produced = files_of(reply)
         if "Main.lean" not in produced or "lakefile.toml" not in produced or "drt_adapter.py" not in produced:
             prompt += "\n\nYour reply was missing Main.lean, lakefile.toml or drt_adapter.py."
+            continue
+        if problem := machine_path_problem(produced):
+            prompt += problem
             continue
         produced["lean-toolchain"] = toolchain + "\n"  # never the model's choice
         produced[".gitignore"] = ".lake/\n"  # build output must never be committed or stale a verdict
@@ -105,7 +114,8 @@ def draft(
             )
             continue
         base = DraftResult(True, result.reason, files, round_no, theorems=theorems, alphabet=alphabet,
-                           warnings=result.warnings, notes=reply["notes"].strip(), laws=reply["laws"])  # fmt: skip
+                           warnings=result.warnings + sql.warnings, notes=reply["notes"].strip(), laws=reply["laws"],
+                           context=sql.files)  # fmt: skip
         if check.verdict == "fail" and check.minimal:
             m = check.minimal
             base.message = (
@@ -114,4 +124,5 @@ def draft(
             )
             base.trace = f"input: {m.input or '(empty)'}\n  model: {m.model}\n  code:  {m.impl}"
         return base
-    return DraftResult(False, f"no kernel-checked model after {max_rounds} rounds", files, max_rounds)
+    return DraftResult(False, f"no kernel-checked model after {max_rounds} rounds", files, max_rounds,
+                       warnings=sql.warnings, context=sql.files)  # fmt: skip

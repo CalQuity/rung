@@ -30,7 +30,8 @@ from rung.checks.command import EvidenceChecker
 from rung.core import git
 from rung.core.config import Check
 from rung.core.errors import ToolMissing
-from rung.drafting.common import FILES, STRINGS, files_of, safe_write, schema
+from rung.drafting import routes
+from rung.drafting.common import FILES, STRINGS, files_of, machine_path_problem, safe_write, schema
 from rung.drafting.providers import Provider
 
 VERIFY_DIR = Path(".rung") / "verify"
@@ -116,10 +117,11 @@ def _context_files(root: Path, info: Inspection, focus: list[str], files: list[s
 
 
 def gather_context(root: Path, info: Inspection, focus: list[str]) -> str:
-    """What the model sees: the survey, a file list, and the project's own docs and entry points.
+    """What the model sees: the survey, the routes the app serves, a file list, and the project's docs.
 
     Files near the focus come first in the listing, so a sub-project (`frontend/`) is never hidden
-    behind hundreds of unrelated files that sort earlier.
+    behind hundreds of unrelated files that sort earlier. The routes come from the code itself, so the
+    model drives URLs that exist instead of guessing them.
     """
     files = git.list_files(root)
     focus_dirs = {str(Path(f).parent) for f in focus} - {"."}
@@ -132,6 +134,8 @@ def gather_context(root: Path, info: Inspection, focus: list[str]) -> str:
         f"Files ({len(listing)} of {len(files)}, those near the focus first):",
         "\n".join(listing),
     ]
+    if served := routes.prompt_block(routes.scan(root, files)):
+        parts += ["", served]
     budget = MAX_CONTEXT_BYTES
     for rel in _context_files(root, info, focus, files):
         path = root / rel
@@ -161,6 +165,9 @@ def draft_runtime(
         produced = files_of(reply)
         if "drive.py" not in produced or "FEATURES.md" not in produced:
             prompt += "\n\nYour reply must contain both `drive.py` and `FEATURES.md` in `files`."
+            continue
+        if problem := machine_path_problem(produced):
+            prompt += problem
             continue
         files = safe_write(out_dir, produced)
         covers = [g.strip() for g in reply["sources"] if g.strip()]
