@@ -33,9 +33,9 @@ def test_a_real_regression_test_is_proven(repo: Path) -> None:
     result = prove.prove(repo, PYTEST, "main", expect="refund exceeded charge")
     assert result.verdict == "pass", (result.summary, result.base, result.head)
     assert result.tests == ["tests/test_money.py"]
-    entry = ledger.read(repo)[-1]
+    entry = ledger.history(repo)[-1]
     assert entry["kind"] == "proof" and entry["verdict"] == "pass"
-    assert "money.py" in entry["covers"]
+    assert "money.py" in entry["details"]["files"]
 
 
 def test_a_test_that_passes_without_the_fix_proves_nothing(repo: Path) -> None:

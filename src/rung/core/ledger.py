@@ -1,43 +1,45 @@
-"""The evidence ledger: verdicts bound to the exact code and spec they checked.
+"""Verdicts: each check's latest result, bound to the exact inputs it checked.
 
-Each entry records a check's verdict together with a content hash of every file it covers and
-every spec or policy file it used, a hash of the check's own declaration, the comparison base,
-and when the verdict stops being valid (a waiver that expires). A verdict is *fresh* only while
-all of that still matches; anything else makes it *stale*.
+Each check has one small file, `.rung/verdicts/<check>.json`, holding its latest verdict: the
+outcome, a single digest over every covered and spec file (path and content), a hash of the check's
+own declaration, the comparison base, and when it stops being valid (a waiver that expires). A
+verdict is *fresh* only while all of that still matches and it is younger than the check's
+`max_age_days`.
 
-Entries are hash-chained. The chain detects an entry edited or removed in the middle of the
-ledger. It is an integrity aid, not an authenticated audit trail: someone who can rewrite the
-whole file can rehash it, and dropping the last entries is not detectable from the file alone.
-Treat changes to `.rung/` like any other change: through review.
+These files are meant to be committed, so teammates and CI see what was verified. One file per
+check means two branches conflict only when both ran the same check, and a conflicted, truncated or
+hand-edited file simply reads as "re-run this check". Each file carries a hash of its own contents,
+which detects corruption and careless edits. It is not a signature: anyone who can write the file
+can forge it, so CI should re-run the checks a change touches (`rung check --changed`) rather than
+trust committed verdicts for them.
 
-The ledger lives at `.rung/ledger.jsonl` and is meant to be committed. Writes take a file lock,
-so several agents or terminals can record verdicts at once.
+Per-file digests (to explain *which* file changed) and the full history of runs are kept in the
+git-ignored `.rung/cache/`, so the committed files stay a few hundred bytes each.
 """
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
-from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from rung.core import git
+from rung.core.config import write_atomic
 
-LEDGER_PATH = Path(".rung") / "ledger.jsonl"
-LOCK_PATH = Path(".rung") / "ledger.lock"
-GENESIS = "0" * 64
-BROKEN_CHAIN = "(the ledger's hash chain is broken; run `rung ledger`)"
+VERDICTS_DIR = Path(".rung") / "verdicts"
+CACHE_DIR = Path(".rung") / "cache"
+HISTORY_PATH = CACHE_DIR / "history.jsonl"
+CORRUPT = "(the verdict file is corrupt or was edited; re-run the check)"
 
 
 def file_digest(path: Path) -> str:
     """sha256 of a file's bytes, or "missing" when it does not exist."""
     try:
         return hashlib.sha256(path.read_bytes()).hexdigest()
-    except (FileNotFoundError, IsADirectoryError):
+    except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
         return "missing"
 
 
@@ -45,45 +47,35 @@ def snapshot(root: Path, patterns: list[str]) -> dict[str, str]:
     return {rel: file_digest(root / rel) for rel in git.expand(root, patterns)}
 
 
-def _entry_hash(entry: dict[str, Any]) -> str:
+def inputs_digest(files: dict[str, str]) -> str:
+    """One digest over every (path, content digest) pair, in sorted order."""
+    h = hashlib.sha256()
+    for path in sorted(files):
+        h.update(f"{path}\0{files[path]}\n".encode())
+    return h.hexdigest()
+
+
+def definition_hash(kind: str, covers: list[str], options: dict[str, Any]) -> str:
+    """A hash of how a check is declared; editing its options must stale its verdict."""
+    body = json.dumps({"kind": kind, "covers": covers, "options": options}, sort_keys=True, default=str)
+    return hashlib.sha256(body.encode()).hexdigest()[:16]
+
+
+def _self_hash(entry: dict[str, Any]) -> str:
     body = {k: v for k, v in entry.items() if k != "hash"}
     return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
 
 
-@contextlib.contextmanager
-def _locked(root: Path) -> Iterator[None]:
-    """Hold an exclusive lock on the ledger (POSIX advisory lock; a no-op where unavailable)."""
-    path = root / LOCK_PATH
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a") as fh:
-        try:
-            import fcntl
-        except ImportError:  # pragma: no cover - Windows
-            yield
-            return
-        fcntl.flock(fh, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
+def _file_name(check_id: str) -> str:
+    # Proof ids look like `proof:<slug>`; ids are otherwise already filename-safe.
+    return check_id.replace(":", "--") + ".json"
 
 
-def read(root: Path) -> list[dict[str, Any]]:
-    path = root / LEDGER_PATH
-    if not path.exists():
-        return []
-    entries = []
-    for line in path.read_text().splitlines():
-        if not line.strip():
-            continue
-        try:
-            entries.append(json.loads(line))
-        except json.JSONDecodeError:
-            entries.append({"check": "(unreadable line)", "hash": "", "prev": ""})
-    return entries
+def verdict_path(root: Path, check_id: str) -> Path:
+    return root / VERDICTS_DIR / _file_name(check_id)
 
 
-def append(
+def record(
     root: Path,
     *,
     check_id: str,
@@ -98,45 +90,74 @@ def append(
     context: str = "",
     valid_until: str = "",
 ) -> dict[str, Any]:
-    """Append one verdict to the ledger and return the written entry."""
+    """Write a check's latest verdict, cache its per-file inputs, and append it to the local history."""
     if verdict not in ("pass", "fail", "error"):
         raise ValueError(f"verdict must be pass, fail or error, not {verdict!r}")
-    with _locked(root):
-        entries = read(root)
-        entry: dict[str, Any] = {
-            "check": check_id,
-            "kind": kind,
-            "verdict": verdict,
-            "summary": summary,
-            "at": datetime.now(UTC).isoformat(timespec="seconds"),
-            "commit": git.head(root),
-            "covers": covers,
-            "specs": specs,
-            "definition": definition,
-            "context": context,
-            "valid_until": valid_until,
-            "evidence": evidence or [],
-            "details": details or {},
-            "prev": entries[-1].get("hash", "") if entries else GENESIS,
-        }
-        entry["hash"] = _entry_hash(entry)
-        path = root / LEDGER_PATH
-        with path.open("a") as fh:
-            fh.write(json.dumps(entry, sort_keys=True) + "\n")
+    files = covers | specs
+    entry: dict[str, Any] = {
+        "check": check_id,
+        "kind": kind,
+        "verdict": verdict,
+        "summary": summary,
+        "at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "commit": git.head(root),
+        "inputs": {"digest": inputs_digest(files), "files": len(files)},
+        "definition": definition,
+        "context": context,
+        "valid_until": valid_until,
+        "evidence": evidence or [],
+        "details": details or {},
+    }
+    entry["hash"] = _self_hash(entry)
+    write_atomic(verdict_path(root, check_id), json.dumps(entry, indent=1, sort_keys=True) + "\n")
+    write_atomic(root / CACHE_DIR / "inputs" / _file_name(check_id), json.dumps(files, sort_keys=True))
+    history = root / HISTORY_PATH
+    history.parent.mkdir(parents=True, exist_ok=True)
+    with history.open("a") as fh:
+        fh.write(json.dumps(entry, sort_keys=True) + "\n")
     return entry
 
 
-def verify_chain(entries: list[dict[str, Any]]) -> list[str]:
-    """Return one problem per broken link; an empty list means the chain is intact."""
-    problems = []
-    prev = GENESIS
-    for i, entry in enumerate(entries, start=1):
-        if entry.get("prev") != prev:
-            problems.append(f"entry {i} ({entry.get('check')}): previous-hash link broken")
-        if _entry_hash(entry) != entry.get("hash"):
-            problems.append(f"entry {i} ({entry.get('check')}): contents do not match its hash")
-        prev = entry.get("hash", "")
-    return problems
+def _load(path: Path) -> dict[str, Any]:
+    """A verdict file, or `{"invalid": reason}` if it cannot be trusted."""
+    try:
+        entry = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return {"invalid": "not valid JSON (a merge conflict or a truncated write?)"}
+    if not isinstance(entry, dict) or not isinstance(entry.get("check"), str):
+        return {"invalid": "not a verdict"}
+    if _self_hash(entry) != entry.get("hash"):
+        return {"invalid": "contents do not match the file's own hash (edited by hand?)", "check": entry["check"]}
+    return entry
+
+
+def read_all(root: Path) -> dict[str, dict[str, Any]]:
+    """Every verdict file, keyed by check id (or by file name when the file is unreadable)."""
+    out: dict[str, dict[str, Any]] = {}
+    directory = root / VERDICTS_DIR
+    if not directory.is_dir():
+        return out
+    for path in sorted(directory.glob("*.json")):
+        entry = _load(path)
+        out[entry.get("check") or path.stem] = entry | {"_file": path.relative_to(root).as_posix()}
+    return out
+
+
+def problems(root: Path) -> list[str]:
+    return [f"{e['_file']}: {e['invalid']}" for e in read_all(root).values() if "invalid" in e]
+
+
+def history(root: Path) -> list[dict[str, Any]]:
+    path = root / HISTORY_PATH
+    if not path.exists():
+        return []
+    out = []
+    for line in path.read_text().splitlines():
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
 
 
 @dataclass
@@ -151,48 +172,54 @@ class Status:
         return self.state == "fresh"
 
 
-def definition_hash(kind: str, covers: list[str], options: dict[str, Any]) -> str:
-    """A hash of how a check is declared; editing its options must stale its verdict."""
-    body = json.dumps({"kind": kind, "covers": covers, "options": options}, sort_keys=True, default=str)
-    return hashlib.sha256(body.encode()).hexdigest()[:16]
-
-
 class View:
-    """The ledger read and verified once, for every status decision in one command."""
+    """All verdicts read once, for every status decision in one command."""
 
     def __init__(self, root: Path) -> None:
         self.root = root
-        self.entries = read(root)
-        self.problems = verify_chain(self.entries)
-        self.latest: dict[str, dict[str, Any]] = {}
-        for entry in self.entries:
-            self.latest[entry.get("check", "")] = entry
+        self.verdicts = read_all(root)
+
+    def _changed_files(self, check_id: str, now: dict[str, str]) -> list[str]:
+        cached = self.root / CACHE_DIR / "inputs" / _file_name(check_id)
+        try:
+            then = json.loads(cached.read_text())
+        except (OSError, json.JSONDecodeError):
+            return ["(covered files changed)"]
+        return sorted(p for p in set(now) | set(then) if now.get(p) != then.get(p)) or ["(covered files changed)"]
 
     def status(
-        self, check_id: str, covers: list[str], specs: list[str], definition: str = "", context: str | None = None
+        self,
+        check_id: str,
+        covers: list[str],
+        specs: list[str],
+        definition: str = "",
+        context: str | None = None,
+        max_age_days: int | None = None,
     ) -> Status:
-        """Compare a check's latest verdict with the files, its declaration and its context as they are now."""
-        latest = self.latest.get(check_id)
-        if latest is None:
+        """Compare a check's verdict with its inputs, declaration, context and age as they are now."""
+        entry = self.verdicts.get(check_id)
+        if entry is None:
             return Status(check_id, "never", None, [])
-        if self.problems:
-            return Status(check_id, "stale", latest, [BROKEN_CHAIN])
-        if latest.get("verdict") != "pass":
-            return Status(check_id, "failing", latest, [])
+        if "invalid" in entry:
+            return Status(check_id, "stale", entry, [CORRUPT])
+        if entry.get("verdict") != "pass":
+            return Status(check_id, "failing", entry, [])
+        changed: list[str] = []
         now = snapshot(self.root, covers) | snapshot(self.root, specs)
-        then = latest.get("covers", {}) | latest.get("specs", {})
-        changed = sorted(p for p in set(now) | set(then) if now.get(p) != then.get(p))
-        if definition and latest.get("definition", definition) != definition:
+        if inputs_digest(now) != entry.get("inputs", {}).get("digest"):
+            changed += self._changed_files(check_id, now)
+        if definition and entry.get("definition", definition) != definition:
             changed.append("(the check's definition in rung.toml)")
-        if context is not None and latest.get("context", "") != context:
-            changed.append(f"(verified against {latest.get('context') or 'no base'}, not {context or 'no base'})")
-        if (until := latest.get("valid_until")) and datetime.now(UTC).date().isoformat() > until:
+        if context is not None and entry.get("context", "") != context:
+            changed.append(f"(verified against {entry.get('context') or 'no base'}, not {context or 'no base'})")
+        today = datetime.now(UTC)
+        if (until := entry.get("valid_until")) and today.date().isoformat() > until:
             changed.append(f"(a waiver it relied on expired on {until})")
-        return Status(check_id, "stale" if changed else "fresh", latest, changed)
-
-
-def status(
-    root: Path, check_id: str, covers: list[str], specs: list[str], definition: str = "", context: str | None = None
-) -> Status:
-    """One check's status; use `View` when deciding for several checks at once."""
-    return View(root).status(check_id, covers, specs, definition, context)
+        if max_age_days is not None:
+            try:
+                at = datetime.fromisoformat(entry["at"])
+            except (KeyError, ValueError):
+                at = today - timedelta(days=max_age_days + 1)
+            if today - at > timedelta(days=max_age_days):
+                changed.append(f"(older than {max_age_days} day(s); its data source changes over time)")
+        return Status(check_id, "stale" if changed else "fresh", entry, changed)

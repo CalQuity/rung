@@ -26,13 +26,13 @@ def test_check_ci_reruns_only_what_is_not_fresh(project: Path, capsys) -> None:
     capsys.readouterr()
     assert run(project, "check", "--ci") == 0
     assert "every selected check is fresh" in capsys.readouterr().out
-    assert len(ledger.read(project)) == 1
+    assert len(ledger.history(project)) == 1
 
 
 def test_failing_command_fails_the_run(project: Path) -> None:
     run(project, "add", "command", "broken", "--run", f"{sys.executable} -c 'raise SystemExit(3)'")
     assert run(project, "check", "broken") == 1
-    assert ledger.read(project)[-1]["verdict"] == "fail"
+    assert ledger.history(project)[-1]["verdict"] == "fail"
 
 
 def test_missing_tool_is_an_error_verdict_not_a_crash(project: Path, monkeypatch, capsys) -> None:
@@ -42,7 +42,7 @@ def test_missing_tool_is_an_error_verdict_not_a_crash(project: Path, monkeypatch
         fh.write('\n[[check]]\nid = "proto"\nkind = "tla"\nspec = "Spec.tla"\ncovers = []\n')
     assert run(project, "check", "proto") == 1
     assert "tla2tools.jar not found" in capsys.readouterr().out
-    assert ledger.read(project)[-1]["verdict"] == "error"
+    assert ledger.history(project)[-1]["verdict"] == "error"
 
 
 def test_init_without_tty_writes_config_and_laws(tmp_path: Path) -> None:
@@ -55,7 +55,7 @@ def test_init_without_tty_writes_config_and_laws(tmp_path: Path) -> None:
 def test_ledger_command_reports_intact_chain(project: Path, capsys) -> None:
     run(project, "check")
     assert run(project, "ledger") == 0
-    assert "chain intact" in capsys.readouterr().out
+    assert "0 corrupt" in capsys.readouterr().out
 
 
 def test_no_config_is_a_clean_error(tmp_path: Path, capsys) -> None:
@@ -72,7 +72,7 @@ def test_evidence_check_hashes_artifacts_into_the_ledger(project: Path) -> None:
     )
     run(project, "add", "evidence", "drive", "--run", f"{sys.executable} drive.py")
     assert run(project, "check", "drive") == 0
-    entry = ledger.read(project)[-1]
+    entry = ledger.history(project)[-1]
     assert entry["verdict"] == "pass"
     assert entry["evidence"][0].startswith(".rung/evidence/drive/")
     assert "transcript.txt sha256:" in entry["evidence"][0]
@@ -81,7 +81,7 @@ def test_evidence_check_hashes_artifacts_into_the_ledger(project: Path) -> None:
 def test_evidence_check_without_artifacts_fails(project: Path) -> None:
     run(project, "add", "evidence", "claims", "--run", f"{sys.executable} -c 'pass'")
     assert run(project, "check", "claims") == 1
-    assert "recorded no evidence" in ledger.read(project)[-1]["summary"]
+    assert "recorded no evidence" in ledger.history(project)[-1]["summary"]
 
 
 def test_editing_a_check_stales_only_that_check(project: Path) -> None:
@@ -115,7 +115,7 @@ def test_a_failing_check_shows_its_stderr_too(project: Path) -> None:
     script = "import sys; print('step 1 ok'); sys.exit('expected version 1.0, got none')"
     run(project, "add", "command", "noisy", "--run", f'{sys.executable} -c "{script}"')
     assert run(project, "check", "noisy") == 1
-    lines = ledger.read(project)[-1]["details"]["lines"]
+    lines = ledger.history(project)[-1]["details"]["lines"]
     assert lines[0] == "step 1 ok" and lines[-1] == "expected version 1.0, got none"
 
 

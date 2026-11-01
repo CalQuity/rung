@@ -47,7 +47,7 @@ def cmd_check(args, out: Output) -> int:
 def cmd_status(args, out: Output) -> int:
     cfg = load_config(args)
     rows = runner.statuses(cfg)
-    problems = ledger.verify_chain(ledger.read(cfg.root))
+    problems = ledger.problems(cfg.root)
     out.emit({
         "checks": [{"id": s.check_id, "state": s.state, "at": (s.entry or {}).get("at"), "changed": s.changed}
                    for s in rows],
@@ -59,7 +59,7 @@ def cmd_status(args, out: Output) -> int:
         for path in s.changed:
             out.detail(f"changed: {path}", indent=11)
     for p in problems:
-        out.line(out.style(f"LEDGER     {p}", "red"))
+        out.line(out.style(f"CORRUPT    {p}", "red"))
     if args.ci:
         return OK if rows and all(s.trusted for s in rows) and not problems else GATE_FAILED
     return OK
@@ -95,11 +95,20 @@ def cmd_prove(args, out: Output) -> int:
 
 
 def cmd_ledger(args, out: Output) -> int:
+    """Check every verdict file; with --prune, remove verdicts for checks no longer declared."""
     cfg = load_config(args)
-    entries = ledger.read(cfg.root)
-    problems = ledger.verify_chain(entries)
-    out.emit({"entries": len(entries), "intact": not problems, "problems": problems})
-    out.line(f"{len(entries)} entries; chain {'intact' if not problems else out.style('BROKEN', 'red')}")
+    verdicts = ledger.read_all(cfg.root)
+    problems = ledger.problems(cfg.root)
+    declared = {c.id for c in cfg.checks}
+    orphans = [k for k, v in verdicts.items() if k not in declared and v.get("kind") != "proof" and "invalid" not in v]
+    if args.prune:
+        for check_id in orphans:
+            ledger.verdict_path(cfg.root, check_id).unlink(missing_ok=True)
+    out.emit({"verdicts": len(verdicts), "problems": problems, "orphans": orphans, "pruned": bool(args.prune)})
+    out.line(f"{len(verdicts)} verdict file(s); {len(problems)} corrupt")
     for p in problems:
         out.detail(p, indent=2)
+    if orphans:
+        verb = "removed" if args.prune else "for checks no longer in rung.toml (remove with --prune)"
+        out.line(f"{len(orphans)} verdict(s) {verb}: {', '.join(orphans)}")
     return GATE_FAILED if problems else OK

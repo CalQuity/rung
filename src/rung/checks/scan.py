@@ -60,6 +60,12 @@ class ScanChecker(Checker):
         """The policy a verdict depends on: this check's baseline and the waivers file."""
         return [*check.get_list("specs"), findings.baseline_path_rel(check.id), findings.WAIVERS_FILE.as_posix()]
 
+    def max_age_days(self, check: Check) -> int | None:
+        if "max_age_days" in check.options:
+            return check.get_int("max_age_days", 0) or None
+        preset = self._preset(check)
+        return preset.max_age_days if preset else None
+
     def default_covers(self, check: Check) -> list[str]:
         preset = self._preset(check)
         return list(preset.covers) if preset else ["**/*"]

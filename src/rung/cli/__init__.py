@@ -83,7 +83,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--tests", nargs="*", help="test files to carry over (default: test files changed on this branch)")
     s.add_argument("--expect", help="text the failing run must contain, e.g. the assertion")
     s.add_argument("--cwd", default=".", help="directory to run the test command in (e.g. backend)")
-    add("ledger", c.cmd_ledger, "verify the evidence ledger's hash chain")
+    s = add("ledger", c.cmd_ledger, "check the verdict files for corruption")
+    s.add_argument("--prune", action="store_true", help="remove verdicts of checks no longer in rung.toml")
 
     s = add("laws", c.cmd_laws, "list laws and whether each one holds")
     s.add_argument("--approve", metavar="LAW_ID", help="mark a proposed law as approved")

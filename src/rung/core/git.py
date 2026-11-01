@@ -33,7 +33,7 @@ SKIP_DIRS = frozenset({
 
 # Rung's own outputs. Writing a verdict or recording evidence must never stale another verdict.
 # Verification inputs under `.rung/` (drive scripts, baselines, waivers) are not listed here.
-RUNG_OUTPUTS = (".rung/ledger.jsonl", ".rung/ledger.lock", ".rung/evidence/", ".rung/cache/", ".rung/runs/")
+RUNG_OUTPUTS = (".rung/verdicts/", ".rung/evidence/", ".rung/cache/", ".rung/runs/", ".rung/ledger.jsonl")
 # Files whose meaning reaches a verdict another way: each verdict hashes its check's declaration.
 RUNG_STATE_FILES = frozenset({"rung.toml", "LAWS.md"})
 

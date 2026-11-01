@@ -20,7 +20,7 @@ LAW_ICON = {"held": "✅", "unproven": "🟡", "broken": "❌", "proposed": "�
 
 def build(config: Config) -> dict[str, Any]:
     statuses = {s.check_id: s for s in runner.statuses(config)}
-    entries = ledger.read(config.root)
+    verdicts = ledger.read_all(config.root)
 
     rows = []
     new_findings = []
@@ -47,15 +47,12 @@ def build(config: Config) -> dict[str, Any]:
         state, why = laws.state(law, statuses)
         law_rows.append({"id": law.id, "text": law.text, "state": state, "why": why})
 
-    latest_proofs: dict[str, dict[str, Any]] = {}
-    for e in entries:
-        if e.get("kind") == "proof":
-            latest_proofs[e["check"]] = e
     proofs = []
-    for p in latest_proofs.values():
+    for p in (v for v in verdicts.values() if v.get("kind") == "proof"):
         # A proof is about specific bytes: once its tests or the fixed code change, it no longer holds.
-        current = ledger.snapshot(config.root, list(p.get("covers", {})))
-        stale = p["verdict"] == "pass" and current != p.get("covers", {})
+        files = p.get("details", {}).get("files", [])
+        current = ledger.inputs_digest(ledger.snapshot(config.root, files))
+        stale = p["verdict"] == "pass" and current != p.get("inputs", {}).get("digest")
         proofs.append({
             "id": p["check"], "verdict": "stale" if stale else p["verdict"],
             "summary": "the tests or the fixed code changed since this proof" if stale else p["summary"],
@@ -71,7 +68,7 @@ def build(config: Config) -> dict[str, Any]:
         "laws": law_rows,
         "new_findings": new_findings,
         "proofs": proofs,
-        "ledger_intact": not ledger.verify_chain(entries),
+        "ledger_intact": not any("invalid" in v for v in verdicts.values()),
         "summary": {
             "checks_fresh": trusted,
             "checks_total": len(rows),
@@ -96,7 +93,7 @@ def markdown(data: dict[str, Any]) -> str:
         "",
     ]
     if not data["ledger_intact"]:
-        out += ["> ❗ The evidence ledger's hash chain is broken; verdicts cannot be trusted.", ""]
+        out += ["> ❗ Some verdict files are corrupt or were edited by hand; those checks must be re-run.", ""]
 
     if data["laws"]:
         out += ["| | Law | Status |", "|---|---|---|"]

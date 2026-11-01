@@ -181,6 +181,10 @@ class DepsChecker(Checker):
     kind = "deps"
     summary = "New dependencies must exist on their registry and not be brand new"
 
+    def max_age_days(self, check: Check) -> int | None:
+        # A package can be published, yanked or taken over without any file here changing.
+        return check.get_int("max_age_days", 1) or None
+
     def default_covers(self, check: Check) -> list[str]:
         return list(MANIFESTS)
 

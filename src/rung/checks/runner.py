@@ -71,7 +71,7 @@ def run_check(config: Config, check: Check, *, base: str | None = None) -> Resul
     after = (ledger.snapshot(root, cover_patterns), ledger.snapshot(root, spec_patterns))
     if after != before:
         outcome = Outcome("error", "files changed while the check ran; re-run it", outcome.lines)
-    ledger.append(
+    ledger.record(
         root,
         check_id=check.id,
         kind=check.kind,
@@ -95,7 +95,8 @@ def run_check(config: Config, check: Check, *, base: str | None = None) -> Resul
 def status(config: Config, check: Check, *, base: str | None = None, view: ledger.View | None = None) -> ledger.Status:
     """Whether `check`'s latest verdict still holds. With `base`, it must have been made against that base."""
     view = view or ledger.View(config.root)
-    return view.status(check.id, covers(check), specs(check), definition(check), base)
+    max_age = registry.get(check.kind).max_age_days(check)
+    return view.status(check.id, covers(check), specs(check), definition(check), base, max_age)
 
 
 def statuses(config: Config, *, base: str | None = None) -> list[ledger.Status]:
