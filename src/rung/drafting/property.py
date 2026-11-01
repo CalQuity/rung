@@ -51,7 +51,11 @@ GOOD_ENOUGH = 0.5  # share of viable mutants a property file must catch
 CANARY = "rung-canary-7f3a"
 DRAFTS_DIR = Path(".rung") / "cache" / "drafts"
 
-_FAILING_EXAMPLE = re.compile(r"Falsifying example|Failing test case|Counterexample:|Property failed after", re.I)
+# A run that never got as far as running tests: a module that does not compile or import.
+_BUILD_FAILED = re.compile(
+    r"Transform failed|Cannot find module|ERR_MODULE_NOT_FOUND|error TS\d+|SyntaxError: |ERROR collecting|"
+    r"ImportError while importing test module"
+)
 # Errors that mean the test's own code is broken, when the failure happens inside the test file.
 _BROKEN = {"NameError", "ImportError", "ModuleNotFoundError", "SyntaxError", "IndentationError", "ReferenceError",
            "AttributeError", "TypeError", "UnboundLocalError"}  # fmt: skip
@@ -163,15 +167,17 @@ def passed_count(output: str) -> int:
 
 
 def classify(returncode: int, output: str, sources: list[str], test_file: str) -> str:
-    """pass, finding (a property failed on the code) or error (the test itself is broken, or ran nothing).
+    """pass, finding (a test failed on the code) or error (the test itself is broken, or ran nothing).
 
-    `sources` and `test_file` are file names, used to tell where a failure happened: an error raised in
-    the code under test is a finding, even a `NameError`; a non-assertion error raised in the test file
-    is a broken test; anything Rung cannot place is a finding, for a person to judge.
+    Exit status 1 means tests ran and failed. That is a finding, whether or not the failure came with
+    a generated example: a plain `assert` the model wrote can catch the bug just as well. The test is
+    broken instead when the run could not build or import, or when a non-assertion error (a typo, a
+    wrong call) is raised in the test file itself. An error raised in the code under test is always a
+    finding, even a `NameError`; anything Rung cannot place goes to a person as a finding.
     """
     if returncode == 0:
         return "pass" if passed_count(output) > 0 else "error"
-    if returncode != 1 or not _FAILING_EXAMPLE.search(output):
+    if returncode != 1 or _BUILD_FAILED.search(output):
         return "error"
     py = _PY_LOCATION.findall(output)
     js = _JS_LOCATION.findall(output)
