@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import re
 from datetime import date, timedelta
+from pathlib import Path
 
 from rung.checks import findings, runner
 from rung.checks.presets import PRESETS
 from rung.checks.scan import ScanChecker
 from rung.cli.commands.common import OK, add_check, load_config
-from rung.cli.output import STATE_STYLE, Output
+from rung.cli.output import STATE_STYLE, VERDICT_STYLE, Output
 from rung.core import git, laws
 from rung.core.config import Check, ConfigError
 
@@ -39,9 +40,10 @@ def cmd_add(args, out: Output) -> int:
     cfg = load_config(args)
     options: dict[str, object] = {}
     if args.kind in ("command", "evidence"):
-        if not args.run:
-            raise ConfigError(f"`rung add {args.kind}` needs --run")
-        options["run"] = args.run
+        if not args.run and args.kind == "command":
+            raise ConfigError("`rung add command` needs --run")
+        if args.run:
+            options["run"] = args.run
         if args.cwd:
             options["cwd"] = args.cwd
         if args.require:
@@ -94,4 +96,15 @@ def cmd_waive(args, out: Output) -> int:
     path = findings.add_waiver(cfg.root, w)
     out.emit({"check": w.check, "fingerprint": w.fingerprint, "expires": str(w.expires), "approved_by": approver})
     out.line(f"Waived {w.fingerprint} on {w.check!r} until {w.expires} ({path.relative_to(cfg.root)}).")
+    return OK
+
+
+def cmd_attest(args, out: Output) -> int:
+    cfg = load_config(args)
+    result = runner.attest(cfg, cfg.check(args.check), [Path(f) for f in args.files], by=args.by, note=args.note or "")
+    out.emit({"check": result.check.id, "verdict": result.verdict, "summary": result.outcome.summary,
+              "evidence": list(result.outcome.evidence)})  # fmt: skip
+    out.line(f"{out.badge('pass', VERDICT_STYLE, 10)} {result.check.id}: {result.outcome.summary}")
+    for line in result.outcome.lines:
+        out.detail(line, indent=11)
     return OK

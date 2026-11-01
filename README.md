@@ -76,7 +76,7 @@ rung draft runtime --intent "create, list and delete a todo through the HTTP API
 |---|---|---|
 | Tests | `command` | The suite fails |
 | Bug fixes | `rung prove` | The new test passes *without* the fix, so it proves nothing |
-| Real behaviour (UI, API, CLI) | `evidence` | The drive script fails or records no evidence; `require = [".webm"]` demands a video |
+| Real behaviour (UI, API, CLI) | `evidence` | The drive script fails or records no evidence; `require = [".webm"]` demands a video. Without a script, an agent's browser or computer-use recording, attested with `rung attest`, holds until the code changes |
 | Secrets | `scan` (gitleaks) | A new secret appears |
 | Vulnerable dependencies | `scan` (osv-scanner) | A new known vulnerability appears |
 | Invented or brand-new packages | `deps` | A new package is missing from PyPI/npm, or is under 30 days old |
@@ -176,12 +176,13 @@ any OpenAI-compatible endpoint, including local models. Rung never stores creden
 | `rung prove 'pytest tests/test_x.py'` | Show a new test fails without the fix and passes with it |
 | `rung laws [--approve ID]` | Which laws hold |
 | `rung add <kind> <id> ...` | Declare a `command`, `evidence`, `scan` or `deps` check |
+| `rung attest <check> <files> --by <tool>` | Record evidence an agent or person captured (Claude in Chrome, Codex, computer use) |
 | `rung baseline <check>` | Accept a scan's existing findings |
 | `rung waive <check> <fingerprint> --reason ...` | Accept one finding until an expiry date |
 | `rung draft tla\|lean\|runtime` | Model-drafted spec, proof or drive script; a checker decides |
 | `rung agents [--hooks]` | Agent skill, AGENTS.md rules, enforcement hook |
 | `rung doctor` | Which tools and model CLIs are available |
-| `rung ledger` | Verify the ledger's hash chain |
+| `rung ledger [--prune]` | Check the verdict files for corruption |
 
 Every command takes `-C DIR` and `--json`. Exit codes: `0` ok, `1` a check or gate failed,
 `2` configuration or usage error, `3` a required tool is missing, `4` git error.

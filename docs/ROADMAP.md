@@ -3,7 +3,7 @@
 ## Shipped (0.1)
 
 - CLI: `init`, `plan`, `doctor`, `check` (`--changed`, `--base`), `status`, `report`, `prove`,
-  `laws`, `add`, `baseline`, `waive`, `draft tla|lean|runtime`, `agents`, `hook`, `ledger`;
+  `laws`, `add`, `attest`, `baseline`, `waive`, `draft tla|lean|runtime`, `agents`, `hook`, `ledger`;
   `--json` and documented exit codes everywhere
 - Check kinds: `command`, `evidence`, `scan` (any SARIF tool; gitleaks, osv-scanner and zizmor
   verified), `deps`, `tla`, `lean`, `drt`
@@ -11,11 +11,26 @@
   fingerprints, waivers with expiry
 - Fix proofs: a new test must fail on the merge base and pass on the branch
 - Runtime verification scripts drafted by a model and kept only once they pass
+- Attested evidence: recordings an agent makes with its own browser or computer-use tool
+  (Claude in Chrome, Codex, computer use), bound to the code until it changes
+- GitHub Action flags pull requests that edit policy files; a pre-commit hook
 - Claude Code Stop hook that blocks finishing with unverified changes
 - Per-check verdict files bound to their inputs; `LAWS.md`
 - GitHub Action with a sticky report comment; Rung verifies its own repository
 
 ## Next
+
+### Output for the tools developers already watch
+`rung check --format sarif|github|junit`. SARIF uploads to GitHub code scanning, GitHub annotations
+put findings inline on the pull request diff, and JUnit feeds any CI's test view. Rung reads SARIF
+already; this writes it.
+
+### Editor support for `rung.toml`
+A JSON Schema, registered in SchemaStore, so editors and Taplo validate check kinds and options
+while they are typed rather than at `rung check`.
+
+### Shell completions and a docs site
+`rung completions bash|zsh|fish`, and a small site with a CLI reference generated from the parser.
 
 ### Test quality
 Mutation-testing adapters (mutmut, Stryker, cargo-mutants) that report which mutants the suite
@@ -63,6 +78,18 @@ Record tokens, wall time and CPU energy per verified change, comparing determini
 checkers with LLM-only verification loops.
 
 ## Later
+
+- `rung explain <kind|state|fingerprint>`: what a check kind does, what a verdict state means, and
+  why a finding blocks, for people and agents alike.
+- CI templates beyond GitHub: GitLab, CircleCI, Jenkins and Buildkite, running `rung check
+  --changed` and `rung report`.
+- A Docker image with Java, `tla2tools.jar`, elan and the scanners preinstalled, removing the
+  slowest CI setup step.
+- `-q` and `-v` flags, for quiet hooks and verbose TLC and Lean runs.
+- Monorepos: several `rung.toml` files run and reported together.
+- `rung migrate` to upgrade `rung.toml` and `.rung/` files across format changes.
+- reviewdog's rdjson output, to reuse its GitLab, Gerrit and Bitbucket reporters.
+- `rung self update` hints in `rung doctor` when a newer release exists.
 
 - A Rust port of the CLI once the file formats settle, shipped as a single binary
   (Homebrew, a curl installer, npm wrapper). The current test suite and recorded

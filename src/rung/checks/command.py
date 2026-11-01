@@ -6,7 +6,9 @@ import os
 import shlex
 import subprocess
 import uuid
+from collections.abc import Iterable
 from datetime import UTC, datetime
+from pathlib import Path
 
 from rung.checks.base import Checker, Context, Outcome
 from rung.core import ledger, proc
@@ -55,6 +57,25 @@ class CommandChecker(Checker):
         return Outcome(verdict, f"`{check.require('run')}` exited {result.returncode}", tail(result))
 
 
+def evidence_dir(root: Path, check_id: str) -> Path:
+    """A new directory, unique to this run, under `.rung/evidence/<check>/`."""
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    out_dir = root / ".rung" / "evidence" / check_id / f"{stamp}-{uuid.uuid4().hex[:8]}"
+    out_dir.mkdir(parents=True, exist_ok=False)
+    return out_dir
+
+
+def missing_required(check: Check, artifacts: Iterable[str]) -> list[str]:
+    """Required artifact suffixes (`require`) that none of `artifacts` has."""
+    names = [a.lower() for a in artifacts]
+    return [r for r in (s.lower() for s in check.get_list("require")) if not any(n.endswith(r) for n in names)]
+
+
+def is_attested(check: Check) -> bool:
+    """An evidence check without `run`: an agent or a person records the evidence (`rung attest`)."""
+    return check.kind == "evidence" and "run" not in check.options
+
+
 class EvidenceChecker(Checker):
     """Run a script that drives the real app and must leave artifacts behind.
 
@@ -63,6 +84,11 @@ class EvidenceChecker(Checker):
     script that exits 0 but records nothing fails: "it works" without evidence is exactly what
     this rung exists to reject. `require` can demand particular artifact types, e.g. `[".webm"]`.
     The drive script itself belongs in `specs`, so editing it stales the verdict.
+
+    Without `run`, the check is *attested*: an agent drives the app with its own browser or
+    computer-use tool, records it, and hands the files to `rung attest`. Rung cannot re-run that, so
+    the verdict holds only until a covered file changes, and running the check just reports whether
+    fresh evidence exists.
     """
 
     kind = "evidence"
@@ -72,15 +98,18 @@ class EvidenceChecker(Checker):
         return list(WHOLE_PROJECT)
 
     def run(self, ctx: Context, check: Check) -> Outcome:
-        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-        out_dir = ctx.root / ".rung" / "evidence" / check.id / f"{stamp}-{uuid.uuid4().hex[:8]}"
-        out_dir.mkdir(parents=True, exist_ok=False)
+        if is_attested(check):
+            return Outcome(
+                "error",
+                f"no fresh evidence: drive the feature, record it, then `rung attest {check.id} <files> --by <tool>`",
+            )
+        out_dir = evidence_dir(ctx.root, check.id)
         result = _run(ctx, check, {"RUNG_EVIDENCE_DIR": str(out_dir)})
         (out_dir / "run.log").write_text(redact(result.stdout + result.stderr))
         artifacts = {
             p.relative_to(ctx.root).as_posix(): ledger.file_digest(p)
             for p in sorted(out_dir.rglob("*"))
-            if p.is_file() and p.name != "run.log"
+            if p.is_file() and p.name != "run.log" and p.stat().st_size > 0
         }
         lines = [f"evidence: {path}" for path in artifacts]
         command = check.require("run")
@@ -88,8 +117,6 @@ class EvidenceChecker(Checker):
             return Outcome("fail", f"`{command}` exited {result.returncode}", lines + tail(result, 10), artifacts)
         if not artifacts:
             return Outcome("fail", "the script exited 0 but recorded no evidence", lines)
-        required = [str(r).lower() for r in check.get_list("require")]
-        missing = [r for r in required if not any(p.lower().endswith(r) for p in artifacts)]
-        if missing:
+        if missing := missing_required(check, artifacts):
             return Outcome("fail", f"required evidence missing: {', '.join(missing)}", lines, artifacts)
         return Outcome("pass", f"{len(artifacts)} artifact(s) recorded", lines, artifacts)

@@ -97,6 +97,10 @@ its edits are not freshly passing. The hook needs `rung` on the PATH Claude Code
 Only where they pay off, and only with a model provider configured:
 - **A user-facing app:** `rung draft runtime --intent "<one feature a user cares about>"`. Rung keeps
   the generated drive script only after it has run and left evidence. Add `--require .webm` for a video.
+  Where a script cannot reach the feature (a login flow, a native app), an agent with a browser or
+  computer-use tool (Claude in Chrome, Codex, computer use) can drive and record it instead: `rung add
+  evidence <id> --covers <files> --require .gif` without `--run`, then `rung attest <id> <files> --by
+  <tool> --note "<what was seen>"`. Attested evidence is not re-run, so it is weaker than a script.
 - **Concurrency, queues, retries, leases:** `rung draft tla <file>`. A counterexample is a finding:
   show it to the developer as a possible bug. Never edit the spec or invariant to make it go away.
 - **Small pure logic (pricing, permissions, parsers):** `rung draft lean <file>`. It writes a proven

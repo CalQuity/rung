@@ -24,6 +24,10 @@ The first release on PyPI, as `rung-cli`.
 - The GitHub Action lists pull request edits to policy files (rung.toml, LAWS.md, waivers,
   baselines, scanner configs); `policy-changes: fail` fails the gate on them.
 - A pre-commit hook (`.pre-commit-hooks.yaml`).
+- Attested evidence: an `evidence` check without `run` takes recordings an agent made with its own
+  browser or computer-use tool (Claude in Chrome, Codex, computer use), or a person made by hand,
+  through `rung attest <check> <files> --by <tool> --note ...`. The verdict holds until a covered
+  file changes.
 
 ### Fixed
 - TLA+ checks fail when the config declares no invariant or property, instead of passing.
@@ -33,6 +37,7 @@ The first release on PyPI, as `rung-cli`.
   on the same line is a new finding. Every scanner's messages are redacted before they are stored.
 - Rung's own `.rung/` state is never scanned for findings.
 - `requirements` includes cannot loop or leave the repository; malformed manifests are errors.
+- Zero-byte files no longer count as evidence.
 - Unexpected errors exit 2 with a one-line message (`RUNG_DEBUG=1` shows the traceback).
 
 ## 0.1.1
