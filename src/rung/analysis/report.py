@@ -51,11 +51,16 @@ def build(config: Config) -> dict[str, Any]:
     for e in entries:
         if e.get("kind") == "proof":
             latest_proofs[e["check"]] = e
-    proofs = [
-        {"id": p["check"], "verdict": p["verdict"], "summary": p["summary"],
-         "tests": p.get("details", {}).get("tests", [])}
-        for p in latest_proofs.values()
-    ]  # fmt: skip
+    proofs = []
+    for p in latest_proofs.values():
+        # A proof is about specific bytes: once its tests or the fixed code change, it no longer holds.
+        current = ledger.snapshot(config.root, list(p.get("covers", {})))
+        stale = p["verdict"] == "pass" and current != p.get("covers", {})
+        proofs.append({
+            "id": p["check"], "verdict": "stale" if stale else p["verdict"],
+            "summary": "the tests or the fixed code changed since this proof" if stale else p["summary"],
+            "tests": p.get("details", {}).get("tests", []),
+        })  # fmt: skip
 
     trusted = sum(1 for r in rows if r["state"] == "fresh")
     held = sum(1 for law in law_rows if law["state"] == "held")
@@ -117,7 +122,7 @@ def markdown(data: dict[str, Any]) -> str:
     if data["proofs"]:
         out += ["**Fix proofs**", ""]
         for p in data["proofs"]:
-            icon = "✅" if p["verdict"] == "pass" else "❌"
+            icon = {"pass": "✅", "stale": "🟡"}.get(p["verdict"], "❌")
             out.append(f"- {icon} `{', '.join(p['tests'])}`: {p['summary']}")
         out.append("")
     return "\n".join(out)

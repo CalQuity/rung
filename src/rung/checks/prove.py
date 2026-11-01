@@ -16,12 +16,13 @@ from __future__ import annotations
 import re
 import shlex
 import shutil
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from rung.core import git, ledger
 from rung.core.errors import RungError
+from rung.core.proc import run as run_process
+from rung.core.redact import redact_lines
 
 TEST_PATTERNS = [
     "**/test_*.py", "**/*_test.py", "**/tests/**", "**/__tests__/**", "**/*.test.*",
@@ -49,8 +50,16 @@ def is_test_file(path: str) -> bool:
 
 
 def _run(command: str, cwd: Path, timeout: int) -> Run:
-    proc = subprocess.run(shlex.split(command), cwd=cwd, capture_output=True, text=True, timeout=timeout)
-    return Run(proc.returncode, (proc.stdout + proc.stderr).strip().splitlines()[-25:])
+    result = run_process(shlex.split(command), cwd=cwd, timeout=timeout)
+    return Run(result.returncode, (result.stdout + result.stderr).strip().splitlines()[-25:])
+
+
+# Output that means the tests never reached an assertion on the base: they could not even load.
+SETUP_FAILURE = re.compile(
+    r"ModuleNotFoundError|ImportError|SyntaxError|NameError: name .* is not defined|error collecting|"
+    r"ERROR collecting|errors? during collection|no tests ran|collected 0 items|Cannot find module|"
+    r"is not exported|has no exported member|TS2307|TS2305|undefined: |cannot find package",
+)
 
 
 def prove(
@@ -65,6 +74,8 @@ def prove(
     missing = [t for t in chosen if not (root / t).is_file()]
     if missing:
         raise RungError(f"test file(s) not found: {', '.join(missing)}")
+    sources = sorted(f for f in changed if not is_test_file(f) and (root / f).is_file())
+    before = ledger.snapshot(root, sources + chosen)
 
     with git.worktree(root, mb) as tree:
         for rel in chosen:
@@ -81,25 +92,33 @@ def prove(
     elif expect and expect not in base_text:
         proof.verdict = "fail"
         proof.summary = f"the base run failed, but not with {expect!r}; it may be failing for another reason"
+    elif not expect and SETUP_FAILURE.search(base_text):
+        proof.verdict = "fail"
+        proof.summary = (
+            "on the merge base the tests failed while loading (an import or collection error), not on an "
+            "assertion. If that failure is the bug, re-run with --expect '<text of the failing assertion>'"
+        )
     elif head_run.returncode != 0:
         proof.verdict, proof.summary = "fail", "the tests fail on this branch too"
     else:
         proof.summary = f"fails on merge base {mb[:10]}, passes on this branch"
+    if ledger.snapshot(root, sources + chosen) != before:
+        proof.verdict, proof.summary = "error", "files changed while the proof ran; re-run it"
 
     slug = re.sub(r"[^a-z0-9]+", "-", command.lower()).strip("-")[:40] or "tests"
-    sources = sorted(f for f in changed if not is_test_file(f) and (root / f).is_file())
     ledger.append(
         root,
         check_id=f"proof:{slug}",
         kind="proof",
         verdict=proof.verdict,
-        covers=ledger.snapshot(root, sources + chosen),
+        covers=before,
         specs={},
         summary=proof.summary,
+        context=mb,
         details={
             "command": command, "cwd": cwd, "base": mb, "tests": chosen, "expect": expect or "",
             "base_returncode": base_run.returncode, "head_returncode": head_run.returncode,
-            "base_tail": base_run.tail, "head_tail": head_run.tail,
+            "base_tail": redact_lines(base_run.tail), "head_tail": redact_lines(head_run.tail),
         },
     )  # fmt: skip
     return proof

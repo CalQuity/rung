@@ -95,6 +95,11 @@ def show(root: Path, commit: str, path: str) -> str:
     return _git(root, "show", f"{commit}:./{path}")
 
 
+def files_at(root: Path, commit: str) -> list[str]:
+    """Files under `root` as they were at `commit`."""
+    return _paths(_git(root, "ls-tree", "-r", "-z", "--name-only", commit, "--", "."))
+
+
 def default_base(root: Path) -> str:
     """The branch a pull request would merge into: origin's default, else main or master."""
     try:

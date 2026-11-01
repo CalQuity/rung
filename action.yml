@@ -42,12 +42,19 @@ runs:
         BASE_REF: ${{ github.base_ref }}
         CHECKS: ${{ inputs.checks }}
       run: |
-        set +e
         args=()
         if [ -n "$BASE_REF" ]; then
-          git fetch --no-tags --depth=1 origin "$BASE_REF" || true
+          # Rung compares with the merge base, so the history back to it must be present. Never
+          # truncate history; deepen a shallow checkout instead (use fetch-depth: 0 to skip this).
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            git fetch --no-tags --unshallow origin
+          fi
+          if ! git rev-parse --verify --quiet "origin/$BASE_REF" > /dev/null; then
+            git fetch --no-tags origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+          fi
           args+=(--changed --base "origin/$BASE_REF")
         fi
+        set +e
         # shellcheck disable=SC2086 # CHECKS is a space-separated list of ids
         rung check $CHECKS "${args[@]}"
         code=$?
@@ -63,6 +70,8 @@ runs:
 
     - name: Post or update the pull request comment
       if: inputs.comment == 'true' && github.event_name == 'pull_request'
+      # A comment that cannot be posted (a forked PR's read-only token) must not fail the gate.
+      continue-on-error: true
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}

@@ -16,6 +16,7 @@ import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -26,7 +27,7 @@ from rung.core import git
 from rung.core.config import Check
 from rung.core.errors import RungError
 
-MANIFESTS = ["**/requirements*.txt", "**/pyproject.toml", "**/package.json"]
+MANIFESTS = ["**/requirements*.txt", "**/requirements/*.txt", "**/pyproject.toml", "**/package.json"]
 _REQ_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 
 
@@ -48,13 +49,25 @@ def _pep508_names(specs: list[str]) -> set[str]:
     return names
 
 
-def parse_manifest(path: str, text: str) -> set[Package]:
-    """Direct dependencies declared in one manifest file."""
+def parse_manifest(path: str, text: str, read: Callable[[str], str | None] | None = None) -> set[Package]:
+    """Direct dependencies declared in one manifest file.
+
+    `read(relative_path)` returns another file's text (or None), used to follow `-r` includes
+    in requirements files at the same revision.
+    """
     name = Path(path).name
-    if name.startswith("requirements") and name.endswith(".txt"):
-        lines = [ln.split("#", 1)[0].strip() for ln in text.splitlines()]
-        specs = [ln for ln in lines if ln and not ln.startswith(("-", "git+", "http:", "https:", "."))]
-        return {Package("pypi", n) for n in _pep508_names(specs)}
+    if name.endswith(".txt"):
+        names: set[str] = set()
+        specs = []
+        for raw in text.splitlines():
+            line = raw.split("#", 1)[0].strip()
+            if line.startswith(("-r ", "--requirement ", "-c ", "--constraint ")) and read:
+                included = (Path(path).parent / line.split(None, 1)[1].strip()).as_posix()
+                if (inner := read(included)) is not None:
+                    names |= {p.name for p in parse_manifest(included, inner, read)}
+            elif line and not line.startswith(("-", "git+", "http:", "https:", ".", "/")):
+                specs.append(line)
+        return {Package("pypi", n) for n in names | _pep508_names(specs)}
     if name == "pyproject.toml":
         data = tomllib.loads(text)
         project = data.get("project", {})
@@ -64,18 +77,30 @@ def parse_manifest(path: str, text: str) -> set[Package]:
         for group in data.get("dependency-groups", {}).values():
             specs += [s for s in group if isinstance(s, str)]
         poetry = data.get("tool", {}).get("poetry", {})
-        specs += [k for k in poetry.get("dependencies", {}) if k.lower() != "python"]
+        poetry_tables = [poetry.get("dependencies", {}), poetry.get("dev-dependencies", {})]
+        poetry_tables += [g.get("dependencies", {}) for g in poetry.get("group", {}).values()]
+        for table in poetry_tables:
+            specs += [k for k, v in table.items() if k.lower() != "python" and not _poetry_local(v)]
         own = _normalize_pypi(project.get("name", "")) if project.get("name") else None
         return {Package("pypi", n) for n in _pep508_names(specs) if n != own}
     if name == "package.json":
         data = json.loads(text)
-        names: set[str] = set()
+        packages: set[str] = set()
         for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
             for dep, version in (data.get(key) or {}).items():
-                if not str(version).startswith(("file:", "link:", "workspace:", "git", "http")):
-                    names.add(dep)
-        return {Package("npm", n) for n in names}
+                version = str(version)
+                if version.startswith("npm:"):  # an alias: vet the package actually installed
+                    target = version[4:]
+                    packages.add(target.rsplit("@", 1)[0] if target.count("@") > (1 if target.startswith("@") else 0)
+                                 else target)  # fmt: skip
+                elif not version.startswith(("file:", "link:", "workspace:", "git", "http", "github:")):
+                    packages.add(dep)
+        return {Package("npm", n) for n in packages}
     return set()
+
+
+def _poetry_local(spec: object) -> bool:
+    return isinstance(spec, dict) and any(k in spec for k in ("path", "git", "url"))
 
 
 def fetch_json(url: str, timeout: int = 20) -> dict | None:
@@ -90,6 +115,10 @@ def fetch_json(url: str, timeout: int = 20) -> dict | None:
         raise RungError(f"{url} returned HTTP {exc.code}") from exc
     except urllib.error.URLError as exc:
         raise RungError(f"cannot reach {url}: {exc.reason}") from exc
+    except (TimeoutError, OSError) as exc:
+        raise RungError(f"{url} did not answer: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise RungError(f"{url} returned malformed JSON") from exc
 
 
 def first_published(pkg: Package) -> datetime | None:
@@ -112,25 +141,33 @@ def first_published(pkg: Package) -> datetime | None:
     return datetime.fromisoformat(created.replace("Z", "+00:00")) if created else datetime.now(UTC)
 
 
-def _manifest_files(root: Path) -> list[str]:
-    return [f for f in git.list_files(root) if any(git.glob_match(p, f) for p in MANIFESTS)]
+def _is_manifest(path: str) -> bool:
+    return any(git.glob_match(p, path) for p in MANIFESTS) and "node_modules/" not in path
 
 
 def declared(root: Path) -> set[Package]:
+    def read(rel: str) -> str | None:
+        target = root / rel
+        return target.read_text(errors="ignore") if target.is_file() else None
+
     out: set[Package] = set()
-    for rel in _manifest_files(root):
-        out |= parse_manifest(rel, (root / rel).read_text(errors="ignore"))
+    for rel in (f for f in git.list_files(root) if _is_manifest(f)):
+        out |= parse_manifest(rel, read(rel) or "", read)
     return out
 
 
 def declared_at(root: Path, commit: str) -> set[Package]:
-    out: set[Package] = set()
-    for rel in _manifest_files(root):
+    """Dependencies declared at `commit`, reading that revision's own manifests (renames included)."""
+
+    def read(rel: str) -> str | None:
         try:
-            text = git.show(root, commit, rel)
+            return git.show(root, commit, rel)
         except git.GitError:
-            continue  # the manifest did not exist at the base
-        out |= parse_manifest(rel, text)
+            return None
+
+    out: set[Package] = set()
+    for rel in (f for f in git.files_at(root, commit) if _is_manifest(f)):
+        out |= parse_manifest(rel, read(rel) or "", read)
     return out
 
 

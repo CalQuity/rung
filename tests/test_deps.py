@@ -72,3 +72,27 @@ def test_allow_list_accepts_a_reviewed_package(repo: Path, registry) -> None:
     cfg.check("deps").options["allow"] = ["fresh-pkg"]
     result = runner.run_check(cfg, cfg.check("deps"), base=git.merge_base(repo, "main"))
     assert result.verdict == "pass"
+
+
+def test_b17_poetry_groups_npm_aliases_and_requirement_includes() -> None:
+    pyproject = (
+        '[tool.poetry.dependencies]\npython = "^3.11"\nhttpx = "*"\nlocal = {path = "../x"}\n'
+        '[tool.poetry.group.dev.dependencies]\npytest = "*"\n'
+    )
+    assert {p.name for p in deps.parse_manifest("pyproject.toml", pyproject)} == {"httpx", "pytest"}
+    pkg = json.dumps({"dependencies": {"react-alias": "npm:react@19", "scoped": "npm:@scope/real@1"}})
+    assert {p.name for p in deps.parse_manifest("package.json", pkg)} == {"react", "@scope/real"}
+    files = {"requirements/base.txt": "requests==2.31\n"}
+    found = deps.parse_manifest("requirements/dev.txt", "-r base.txt\npytest\n", files.get)
+    assert {p.name for p in found} == {"requests", "pytest"}
+
+
+def test_b17_base_manifests_come_from_the_base_revision(repo: Path, registry) -> None:
+    (repo / "requirements.txt").write_text("requests==2.31.0\n")
+    (repo / "rung.toml").write_text('[[check]]\nid = "deps"\nkind = "deps"\n')
+    commit_all(repo, "deps")
+    run_git(repo, "checkout", "-qb", "rename")
+    run_git(repo, "mv", "requirements.txt", "requirements-prod.txt")
+    cfg = config.load(repo)
+    result = runner.run_check(cfg, cfg.check("deps"), base=git.merge_base(repo, "main"))
+    assert result.verdict == "pass" and "no new dependencies" in result.outcome.summary

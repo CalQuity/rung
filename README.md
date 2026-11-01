@@ -100,10 +100,19 @@ three-step case only the differential test finds.
 ## In CI
 
 ```yaml
-- uses: actions/checkout@v7
-  with:
-    fetch-depth: 0
-- uses: CalQuity/rung@v0.1.2
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write # only for the report comment; without it the gate still works
+jobs:
+  rung:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: CalQuity/rung@v0.1.2
 ```
 
 The action runs the checks a pull request touches against its merge base. It keeps a single

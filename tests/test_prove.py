@@ -60,3 +60,26 @@ def test_expect_rejects_a_base_failure_for_the_wrong_reason(repo: Path) -> None:
 def test_no_changed_tests_is_an_error(repo: Path) -> None:
     run_git(repo, "checkout", "-qb", "empty")
     assert prove.prove(repo, PYTEST, "main").verdict == "error"
+
+
+def test_b11_a_base_failure_while_importing_is_not_a_proof(repo: Path) -> None:
+    (repo / "money.py").write_text(BUGGY)
+    commit_all(repo, "buggy refund")
+    run_git(repo, "checkout", "-qb", "fix")
+    (repo / "helpers.py").write_text("LIMIT = 100\n")  # new module the test imports
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_money.py").write_text("from helpers import LIMIT\n\ndef test_limit():\n    assert LIMIT\n")
+    result = prove.prove(repo, PYTEST, "main")
+    assert result.verdict == "fail" and "while loading" in result.summary
+
+
+def test_b11_a_proof_goes_stale_in_the_report_when_its_files_change(repo: Path) -> None:
+    from rung.analysis import report
+    from rung.core import config
+
+    _branch(repo, FIXED, TEST)
+    (repo / "rung.toml").write_text('[project]\nname = "p"\n')
+    assert prove.prove(repo, PYTEST, "main", expect="refund exceeded charge").verdict == "pass"
+    assert report.build(config.load(repo))["proofs"][0]["verdict"] == "pass"
+    (repo / "money.py").write_text(BUGGY)
+    assert report.build(config.load(repo))["proofs"][0]["verdict"] == "stale"
