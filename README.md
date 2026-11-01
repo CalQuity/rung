@@ -102,7 +102,7 @@ three-step case only the differential test finds.
 ## In CI
 
 ```yaml
-- uses: actions/checkout@v4
+- uses: actions/checkout@v5
   with:
     fetch-depth: 0
 - uses: CalQuity/rung@v0.1.0
