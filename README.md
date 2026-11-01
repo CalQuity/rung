@@ -188,7 +188,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: CalQuity/rung@v0.1.3
+      - uses: CalQuity/rung@v0.1.4
 ```
 
 The action runs the checks a pull request touches against its merge base. It keeps a single
@@ -203,7 +203,7 @@ To run the same check before every push, add Rung to `.pre-commit-config.yaml`:
 
 ```yaml
 - repo: https://github.com/CalQuity/rung
-  rev: v0.1.3
+  rev: v0.1.4
   hooks:
     - id: rung-check
 ```

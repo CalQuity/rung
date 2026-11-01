@@ -3,7 +3,7 @@
 All notable changes to Rung. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 
-## Unreleased
+## 0.1.4 (2026-11-01)
 
 ### Changed
 - The `osv-scanner` preset runs `osv-scanner scan source --no-resolve`. Without it, a manifest naming
