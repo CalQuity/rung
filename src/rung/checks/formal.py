@@ -21,12 +21,23 @@ class TLAChecker(Checker):
 
     def run(self, ctx: Context, check: Check) -> Outcome:
         cfg = check.get("config")
+        if not cfg:
+            raise ConfigError(f"check {check.id!r}: a TLA+ check needs a `config` (.cfg) listing what to check")
+        declared = tla.declared_properties(ctx.root / cfg)
+        if not declared["invariants"] and not declared["properties"]:
+            return Outcome("fail", "the .cfg declares no INVARIANT or PROPERTY, so TLC checked nothing", [
+                f"add e.g. `INVARIANT TypeOK` to {cfg}",
+            ])  # fmt: skip
         result = tla.run(
             ctx.root / check.require("spec"),
             ctx.root / cfg if cfg else None,
             timeout=check.get_int("timeout", 600),
         )
         lines = [f"{result.distinct_states} distinct states explored"] if result.distinct_states else []
+        checked = declared["invariants"] + declared["properties"]
+        lines.append("checked: " + ", ".join(checked))
+        if declared["narrowing"]:
+            lines.append("note: " + "; ".join(declared["narrowing"]) + " (narrows what a pass covers)")
         if result.trace:
             lines.append(f"counterexample ({len(result.trace)} states):")
             lines.append(tla.render_trace(result.trace))
