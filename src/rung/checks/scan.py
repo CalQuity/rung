@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import shlex
 import shutil
-import subprocess
 import tempfile
 from datetime import date
 from pathlib import Path
@@ -16,6 +15,7 @@ from rung.checks.presets import PRESETS, Preset
 from rung.core import git
 from rung.core.config import Check, ConfigError
 from rung.core.errors import RungError, ToolMissing
+from rung.core.proc import run as run_process
 from rung.engines import sarif
 
 MAX_LISTED = 10
@@ -48,6 +48,10 @@ class ScanChecker(Checker):
             raise ConfigError(f"check {check.id!r}: fail_on must be one of {', '.join(sarif.LEVELS)}")
         return level
 
+    def specs(self, check: Check) -> list[str]:
+        """The policy a verdict depends on: this check's baseline and the waivers file."""
+        return [*check.get_list("specs"), findings.baseline_path_rel(check.id), findings.WAIVERS_FILE.as_posix()]
+
     def default_covers(self, check: Check) -> list[str]:
         preset = self._preset(check)
         return list(preset.covers) if preset else ["**/*"]
@@ -63,21 +67,26 @@ class ScanChecker(Checker):
         with tempfile.TemporaryDirectory(prefix="rung-scan-") as tmp:
             out = Path(tmp) / "result.sarif"
             argv = [part.replace("{out}", str(out)) for part in shlex.split(command)]
-            proc = subprocess.run(
-                argv, cwd=cwd / str(check.get("cwd", ".")), capture_output=True, text=True, timeout=timeout
-            )
-            raw = out.read_text() if "{out}" in command and out.exists() else proc.stdout
+            result = run_process(argv, cwd=cwd / str(check.get("cwd", ".")), timeout=timeout)
+            raw = out.read_text() if "{out}" in command and out.exists() else result.stdout
+        detail = (result.stderr or result.stdout).strip()[-800:]
+        preset = self._preset(check)
+        default = str(check.get("default_level", preset.default_level if preset else "warning"))
         try:
-            # Scanners exit non-zero when they find something; only missing output is an error.
-            preset = self._preset(check)
-            default = str(check.get("default_level", preset.default_level if preset else "warning"))
-            return sarif.parse(raw, cwd, default_level=default)
-        except (json.JSONDecodeError, AttributeError, TypeError) as exc:
-            detail = (proc.stderr or proc.stdout).strip()[-800:]
-            raise RungError(f"`{command}` exited {proc.returncode} without valid SARIF: {detail}") from exc
+            found = sarif.parse(raw, cwd, default_level=default)
+        except (json.JSONDecodeError, sarif.SarifError, AttributeError, TypeError, KeyError) as exc:
+            raise RungError(
+                f"`{command}` exited {result.returncode} without a valid SARIF result ({exc}): {detail}"
+            ) from exc
+        # Scanners exit non-zero when they find something. Non-zero with nothing found means it failed.
+        if result.returncode != 0 and not found:
+            raise RungError(
+                f"`{command}` exited {result.returncode} and reported no findings; it likely failed: {detail}"
+            )
+        return found
 
     def run(self, ctx: Context, check: Check) -> Outcome:
-        timeout = int(check.get("timeout", 900))
+        timeout = check.get_int("timeout", 900)
         head = self.collect(ctx.root, check, timeout)
 
         if ctx.base:
@@ -122,4 +131,4 @@ class ScanChecker(Checker):
         if t.blocking:
             return Outcome("fail", f"{len(t.blocking)} new finding(s) at or above `{self.fail_on(check)}`",
                            lines, findings=records)  # fmt: skip
-        return Outcome("pass", "no new blocking findings", lines, findings=records)
+        return Outcome("pass", "no new blocking findings", lines, findings=records, valid_until=t.valid_until)

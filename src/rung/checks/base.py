@@ -25,6 +25,7 @@ class Outcome:
     lines: list[str] = field(default_factory=list)
     evidence: dict[str, str] = field(default_factory=dict)  # artifact path -> sha256
     findings: list[dict[str, Any]] = field(default_factory=list)
+    valid_until: str = ""  # ISO date after which the verdict expires (an accepted waiver ends)
 
 
 class Checker:
@@ -40,7 +41,7 @@ class Checker:
 
     def specs(self, check: Check) -> list[str]:
         """Spec-side files whose change should stale this check's verdict."""
-        return [str(s) for s in check.get("specs", [])]
+        return check.get_list("specs")
 
     def default_covers(self, check: Check) -> list[str]:
         return []

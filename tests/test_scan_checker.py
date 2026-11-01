@@ -80,7 +80,7 @@ def test_scanner_without_sarif_is_an_error_not_a_pass(repo: Path) -> None:
     cfg = config.load(repo)
     result = runner.run_check(cfg, cfg.check("broken"))
     assert result.verdict == "error"
-    assert "without valid SARIF" in result.outcome.summary
+    assert "without a valid SARIF result" in result.outcome.summary
 
 
 def test_missing_scanner_names_how_to_install(repo: Path, monkeypatch) -> None:

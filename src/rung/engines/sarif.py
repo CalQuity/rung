@@ -94,21 +94,75 @@ def _stable_token(result: dict[str, Any], location: dict[str, Any]) -> str:
     return str(partial.get("primaryLocationLineHash", ""))
 
 
+class SarifError(ValueError):
+    """The document is not SARIF, or the tool says its analysis did not complete."""
+
+
+def validate(doc: Any) -> None:
+    """Reject output that is not a completed SARIF analysis.
+
+    An empty object, a document without `runs`, or a run whose invocation reports
+    `executionSuccessful: false` is a failed analysis, not a clean one.
+    """
+    if not isinstance(doc, dict) or not isinstance(doc.get("runs"), list) or not doc["runs"]:
+        raise SarifError("no `runs` in the document")
+    for run in doc["runs"]:
+        if not isinstance(run, dict) or not run.get("tool", {}).get("driver", {}).get("name"):
+            raise SarifError("a run has no `tool.driver.name`")
+        for invocation in run.get("invocations") or []:
+            if invocation.get("executionSuccessful") is False:
+                reasons = [
+                    n.get("message", {}).get("text", "") for n in invocation.get("toolExecutionNotifications") or []
+                ]
+                raise SarifError("the tool reports its analysis did not complete: " + "; ".join(filter(None, reasons)))
+
+
+def _rule_id(result: dict[str, Any], rules: list[Any]) -> str:
+    if result.get("ruleId"):
+        return str(result["ruleId"])
+    rule = result.get("rule") or {}
+    if rule.get("id"):
+        return str(rule["id"])
+    index = result.get("ruleIndex", rule.get("index"))
+    if isinstance(index, int) and 0 <= index < len(rules) and isinstance(rules[index], dict):
+        return str(rules[index].get("id", "unknown"))
+    return "unknown"
+
+
+def _uri(location: dict[str, Any], run: dict[str, Any]) -> str:
+    """A result's file URI, following `index` into `run.artifacts` and resolving `uriBaseId`."""
+    artifact = location.get("artifactLocation", {})
+    uri = artifact.get("uri", "")
+    index = artifact.get("index")
+    artifacts = run.get("artifacts") or []
+    if not uri and isinstance(index, int) and 0 <= index < len(artifacts):
+        artifact = {**artifacts[index].get("location", {}), **{k: v for k, v in artifact.items() if k != "index"}}
+        uri = artifact.get("uri", "")
+    base_id = artifact.get("uriBaseId")
+    bases = run.get("originalUriBaseIds") or {}
+    if base_id and base_id in bases and not uri.startswith(("file:", "/")):
+        uri = bases[base_id].get("uri", "").rstrip("/") + "/" + uri
+    return uri
+
+
 def parse(sarif: str | dict[str, Any], root: Path, *, default_level: str = "warning") -> list[Finding]:
     """Turn a SARIF document into findings with repository-relative paths."""
     doc = json.loads(sarif) if isinstance(sarif, str) else sarif
+    validate(doc)
     findings: list[Finding] = []
-    for run in doc.get("runs", []) or []:
-        tool = run.get("tool", {}).get("driver", {}).get("name", "unknown")
+    for run in doc["runs"]:
+        driver = run["tool"]["driver"]
+        tool = driver["name"]
+        rules = driver.get("rules") or []
         rule_levels = _rule_levels(run)
-        for result in run.get("results", []) or []:
-            rule = result.get("ruleId") or result.get("rule", {}).get("id") or "unknown"
+        for result in run.get("results") or []:
+            rule = _rule_id(result, rules)
             level = result.get("level") or rule_levels.get(rule) or default_level
             if level not in LEVELS:
                 level = default_level
             locations = result.get("locations") or [{}]
             physical = locations[0].get("physicalLocation", {})
-            path = _relative(physical.get("artifactLocation", {}).get("uri", ""), root)
+            path = _relative(_uri(physical, run), root)
             line = int(physical.get("region", {}).get("startLine") or 0)
             message = " ".join((result.get("message", {}).get("text") or "").split())
             token = _stable_token(result, physical)

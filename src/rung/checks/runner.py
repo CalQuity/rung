@@ -10,6 +10,7 @@ from rung.checks.base import Context, Outcome
 from rung.core import git, ledger
 from rung.core.config import Check, Config
 from rung.core.errors import RungError
+from rung.core.redact import redact, redact_lines
 
 MAX_RECORDED_FINDINGS = 200
 
@@ -45,10 +46,16 @@ def touched_by(check: Check, changed: set[str]) -> bool:
 
 
 def select(config: Config, ids: list[str], changed: set[str] | None) -> list[Check]:
+    """Checks to run: all (or the named ones), narrowed to those a change touches.
+
+    A check that is not currently fresh is always selected, so editing a check's own declaration,
+    a baseline or a waiver, or breaking the ledger, can never be skipped by `--changed`.
+    """
     chosen = [config.check(i) for i in ids] if ids else list(config.checks)
-    if changed is not None:
-        chosen = [c for c in chosen if touched_by(c, changed)]
-    return chosen
+    if changed is None:
+        return chosen
+    view = ledger.View(config.root)
+    return [c for c in chosen if touched_by(c, changed) or not status(config, c, view=view).trusted]
 
 
 def run_check(config: Config, check: Check, *, base: str | None = None) -> Result:
@@ -71,11 +78,13 @@ def run_check(config: Config, check: Check, *, base: str | None = None) -> Resul
         verdict=outcome.verdict,
         covers=before[0],
         specs=before[1],
-        summary=outcome.summary,
+        summary=redact(outcome.summary),
         evidence=[f"{path} sha256:{digest}" for path, digest in outcome.evidence.items()],
         definition=definition(check),
+        context=base or "",
+        valid_until=outcome.valid_until,
         details={
-            "lines": outcome.lines[:60],
+            "lines": redact_lines(outcome.lines[:60]),
             "base": base or "",
             "findings": outcome.findings[:MAX_RECORDED_FINDINGS],
         },
@@ -83,9 +92,12 @@ def run_check(config: Config, check: Check, *, base: str | None = None) -> Resul
     return Result(check, outcome)
 
 
-def status(config: Config, check: Check) -> ledger.Status:
-    return ledger.status(config.root, check.id, covers(check), specs(check), definition(check))
+def status(config: Config, check: Check, *, base: str | None = None, view: ledger.View | None = None) -> ledger.Status:
+    """Whether `check`'s latest verdict still holds. With `base`, it must have been made against that base."""
+    view = view or ledger.View(config.root)
+    return view.status(check.id, covers(check), specs(check), definition(check), base)
 
 
-def statuses(config: Config) -> list[ledger.Status]:
-    return [status(config, c) for c in config.checks]
+def statuses(config: Config, *, base: str | None = None) -> list[ledger.Status]:
+    view = ledger.View(config.root)
+    return [status(config, c, base=base, view=view) for c in config.checks]

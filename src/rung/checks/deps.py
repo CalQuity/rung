@@ -142,8 +142,8 @@ class DepsChecker(Checker):
         return list(MANIFESTS)
 
     def run(self, ctx: Context, check: Check) -> Outcome:
-        min_age = int(check.get("min_age_days", 30))
-        allow = {str(a).lower() for a in check.get("allow", [])}
+        min_age = check.get_int("min_age_days", 30)
+        allow = {a.lower() for a in check.get_list("allow")}
         head = declared(ctx.root)
         base = declared_at(ctx.root, ctx.base) if ctx.base else set()
         added = sorted((p for p in head - base if p.name.lower() not in allow), key=lambda p: (p.ecosystem, p.name))

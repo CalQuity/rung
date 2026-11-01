@@ -65,7 +65,7 @@ def cmd_baseline(args, out: Output) -> int:
     check = cfg.check(args.check)
     if check.kind != "scan":
         raise ConfigError("baselines apply to `scan` checks")
-    found = ScanChecker().collect(cfg.root, check, int(check.get("timeout", 900)))
+    found = ScanChecker().collect(cfg.root, check, check.get_int("timeout", 900))
     path = findings.save_baseline(cfg.root, check.id, found, git.head(cfg.root))
     out.emit({"check": check.id, "findings": len(found), "path": str(path.relative_to(cfg.root))})
     out.line(f"Recorded {len(found)} existing finding(s) for {check.id!r} as accepted ({path.relative_to(cfg.root)}).")

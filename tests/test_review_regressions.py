@@ -1,0 +1,242 @@
+"""Regression tests for defects found in the pre-release review (each named after its finding)."""
+
+from __future__ import annotations
+
+import json
+import multiprocessing
+import sys
+import time
+from datetime import date
+from pathlib import Path
+
+import pytest
+
+from rung import cli
+from rung.checks import findings, runner
+from rung.core import config, git, ledger
+from rung.engines import sarif
+
+from .conftest import commit_all
+
+PY = sys.executable
+DRIVER = {"tool": {"driver": {"name": "t"}}}
+
+
+def rung(root: Path, *args: str) -> int:
+    return cli.main(["-C", str(root), *args])
+
+
+def _toml(root: Path, body: str) -> config.Config:
+    (root / "rung.toml").write_text(body)
+    return config.load(root)
+
+
+def test_s2_a_command_check_without_covers_goes_stale_when_anything_changes(repo: Path) -> None:
+    (repo / "test_x.py").write_text("def test_ok():\n    assert True\n")
+    cfg = _toml(repo, f'[[check]]\nid = "tests"\nkind = "command"\nrun = "{PY} -c \'pass\'"\n')
+    runner.run_check(cfg, cfg.check("tests"))
+    assert runner.status(cfg, cfg.check("tests")).state == "fresh"
+    (repo / "test_x.py").write_text("def test_ok():\n    assert False\n")
+    assert runner.status(cfg, cfg.check("tests")).state == "stale"
+
+
+def test_b1_deleting_a_baseline_stales_the_scan_verdict(repo: Path) -> None:
+    cfg = _toml(repo, '[[check]]\nid = "scan1"\nkind = "scan"\nrun = "true"\ncovers = ["src/**"]\n')
+    check = cfg.check("scan1")
+    findings.save_baseline(repo, "scan1", [], "abc")
+    ledger.append(
+        repo, check_id="scan1", kind="scan", verdict="pass", summary="ok",
+        covers=ledger.snapshot(repo, runner.covers(check)), specs=ledger.snapshot(repo, runner.specs(check)),
+        definition=runner.definition(check),
+    )  # fmt: skip
+    assert runner.status(cfg, check).state == "fresh"
+    findings.baseline_path(repo, "scan1").unlink()
+    assert runner.status(cfg, check).state == "stale"
+
+
+def test_b1_an_expired_waiver_stales_the_verdict(repo: Path) -> None:
+    cfg = _toml(repo, f'[[check]]\nid = "c"\nkind = "command"\nrun = "{PY} -c \'pass\'"\ncovers = ["src/**"]\n')
+    check = cfg.check("c")
+    ledger.append(repo, check_id="c", kind="command", verdict="pass", covers={}, specs={}, summary="ok",
+                  definition=runner.definition(check), valid_until="2020-01-01")  # fmt: skip
+    status = runner.status(cfg, check)
+    assert status.state == "stale" and "expired" in status.changed[-1]
+
+
+def test_b2_a_broken_ledger_is_never_trusted(project: Path, capsys) -> None:
+    assert rung(project, "check") == 0
+    path = project / ledger.LEDGER_PATH
+    entry = json.loads(path.read_text())
+    entry["summary"] = "tampered"
+    path.write_text(json.dumps(entry) + "\n")
+    capsys.readouterr()
+    assert rung(project, "check", "--ci") == 0
+    assert "PASS" in capsys.readouterr().out  # re-ran instead of trusting the tampered entry
+
+
+def test_b3_changing_only_a_check_definition_is_selected_by_changed(repo: Path) -> None:
+    (repo / "app.py").write_text("x = 1\n")
+    body = f'[[check]]\nid = "c"\nkind = "command"\nrun = "{PY} -c \'pass\'"\ncovers = ["app.py"]\n'
+    cfg = _toml(repo, body)
+    runner.run_check(cfg, cfg.check("c"))
+    commit_all(repo, "setup")
+    cfg = _toml(repo, body.replace("'pass'", "'raise SystemExit(1)'"))
+    selected = runner.select(cfg, [], git.changed_files(repo, "HEAD"))
+    assert [c.id for c in selected] == ["c"]
+
+
+def test_b4_unicode_filenames_are_covered_and_detected(repo: Path) -> None:
+    (repo / "src").mkdir()
+    (repo / "src" / "café.py").write_text("x = 1\n")
+    commit_all(repo, "unicode")
+    assert "src/café.py" in git.list_files(repo)
+    (repo / "src" / "café.py").write_text("x = 2\n")
+    assert "src/café.py" in git.changed_files(repo, "HEAD")
+
+
+def test_b5_tracked_build_directories_are_project_files(repo: Path) -> None:
+    (repo / "src" / "build").mkdir(parents=True)
+    (repo / "src" / "build" / "core.py").write_text("x = 1\n")
+    commit_all(repo, "tracked build dir")
+    (repo / "node_modules").mkdir()
+    (repo / "node_modules" / "dep.js").write_text("x")  # untracked dependency output stays out
+    files = git.list_files(repo)
+    assert "src/build/core.py" in files and "node_modules/dep.js" not in files
+
+
+def test_b6_nested_projects_use_paths_relative_to_rung_toml(repo: Path) -> None:
+    backend = repo / "backend"
+    (backend / "src").mkdir(parents=True)
+    (backend / "src" / "app.py").write_text("x = 1\n")
+    commit_all(repo, "nested")
+    (backend / "src" / "app.py").write_text("x = 2\n")
+    assert git.changed_files(backend, "HEAD") == {"src/app.py"}
+    assert git.show(backend, "HEAD", "src/app.py") == "x = 1\n"
+    with git.worktree(backend, "HEAD") as tree:
+        assert (tree / "src" / "app.py").read_text() == "x = 1\n"
+
+
+@pytest.mark.parametrize(
+    "output, code",
+    [
+        ("{}", 2),
+        (
+            json.dumps(
+                {
+                    "runs": [
+                        {
+                            "tool": {"driver": {"name": "t"}},
+                            "invocations": [{"executionSuccessful": False}],
+                            "results": [],
+                        }
+                    ]
+                }
+            ),
+            2,
+        ),
+        (json.dumps({"runs": [{"tool": {"driver": {"name": "t"}}, "results": []}]}), 2),
+    ],
+)
+def test_b7_a_failed_scanner_is_an_error_not_a_pass(repo: Path, output: str, code: int) -> None:
+    script = repo / "scan.py"
+    script.write_text(f"import sys\nprint({output!r})\nsys.exit({code})\n")
+    cfg = _toml(repo, f'[[check]]\nid = "s"\nkind = "scan"\nrun = "{PY} scan.py"\n')
+    assert runner.run_check(cfg, cfg.check("s")).verdict == "error"
+
+
+def test_b8_escalated_findings_block_and_indexed_references_resolve() -> None:
+    base = sarif.Finding("t", "r", "note", "a.py", 1, "m", "f" * 16)
+    head = sarif.Finding("t", "r", "error", "a.py", 1, "m", "f" * 16)
+    t = findings.triage("c", [head], [base], [], fail_on="warning")
+    assert t.blocking == [head]
+    location = {"physicalLocation": {"artifactLocation": {"index": 1}}}
+    result = {"ruleIndex": 1, "message": {"text": "x"}, "locations": [location]}
+    run = {
+        "tool": {"driver": {"name": "t", "rules": [{"id": "R1"}, {"id": "R2"}]}},
+        "artifacts": [{"location": {"uri": "a.py"}}, {"location": {"uri": "b.py"}}],
+        "results": [result],
+    }
+    doc = {"runs": [run]}
+    (f,) = sarif.parse(doc, Path("/repo"))
+    assert (f.rule, f.path) == ("R2", "b.py")
+
+
+def test_b10_each_evidence_run_gets_its_own_directory(project: Path) -> None:
+    script = project / "drive.py"
+    script.write_text(
+        "import os, pathlib, sys\nout = pathlib.Path(os.environ['RUNG_EVIDENCE_DIR'])\n"
+        "if not (pathlib.Path('flag')).exists():\n    (out / 'a.txt').write_text('x')\n"
+    )
+    rung(project, "add", "evidence", "e", "--run", f"{PY} drive.py")
+    assert rung(project, "check", "e") == 0
+    (project / "flag").write_text("second run writes nothing")
+    assert rung(project, "check", "e") == 1
+
+
+def test_b13_strings_with_newlines_and_quotes_round_trip(project: Path) -> None:
+    cfg = config.load(project)
+    cfg.checks.append(config.Check("odd", "command", [], {"run": 'echo "a"\nb \\ c'}))
+    config.save(cfg)
+    assert config.load(project).check("odd").get("run") == 'echo "a"\nb \\ c'
+    w = findings.Waiver("unit", "a" * 16, 'multi\nline "reason"', 'Jo "J" Doe', date(2030, 1, 1))
+    findings.add_waiver(project, w)
+    assert findings.load_waivers(project) == [w]
+
+
+@pytest.mark.parametrize(
+    "body, message",
+    [
+        ('[[check]]\nid = "x"\nkind = "command"\nrun = "true"\ncovers = "src/**"\n', "list of glob strings"),
+        ("llm = 42\n", "must be a table"),
+        ('[[check]]\nid = "x"\nkind = "command"\nrun = "true"\ntimeout = "oops"\n', "non-negative integer"),
+        ('[[check]]\nid = "../escape"\nkind = "command"\nrun = "true"\n', "letters, digits"),
+    ],
+)
+def test_b14_sec3_invalid_configuration_is_rejected(tmp_path: Path, body: str, message: str) -> None:
+    (tmp_path / "rung.toml").write_text(body)
+    with pytest.raises(config.ConfigError, match=message):
+        config.load(tmp_path)
+
+
+def test_b14_a_differential_test_with_zero_cases_is_an_error(repo: Path) -> None:
+    cfg = _toml(repo, f'[[check]]\nid = "d"\nkind = "drt"\nmodel = "{PY} -c pass"\nimpl = "{PY} -c pass"\n'
+                      'alphabet = ["0"]\ncases = 0\n')  # fmt: skip
+    assert runner.run_check(cfg, cfg.check("d")).verdict == "error"
+
+
+def _append(root: str, n: int) -> None:
+    for _ in range(n):
+        ledger.append(Path(root), check_id="c", kind="command", verdict="pass", covers={}, specs={}, summary="x")
+
+
+def test_b15_concurrent_writers_keep_the_chain_intact(tmp_path: Path) -> None:
+    ctx = multiprocessing.get_context("spawn")
+    procs = [ctx.Process(target=_append, args=(str(tmp_path), 6)) for _ in range(4)]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join()
+    entries = ledger.read(tmp_path)
+    assert len(entries) == 24 and ledger.verify_chain(entries) == []
+
+
+def test_b16_a_timeout_kills_the_whole_process_tree(project: Path, tmp_path: Path) -> None:
+    marker = tmp_path / "child-still-running"
+    child = f"import time; time.sleep(3); open({str(marker)!r}, 'w').write('x')"
+    parent = f"import subprocess, sys, time; subprocess.Popen([sys.executable, '-c', {child!r}]); time.sleep(30)"
+    script = project / "parent.py"
+    script.write_text(parent)
+    rung(project, "add", "command", "slow", "--run", f"{PY} parent.py")
+    cfg = config.load(project)
+    cfg.check("slow").options["timeout"] = 1
+    config.save(cfg)
+    assert rung(project, "check", "slow") == 1
+    time.sleep(4)
+    assert not marker.exists()
+
+
+def test_sec1_secrets_in_command_output_are_redacted_in_the_ledger(project: Path) -> None:
+    token = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+    rung(project, "add", "command", "leaky", "--run", f"{PY} -c 'print(\"token {token}\")'")
+    rung(project, "check", "leaky")
+    assert token not in (project / ledger.LEDGER_PATH).read_text()
