@@ -265,7 +265,7 @@ def cmd_report(args, out: Output) -> int:
 def cmd_prove(args, out: Output) -> int:
     root = find_root(Path(args.dir))
     base = args.base or gitutil.default_base(root)
-    result = prove.prove(root, args.test_command, base, tests=args.tests or None, expect=args.expect)
+    result = prove.prove(root, args.test_command, base, tests=args.tests or None, expect=args.expect, cwd=args.cwd)
     out.emit({
         "verdict": result.verdict, "summary": result.summary, "tests": result.tests,
         "base": result.base.__dict__ if result.base else None, "head": result.head.__dict__ if result.head else None,
@@ -319,6 +319,8 @@ def cmd_add(args, out: Output) -> int:
         if not args.run:
             raise ConfigError(f"`rung add {args.kind}` needs --run")
         options["run"] = args.run
+        if args.cwd:
+            options["cwd"] = args.cwd
         if args.require:
             options["require"] = args.require
     elif args.kind == "scan":
@@ -328,6 +330,8 @@ def cmd_add(args, out: Output) -> int:
             options["tool"] = args.tool
         if args.run:
             options["run"] = args.run
+        if args.cwd:
+            options["cwd"] = args.cwd
         if args.fail_on:
             options["fail_on"] = args.fail_on
     elif args.kind == "deps":

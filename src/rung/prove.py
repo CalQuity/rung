@@ -55,7 +55,7 @@ def _run(command: str, cwd: Path, timeout: int) -> Run:
 
 def prove(
     root: Path, command: str, base_ref: str, *, tests: list[str] | None = None,
-    expect: str | None = None, timeout: int = 1800,
+    expect: str | None = None, timeout: int = 1800, cwd: str = ".",
 ) -> Proof:  # fmt: skip
     mb = gitutil.merge_base(root, base_ref)
     changed = gitutil.changed_files(root, base_ref)
@@ -71,8 +71,8 @@ def prove(
             dest = tree / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(root / rel, dest)
-        base_run = _run(command, tree, timeout)
-    head_run = _run(command, root, timeout)
+        base_run = _run(command, tree / cwd, timeout)
+    head_run = _run(command, root / cwd, timeout)
 
     proof = Proof("pass", "", chosen, base_run, head_run)
     base_text = "\n".join(base_run.tail)
@@ -97,7 +97,7 @@ def prove(
         specs={},
         summary=proof.summary,
         details={
-            "command": command, "base": mb, "tests": chosen, "expect": expect or "",
+            "command": command, "cwd": cwd, "base": mb, "tests": chosen, "expect": expect or "",
             "base_returncode": base_run.returncode, "head_returncode": head_run.returncode,
             "base_tail": base_run.tail, "head_tail": head_run.tail,
         },

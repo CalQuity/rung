@@ -11,6 +11,7 @@ Guidance can be ignored; the hook cannot.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -159,7 +160,14 @@ def stop_hook(cwd: Path, payload: str) -> tuple[int, str]:
 
 
 def main_stop_hook() -> int:
-    code, message = stop_hook(Path.cwd(), sys.stdin.read() if not sys.stdin.isatty() else "")
+    payload = sys.stdin.read() if not sys.stdin.isatty() else ""
+    # Claude Code sends the session's directory in the payload and exports CLAUDE_PROJECT_DIR.
+    try:
+        where = json.loads(payload).get("cwd") if payload.strip() else None
+    except (json.JSONDecodeError, AttributeError):
+        where = None
+    start = Path(where or os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
+    code, message = stop_hook(start, payload)
     if message:
         print(message, file=sys.stderr)
     return code

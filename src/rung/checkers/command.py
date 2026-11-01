@@ -12,6 +12,16 @@ from rung.checkers.base import Checker, Context, Outcome
 from rung.config import Check
 
 
+def tail(proc: subprocess.CompletedProcess[str], lines: int = 15) -> list[str]:
+    """The end of stdout, where test runners and linters print their verdict.
+
+    Stderr is used only when stdout is empty: tools like `uv run` write build
+    chatter to stderr, which would otherwise push the actual failure out of view.
+    """
+    text = proc.stdout.strip() or proc.stderr.strip()
+    return text.splitlines()[-lines:]
+
+
 def _run(ctx: Context, check: Check, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         shlex.split(check.require("run")),
@@ -29,9 +39,8 @@ class CommandChecker(Checker):
 
     def run(self, ctx: Context, check: Check) -> Outcome:
         proc = _run(ctx, check)
-        tail = (proc.stdout + proc.stderr).strip().splitlines()[-15:]
         verdict = "pass" if proc.returncode == 0 else "fail"
-        return Outcome(verdict, f"`{check.require('run')}` exited {proc.returncode}", tail)
+        return Outcome(verdict, f"`{check.require('run')}` exited {proc.returncode}", tail(proc))
 
 
 class EvidenceChecker(Checker):
@@ -61,8 +70,7 @@ class EvidenceChecker(Checker):
         lines = [f"evidence: {path}" for path in artifacts]
         command = check.require("run")
         if proc.returncode != 0:
-            tail = (proc.stdout + proc.stderr).strip().splitlines()[-10:]
-            return Outcome("fail", f"`{command}` exited {proc.returncode}", lines + tail, artifacts)
+            return Outcome("fail", f"`{command}` exited {proc.returncode}", lines + tail(proc, 10), artifacts)
         if not artifacts:
             return Outcome("fail", "the script exited 0 but recorded no evidence", lines)
         required = [str(r).lower() for r in check.get("require", [])]

@@ -52,8 +52,6 @@ rung draft runtime --intent "create, list and delete a todo through the HTTP API
 
 ## What it checks
 
-Rung has no special modules for web, API or CRUD code. It has a few check kinds that cover them all.
-
 | Concern | Check | What blocks |
 |---|---|---|
 | Tests | `command` | The suite fails |

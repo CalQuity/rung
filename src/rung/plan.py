@@ -50,19 +50,27 @@ def plan(info: Inspection, existing: set[str] | None = None) -> list[Recommendat
     recs: list[Recommendation] = []
     lang = info.primary_language
 
-    if info.test_commands and "tests" not in existing:
+    tested = [p for p in info.projects if p.test_command]
+    for project in tested:
+        name = "tests" if project.path == "." else f"{project.path.replace('/', '-')}-tests"
+        if name in existing:
+            continue
+        label = "the" if project.path == "." else f"the {project.path}"
+        cwd = "" if project.path == "." else f" --cwd {project.path} --covers '{project.path}/**'"
         recs.append(Recommendation(
-            "tests", "Record the test suite as a check",
+            "tests", f"Record {label} test suite as a check",
             "A green run becomes a ledger entry tied to the exact code it ran against, and goes stale "
             "when that code changes.",
-            command=f"rung add command tests --run '{info.test_commands[0]}'",
+            command=f"rung add command {name}{cwd} --run '{project.test_command}'",
         ))  # fmt: skip
-    if info.test_commands:
+    if tested:
+        first = tested[0]
+        cwd = "" if first.path == "." else f" --cwd {first.path}"
         recs.append(Recommendation(
             "tests", "Prove bug-fix tests catch the bug",
             "Agents often write regression tests that pass with or without the fix. `rung prove` runs the "
             "branch's new tests on the merge base, where they must fail, and on the branch, where they must pass.",
-            command=f"rung prove '{info.test_commands[0]}'",
+            command=f"rung prove{cwd} '{first.test_command}'",
         ))  # fmt: skip
 
     if "secrets" not in existing:

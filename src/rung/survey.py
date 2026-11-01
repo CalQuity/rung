@@ -84,6 +84,7 @@ class Inspection:
     protocol_candidates: list[Candidate] = field(default_factory=list)
     model_candidates: list[Candidate] = field(default_factory=list)
     agent_docs: list[str] = field(default_factory=list)
+    projects: list[Project] = field(default_factory=list)
 
     @property
     def primary_language(self) -> str:
@@ -136,6 +137,81 @@ def _package_json(root: Path) -> dict:
         return {}
 
 
+MANIFESTS = frozenset({"pyproject.toml", "package.json", "go.mod", "Cargo.toml", "pytest.ini", "setup.py"})
+MAX_PROJECT_DEPTH = 3
+_NO_TEST_SCRIPT = "no test specified"
+LINT_FILES = (
+    "ruff.toml", ".ruff.toml", ".eslintrc", ".eslintrc.json", "eslint.config.js", "eslint.config.mjs",
+    "biome.json", ".golangci.yml", "clippy.toml",
+)  # fmt: skip
+
+
+@dataclass
+class Project:
+    """One buildable project inside the repository: the root, or e.g. `backend/` and `frontend/`."""
+
+    path: str
+    ecosystems: list[str] = field(default_factory=list)
+    test_command: str = ""
+    surfaces: list[str] = field(default_factory=list)
+    lint: list[str] = field(default_factory=list)
+
+
+def _node_runner(d: Path) -> str:
+    if (d / "pnpm-lock.yaml").exists():
+        return "pnpm"
+    if (d / "yarn.lock").exists():
+        return "yarn"
+    if (d / "bun.lockb").exists() or (d / "bun.lock").exists():
+        return "bun"
+    return "npm"
+
+
+def _detect_project(root: Path, rel: str) -> Project | None:
+    d = root / rel
+    project = Project(path=rel)
+    pyproject = _read(d / "pyproject.toml")
+    pkg = _package_json(d)
+
+    if pyproject or (d / "setup.py").exists() or (d / "pytest.ini").exists():
+        project.ecosystems.append("python")
+        has_tests = "pytest" in pyproject or (d / "pytest.ini").exists() or (d / "tests").is_dir()
+        if has_tests:
+            project.test_command = "uv run pytest" if (d / "uv.lock").exists() else "python -m pytest"
+        if any(k in pyproject for k in ("fastapi", "flask", "django", "starlette", "aiohttp")):
+            project.surfaces.append("HTTP API")
+        if "[project.scripts]" in pyproject:
+            project.surfaces.append("CLI")
+        if "[tool.ruff" in pyproject:
+            project.lint.append("ruff (pyproject)")
+        if "import-linter" in pyproject or (d / ".importlinter").exists():
+            project.lint.append("import-linter")
+    if pkg:
+        project.ecosystems.append("node")
+        deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+        test_script = str(pkg.get("scripts", {}).get("test", ""))
+        if test_script and _NO_TEST_SCRIPT not in test_script and not project.test_command:
+            project.test_command = f"{_node_runner(d)} test"
+        if any(k in deps for k in ("next", "react", "vue", "svelte", "@angular/core", "solid-js", "astro")):
+            project.surfaces.append("web UI")
+        if "electron" in deps:
+            project.surfaces.append("desktop app")
+        if any(k in deps for k in ("express", "fastify", "hono", "koa", "@nestjs/core")):
+            project.surfaces.append("HTTP API")
+        if "bin" in pkg:
+            project.surfaces.append("CLI")
+    if (d / "go.mod").exists():
+        project.ecosystems.append("go")
+        project.test_command = project.test_command or "go test ./..."
+        if (d / "cmd").is_dir():
+            project.surfaces.append("CLI")
+    if (d / "Cargo.toml").exists():
+        project.ecosystems.append("rust")
+        project.test_command = project.test_command or "cargo test"
+    project.lint += [name for name in LINT_FILES if (d / name).exists()]
+    return project if project.ecosystems else None
+
+
 def survey(root: Path) -> Inspection:
     root = root.resolve()
     result = Inspection(root=str(root))
@@ -143,6 +219,7 @@ def survey(root: Path) -> Inspection:
     formal: dict[str, list[str]] = {"tla": [], "lean": [], "bend": [], "dafny": [], "alloy": []}
     protocol: list[Candidate] = []
     model: list[Candidate] = []
+    manifest_dirs: set[str] = {"."}
 
     for path, rel in walk(root):
         suffix = path.suffix
@@ -159,6 +236,8 @@ def survey(root: Path) -> Inspection:
             formal["dafny"].append(posix)
         elif suffix == ".als":
             formal["alloy"].append(posix)
+        if path.name in MANIFESTS and len(rel.parts) <= MAX_PROJECT_DEPTH + 1:
+            manifest_dirs.add(rel.parent.as_posix() or ".")
         if path.name in {"AGENTS.md", "CLAUDE.md", ".cursorrules"}:
             result.agent_docs.append(posix)
         if posix.startswith(".github/workflows/") or path.name in {".gitlab-ci.yml", "Jenkinsfile"}:
@@ -182,52 +261,15 @@ def survey(root: Path) -> Inspection:
     result.protocol_candidates = sorted(protocol, key=lambda c: -c.score)[:8]
     result.model_candidates = sorted(model, key=lambda c: -c.score)[:8]
 
-    pkg = _package_json(root)
-    scripts = pkg.get("scripts", {})
-    deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
-    pyproject = _read(root / "pyproject.toml")
-
-    if (
-        "pytest" in pyproject
-        or (root / "pytest.ini").exists()
-        or ((root / "tests").is_dir() and languages.get("Python"))
-    ):
-        result.test_commands.append("pytest")
-    if "test" in scripts:
-        result.test_commands.append("npm test")
-    if (root / "go.mod").exists():
-        result.test_commands.append("go test ./...")
-    if (root / "Cargo.toml").exists():
-        result.test_commands.append("cargo test")
-
-    if any(k in deps for k in ("next", "react", "vue", "svelte", "@angular/core", "electron")):
-        result.surfaces.append("web UI")
-    if "electron" in deps:
-        result.surfaces.append("desktop app")
-    if any(k in pyproject for k in ("fastapi", "flask", "django")) or any(
-        k in deps for k in ("express", "fastify", "hono")
-    ):
-        result.surfaces.append("HTTP API")
-    if "[project.scripts]" in pyproject or "bin" in pkg or (root / "cmd").is_dir():
-        result.surfaces.append("CLI")
+    result.projects = [p for d in sorted(manifest_dirs) if (p := _detect_project(root, d))]
+    for project in result.projects:
+        where = "" if project.path == "." else f" (in {project.path})"
+        if project.test_command:
+            result.test_commands.append(project.test_command + where)
+        for surface in project.surfaces:
+            if surface not in result.surfaces:
+                result.surfaces.append(surface)
+        result.lint += [f"{name}{where}" for name in project.lint]
     if not result.surfaces and languages:
         result.surfaces.append("library")
-
-    for name in (
-        "ruff.toml",
-        ".ruff.toml",
-        ".eslintrc",
-        ".eslintrc.json",
-        "eslint.config.js",
-        "eslint.config.mjs",
-        "biome.json",
-        ".golangci.yml",
-        "clippy.toml",
-    ):
-        if (root / name).exists():
-            result.lint.append(name)
-    if "[tool.ruff" in pyproject:
-        result.lint.append("ruff (pyproject)")
-    if "import-linter" in pyproject or (root / ".importlinter").exists():
-        result.lint.append("import-linter")
     return result

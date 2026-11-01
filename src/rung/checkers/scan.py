@@ -62,7 +62,9 @@ class ScanChecker(Checker):
         with tempfile.TemporaryDirectory(prefix="rung-scan-") as tmp:
             out = Path(tmp) / "result.sarif"
             argv = [part.replace("{out}", str(out)) for part in shlex.split(command)]
-            proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+            proc = subprocess.run(
+                argv, cwd=cwd / str(check.get("cwd", ".")), capture_output=True, text=True, timeout=timeout
+            )
             raw = out.read_text() if "{out}" in command and out.exists() else proc.stdout
         try:
             # Scanners exit non-zero when they find something; only missing output is an error.

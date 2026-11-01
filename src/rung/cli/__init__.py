@@ -78,6 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--base", help="branch without the fix (default: the repository's default branch)")
     s.add_argument("--tests", nargs="*", help="test files to carry over (default: test files changed on this branch)")
     s.add_argument("--expect", help="text the failing run must contain, e.g. the assertion")
+    s.add_argument("--cwd", default=".", help="directory to run the test command in (e.g. backend)")
     add("ledger", c.cmd_ledger, "verify the evidence ledger's hash chain")
 
     s = add("laws", c.cmd_laws, "list laws and whether each one holds")
@@ -86,6 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("kind", choices=[k for k in CHECK_KINDS if k not in ("tla", "lean", "drt")])
     s.add_argument("id")
     s.add_argument("--run", help="command to run (command, evidence, custom scan)")
+    s.add_argument("--cwd", help="directory to run the command in, relative to the project root")
     s.add_argument("--tool", choices=list(PRESETS), help="scanner preset (scan)")
     s.add_argument("--fail-on", choices=LEVELS, help="lowest SARIF level that blocks (scan)")
     s.add_argument("--require", nargs="*", help="artifact suffixes the evidence must include, e.g. .webm")
