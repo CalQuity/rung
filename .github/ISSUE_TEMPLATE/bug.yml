@@ -26,6 +26,17 @@ body:
     validations:
       required: true
   - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of problem is it?
+      options:
+        - A false pass (Rung said pass, but the code or check was wrong)
+        - A false positive (Rung blocked something that is fine)
+        - A crash or error message
+        - Something else
+    validations:
+      required: true
+  - type: dropdown
     id: os
     attributes:
       label: Operating system

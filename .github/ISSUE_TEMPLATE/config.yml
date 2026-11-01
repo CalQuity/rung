@@ -3,3 +3,6 @@ contact_links:
   - name: Report a security vulnerability
     url: https://github.com/CalQuity/rung/security/advisories/new
     about: Please report vulnerabilities privately, not as a public issue.
+  - name: Ask a question
+    url: https://github.com/CalQuity/rung/discussions
+    about: Questions about setting Rung up or what a verdict means.

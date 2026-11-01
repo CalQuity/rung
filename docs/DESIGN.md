@@ -38,9 +38,11 @@ exact code it covers, and it should expire on its own.**
 | Rung | Check kind | Evidence |
 |---|---|---|
 | Tests | `command`, plus `rung prove` for bug fixes | Exit status; a fix proof shows the new test fails on the merge base |
+| Honest tests | `shortcuts` | No new type-checker silencers, lint disables, skipped, focused or deleted tests, lowered coverage thresholds or relaxed type-checker settings |
+| Laws on real code | `command` from `rung draft property` | Hypothesis or fast-check properties that pass on the code and fail on deliberate one-token bugs in it |
 | Security | `scan` (any SARIF analyzer), `deps` | New findings relative to the merge base or a baseline; registry facts for new packages |
-| Architecture | `command` running a linter or import-boundary tool | Exit status |
-| Runtime | `evidence` running a script that drives the real app | Hashed artifacts: transcripts, request/response pairs, screenshots, video |
+| Architecture | `command` running the project's type checker, linter or import-boundary tool | Exit status |
+| Runtime | `evidence` running a script that drives the real app, or attested with `rung attest` | Hashed artifacts: transcripts, request/response pairs, screenshots, video; attested ones also record who recorded them |
 | Protocol | `tla` | TLC result over every reachable state; counterexample trace |
 | Model | `lean` + `drt` | Kernel-checked theorems with audited axioms; agreement with the code on random inputs |
 | Ledger | always | One verdict file per check, bound to its inputs |
