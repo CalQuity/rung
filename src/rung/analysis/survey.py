@@ -138,7 +138,7 @@ def _package_json(root: Path) -> dict:
 
 
 MANIFESTS = frozenset({"pyproject.toml", "package.json", "go.mod", "Cargo.toml", "pytest.ini", "setup.py"})
-MAX_PROJECT_DEPTH = 3
+MAX_PROJECT_DEPTH = 6  # monorepos nest packages (packages/web/app); deeper is almost always fixtures
 _NO_TEST_SCRIPT = "no test specified"
 LINT_FILES = (
     "ruff.toml", ".ruff.toml", ".eslintrc", ".eslintrc.json", "eslint.config.js", "eslint.config.mjs",
