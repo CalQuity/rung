@@ -30,13 +30,16 @@ def _working_files(root: Path) -> list[tuple[str, str]]:
 
 
 def _files_at(root: Path, commit: str) -> list[tuple[str, str]]:
+    paths = [p for p in git.files_at(root, commit) if engine.scannable(p)]
+    blobs = git.show_many(root, commit, paths)
+
     def read(rel: str) -> str | None:
         try:
-            return git.show(root, commit, rel)
-        except (git.GitError, UnicodeDecodeError):  # gone at that commit, or not text
+            return blobs[rel].decode() if rel in blobs else None
+        except UnicodeDecodeError:  # not text
             return None
 
-    return engine.read_all(git.files_at(root, commit), read)
+    return engine.read_all(paths, read)
 
 
 class ShortcutsChecker(ScanChecker):

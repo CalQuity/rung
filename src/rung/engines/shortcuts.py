@@ -187,7 +187,7 @@ def is_test_file(path: str) -> bool:
     )
 
 
-def _scannable(path: str) -> bool:
+def scannable(path: str) -> bool:
     """Whether any rule, test definition or coverage threshold could be in this file."""
     if path.endswith(SKIP_SUFFIXES) or path.startswith(".rung/"):
         return False
@@ -254,9 +254,11 @@ def find(files: Iterable[tuple[str, str]], ignore: Iterable[str] = ()) -> list[F
     skip = set(ignore)
     out: list[Finding] = []
     for path, text in files:
-        if not _scannable(path):
+        if not scannable(path):
             continue
-        rules = [r for r in RULES if r.id not in skip and r.applies(path)]
+        # A rule that cannot match anywhere in the file cannot match in its code or comments either;
+        # most files have none, and only they skip the (slower) comment and string splitting.
+        rules = [r for r in RULES if r.id not in skip and r.applies(path) and r.pattern.search(text)]
         if not rules:
             continue
         parts = split_lines(path, text)
@@ -345,7 +347,7 @@ def read_all(paths: Iterable[str], read: Callable[[str], str | None]) -> list[tu
     """`(path, text)` for every readable, reasonably sized text file among `paths`."""
     out = []
     for path in paths:
-        if not _scannable(path):
+        if not scannable(path):
             continue
         text = read(path)
         if text is not None and len(text) <= MAX_FILE_BYTES and "\0" not in text[:4096]:
