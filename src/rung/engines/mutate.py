@@ -1,0 +1,112 @@
+"""Mutants: small deliberate bugs in a source file, to find out whether tests notice them.
+
+A test that passes on the real code proves little if it also passes when `<` becomes `<=` or `+`
+becomes `-`. Rung uses mutants to reject properties that are too weak to catch anything. The
+mutations are textual and conservative (comparison, arithmetic, boolean and constant flips on code
+lines, never inside strings or comments), so every mutant is a plausible one-token bug.
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+
+from rung.core.config import write_atomic
+
+PY = (".py",)
+JS = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
+
+# (pattern, replacement) pairs; the first group is kept, so patterns can require context.
+_COMMON = (
+    (r"(?<![<>=!])<(?![<=])", "<="),
+    (r"<=", "<"),
+    (r"(?<![-=>])>(?![>=])", ">="),
+    (r">=", ">"),
+    (r"(?<=\s)\+(?=\s)", "-"),
+    (r"(?<=\s)-(?=\s)", "+"),
+    (r"(?<=\s)\*(?=\s)", "/"),
+)
+_PY = (*_COMMON, (r"==", "!="), (r"!=", "=="), (r"\band\b", "or"), (r"\bor\b", "and"),
+       (r"\bTrue\b", "False"), (r"\bFalse\b", "True"), (r"\bnot\s+", ""))  # fmt: skip
+_JS = (*_COMMON, (r"===", "!=="), (r"!==", "==="), (r"&&", "||"), (r"\|\|", "&&"),
+       (r"\btrue\b", "false"), (r"\bfalse\b", "true"))  # fmt: skip
+
+
+@dataclass(frozen=True)
+class Mutant:
+    path: Path
+    line: int  # 1-based
+    original: str
+    mutated: str
+
+    @property
+    def describe(self) -> str:
+        return f"{self.path.name}:{self.line}: `{self.original.strip()}` -> `{self.mutated.strip()}`"
+
+
+def _code_spans(line: str, comment: str) -> list[tuple[int, int]]:
+    """Ranges of `line` outside string literals and before a comment."""
+    spans, start, quote, i = [], 0, "", 0
+    while i < len(line):
+        ch = line[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote, start = "", i + 1
+        elif ch in "\"'`":
+            spans.append((start, i))
+            quote = ch
+        elif line.startswith(comment, i):
+            spans.append((start, i))
+            return [s for s in spans if s[1] > s[0]]
+        i += 1
+    if not quote:
+        spans.append((start, len(line)))
+    return [s for s in spans if s[1] > s[0]]
+
+
+def mutants(path: Path, limit: int = 12, lines: set[int] | None = None) -> list[Mutant]:
+    """Up to `limit` one-token mutants of `path`, spread across the file (optionally only on `lines`)."""
+    if path.suffix in PY:
+        rules, comment = _PY, "#"
+    elif path.suffix in JS:
+        rules, comment = _JS, "//"
+    else:
+        return []
+    found: list[Mutant] = []
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        stripped = line.strip()
+        if lines is not None and number not in lines:
+            continue
+        if not stripped or stripped.startswith((comment, "import ", "from ", "@", "*", "/*", '"""', "'''")):
+            continue
+        for start, end in _code_spans(line, comment):
+            segment = line[start:end]
+            for pattern, replacement in rules:
+                for m in re.finditer(pattern, segment):
+                    new = line[: start + m.start()] + replacement + line[start + m.end() :]
+                    if new != line:
+                        found.append(Mutant(path, number, line, new))
+    if len(found) <= limit:
+        return found
+    step = len(found) / limit  # spread the sample over the whole file
+    return [found[int(i * step)] for i in range(limit)]
+
+
+@contextmanager
+def applied(mutant: Mutant) -> Iterator[None]:
+    """Write the mutant into its file for the duration of the block, and always restore the original."""
+    original = mutant.path.read_bytes()
+    lines = original.decode().splitlines(keepends=True)
+    current = lines[mutant.line - 1]
+    lines[mutant.line - 1] = mutant.mutated + current[len(current.rstrip("\r\n")) :]
+    write_atomic(mutant.path, "".join(lines))
+    try:
+        yield
+    finally:
+        mutant.path.write_bytes(original)

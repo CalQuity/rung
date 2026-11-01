@@ -13,13 +13,19 @@ from rung.cli.output import Output
 from rung.core import laws
 from rung.core.config import Check, Config, ConfigError
 from rung.drafting import lean as lean_draft
+from rung.drafting import property as property_draft
 from rung.drafting import providers, runtime
 from rung.drafting import tla as tla_draft
 
 
-def drafted_by(cfg: Config) -> str:
-    """Which provider and model drafted an artifact, recorded on the check it creates."""
-    return f"{cfg.llm.provider}:{cfg.llm.model or 'default'}"
+def drafted_by(cfg: Config, provider: providers.Provider | None = None) -> str:
+    """Which provider and model drafted an artifact, recorded on the check it creates.
+
+    After a draft, `provider` reports the models that actually answered (Claude Code's own report, or
+    Codex's configured default), so `default` is only left when the tool does not say.
+    """
+    model = provider.models() if provider else cfg.llm.model or "your CLI's default model"
+    return f"{cfg.llm.provider}:{model}"
 
 
 def _slug(paths: list[str]) -> str:
@@ -52,6 +58,7 @@ def _draft_runtime(args, cfg: Config, out: Output) -> int:
     out.emit({"ok": result.ok, "message": result.message, "rounds": result.rounds, "covers": result.covers,
               "files": [str(f.relative_to(cfg.root)) for f in result.files], "evidence": result.evidence})  # fmt: skip
     out.line(f"{'OK' if result.ok else 'FAILED'} after {result.rounds} round(s): {result.message}")
+    out.detail(f"drafted by {drafted_by(cfg, provider)}", indent=2)
     if result.notes:
         out.line("Notes from the model:")
         out.detail(result.notes, indent=2)
@@ -68,12 +75,55 @@ def _draft_runtime(args, cfg: Config, out: Output) -> int:
             check_id,
             "evidence",
             result.covers,
-            {"run": result.run, "timeout": 900, "require": list(args.require or []), "drafted_by": drafted_by(cfg)},
+            {
+                "run": result.run,
+                "timeout": 900,
+                "require": list(args.require or []),
+                "drafted_by": drafted_by(cfg, provider),
+            },
         ),
         out,
     )
     skill = agents.install_verify_skill(cfg.root, cfg.name, check_id)
     out.line(f"wrote {skill.relative_to(cfg.root)} so agents verify user-facing changes with `rung check {check_id}`.")
+    return OK
+
+
+def _draft_property(args, cfg: Config, out: Output, sources: list[Path], rel: list[str]) -> int:
+    root = cfg.root
+    check_id = args.id or f"{_slug(rel)}-properties"
+    out.line(
+        f"Drafting property tests for {', '.join(rel)} with {drafted_by(cfg)}; Rung runs them, then breaks "
+        "the code on purpose to see whether they notice ..."
+    )
+    provider = providers.get(cfg.llm)
+    result, target = property_draft.draft(provider, root, sources, _slug(rel), intent=args.intent or "")
+    test_rel = target.test_file.relative_to(root).as_posix()
+    out.emit({"ok": result.ok, "message": result.message, "rounds": result.rounds, "trace": result.trace,
+              "files": [test_rel], "survivors": result.warnings, "run": target.command})  # fmt: skip
+    out.line(f"{'OK' if result.ok else 'FAILED'} after {result.rounds} round(s): {result.message}")
+    out.detail(f"drafted by {drafted_by(cfg, provider)}", indent=2)
+    if result.notes:
+        out.line("Notes from the model:")
+        out.detail(result.notes, indent=2)
+    out.detail(f"wrote {test_rel}", indent=2)
+    for w in result.warnings:
+        out.detail(w, indent=2)
+    if result.trace:
+        out.line("\nFailing example:")
+        out.detail(result.trace, indent=2)
+        out.line(
+            "\nIf this is a real bug, fix the code and run `rung check`. If the law is wrong, edit the test yourself."
+        )
+        return GATE_FAILED
+    if not result.ok:
+        return GATE_FAILED
+    cwd = target.project.relative_to(root).as_posix()
+    options = {"run": target.command, "drafted_by": drafted_by(cfg, provider)} | ({"cwd": cwd} if cwd != "." else {})
+    add_check(cfg, Check(check_id, "command", [*rel, test_rel], options), out)
+    if added := laws.propose(root, result.laws, [check_id]):
+        out.line(f"Proposed {len(added)} law(s) in {laws.LAWS_FILE}: {', '.join(added)}.")
+        out.line("Read each one; approve with `rung laws --approve <id>` only if it says what you mean.")
     return OK
 
 
@@ -90,6 +140,8 @@ def cmd_draft(args, out: Output) -> int:
     if missing:
         raise ConfigError(f"not found: {', '.join(missing)}")
     rel = [s.relative_to(root).as_posix() for s in sources]
+    if args.kind == "property":
+        return _draft_property(args, cfg, out, sources, rel)
     check_id = args.id or f"{_slug(rel)}-{args.kind}"
     target = root / (args.out or f"spec/{args.kind}/{_slug(rel)}")
     target.mkdir(parents=True, exist_ok=True)
@@ -100,6 +152,7 @@ def cmd_draft(args, out: Output) -> int:
     out.emit({"ok": result.ok, "message": result.message, "rounds": result.rounds, "trace": result.trace,
               "files": [str(f.relative_to(root)) for f in result.files]})  # fmt: skip
     out.line(f"{'OK' if result.ok else 'FAILED'} after {result.rounds} round(s): {result.message}")
+    out.detail(f"drafted by {drafted_by(cfg, provider)}", indent=2)
     if result.notes:
         out.line("Notes from the model:")
         out.detail(result.notes, indent=2)
@@ -116,14 +169,17 @@ def cmd_draft(args, out: Output) -> int:
         spec = next(f for f in result.files if f.suffix == ".tla")
         cfg_file = next(f for f in result.files if f.suffix == ".cfg")
         options = {"spec": spec.relative_to(root).as_posix(), "config": cfg_file.relative_to(root).as_posix(),
-                   "drafted_by": drafted_by(cfg)}  # fmt: skip
+                   "drafted_by": drafted_by(cfg, provider)}  # fmt: skip
         add_check(cfg, Check(check_id, "tla", rel, options), out)
     else:
         project = target.relative_to(root).as_posix()
         add_check(
             cfg,
             Check(
-                check_id, "lean", [], {"project": project, "theorems": result.theorems, "drafted_by": drafted_by(cfg)}
+                check_id,
+                "lean",
+                [],
+                {"project": project, "theorems": result.theorems, "drafted_by": drafted_by(cfg, provider)},
             ),
             out,
         )

@@ -7,6 +7,7 @@ from rung.checks.command import CommandChecker, EvidenceChecker
 from rung.checks.deps import DepsChecker
 from rung.checks.formal import DRTChecker, LeanChecker, TLAChecker
 from rung.checks.scan import ScanChecker
+from rung.checks.shortcuts import ShortcutsChecker
 from rung.core.config import ConfigError
 
 REGISTRY: dict[str, Checker] = {
@@ -15,6 +16,7 @@ REGISTRY: dict[str, Checker] = {
         CommandChecker(),
         EvidenceChecker(),
         ScanChecker(),
+        ShortcutsChecker(),
         DepsChecker(),
         TLAChecker(),
         LeanChecker(),

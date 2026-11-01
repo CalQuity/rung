@@ -155,6 +155,8 @@ class Project:
     test_command: str = ""
     surfaces: list[str] = field(default_factory=list)
     lint: list[str] = field(default_factory=list)
+    # Static checks the project has already configured, as (kind, command): kind is typecheck or lint.
+    static: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _node_runner(d: Path) -> str:
@@ -186,6 +188,15 @@ def _detect_project(root: Path, rel: str) -> Project | None:
             project.lint.append("ruff (pyproject)")
         if "import-linter" in pyproject or (d / ".importlinter").exists():
             project.lint.append("import-linter")
+        run = "uv run " if (d / "uv.lock").exists() else "python -m "
+        if "[tool.pyright" in pyproject or (d / "pyrightconfig.json").exists():
+            project.static.append(("typecheck", f"{run}pyright"))
+        elif "[tool.mypy" in pyproject or (d / "mypy.ini").exists() or (d / ".mypy.ini").exists():
+            project.static.append(("typecheck", f"{run}mypy ."))
+        if "[tool.ruff" in pyproject or (d / "ruff.toml").exists() or (d / ".ruff.toml").exists():
+            project.static.append(("lint", f"{run}ruff check ."))
+        if "import-linter" in project.lint:
+            project.static.append(("imports", "uv run lint-imports" if run == "uv run " else "lint-imports"))
     if pkg:
         project.ecosystems.append("node")
         deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
@@ -200,14 +211,25 @@ def _detect_project(root: Path, rel: str) -> Project | None:
             project.surfaces.append("HTTP API")
         if "bin" in pkg:
             project.surfaces.append("CLI")
+        scripts = pkg.get("scripts", {}) or {}
+        runner = _node_runner(d)
+        typecheck = next((s for s in ("typecheck", "type-check", "tsc", "check-types") if s in scripts), "")
+        if typecheck:
+            project.static.append(("typecheck", f"{runner} run {typecheck}"))
+        elif "typescript" in deps and (d / "tsconfig.json").exists():
+            project.static.append(("typecheck", f"{'npx' if runner == 'npm' else runner + ' exec'} tsc --noEmit"))
+        if "lint" in scripts:
+            project.static.append(("lint", f"{runner} run lint"))
     if (d / "go.mod").exists():
         project.ecosystems.append("go")
         project.test_command = project.test_command or "go test ./..."
+        project.static.append(("vet", "go vet ./..."))
         if (d / "cmd").is_dir():
             project.surfaces.append("CLI")
     if (d / "Cargo.toml").exists():
         project.ecosystems.append("rust")
         project.test_command = project.test_command or "cargo test"
+        project.static.append(("lint", "cargo clippy --all-targets -- -D warnings"))
     project.lint += [name for name in LINT_FILES if (d / name).exists()]
     return project if project.ecosystems else None
 

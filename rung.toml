@@ -1,9 +1,11 @@
-# Rung verifies itself with the same checks it recommends to others.
 [project]
 name = "rung"
 
 [llm]
 provider = "none"
+model = ""
+base_url = ""
+api_key_env = "RUNG_API_KEY"
 
 [[check]]
 id = "tests"
@@ -33,18 +35,27 @@ covers = ["src/**/*.py", "tests/**/*.py", "pyproject.toml"]
 id = "secrets"
 kind = "scan"
 tool = "gitleaks"
+covers = []
 
 [[check]]
 id = "vulnerable-deps"
 kind = "scan"
 tool = "osv-scanner"
+covers = []
 
 [[check]]
 id = "workflows"
 kind = "scan"
 tool = "zizmor"
+covers = []
 
 [[check]]
 id = "deps"
 kind = "deps"
 min_age_days = 30
+covers = []
+
+[[check]]
+id = "shortcuts"
+kind = "shortcuts"
+covers = []

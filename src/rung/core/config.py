@@ -22,18 +22,19 @@ from typing import Any
 from rung.core.errors import RungError
 
 CONFIG_NAME = "rung.toml"
-CHECK_KINDS = ("command", "evidence", "scan", "deps", "tla", "lean", "drt")
+CHECK_KINDS = ("command", "evidence", "scan", "shortcuts", "deps", "tla", "lean", "drt")
 CHECK_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 # Options that must be non-negative integers wherever they appear.
 INT_OPTIONS = ("timeout", "cases", "min_len", "max_len", "seed", "min_age_days")
 # Options that must be lists of strings wherever they appear.
 LIST_OPTIONS = ("specs", "require", "allow", "theorems", "alphabet")
 # Every option each kind understands; anything else is a typo that would otherwise do nothing.
-COMMON_OPTIONS = ("timeout", "max_age_days", "specs")
+COMMON_OPTIONS = ("timeout", "max_age_days", "specs", "drafted_by")
 KIND_OPTIONS = {
     "command": ("run", "cwd"),
     "evidence": ("run", "cwd", "require"),
     "scan": ("tool", "run", "cwd", "fail_on", "default_level"),
+    "shortcuts": ("allow", "fail_on"),
     "deps": ("allow", "min_age_days"),
     "tla": ("spec", "config"),
     "lean": ("project", "theorems"),

@@ -44,6 +44,10 @@ SKILLS = {
         "Write or fix a TLA+ spec that mirrors real code and model-checks with TLC. Use when creating or "
         "editing a .tla/.cfg file, or when a TLC counterexample needs reading."
     ),
+    "rung-property": (
+        "Write or strengthen Hypothesis or fast-check property-based tests for a law. Use when adding a "
+        "property test, when `rung draft property` reports surviving mutants, or when a property fails."
+    ),
     "rung-lean": (
         "Write or fix a core-only Lean 4 model with kernel-checked proofs and a differential-testing "
         "program. Use when creating or editing .lean files or when a Lean proof or build fails."
@@ -67,6 +71,7 @@ def install(root: Path, *, hooks: bool = False, lean_version: str = "the pinned 
     bodies = {
         "rung": USAGE.format(rules=rules),
         "rung-tla": guides.load("tla"),
+        "rung-property": guides.load("property"),
         "rung-lean": guides.load("lean", lean_version=lean_version),
     }
     written = [_write_skill(root, name, bodies[name], desc) for name, desc in SKILLS.items()]

@@ -10,4 +10,6 @@
 - New invariants go into LAWS.md as `status: proposed`, one plain sentence each.
 - Do not add a dependency without checking it exists and is established;
   `rung check` vets new packages against their registry.
-- Writing TLA+ or Lean? Follow the `rung-tla` and `rung-lean` skills.
+- Never silence a checker to get to green: no new `@ts-ignore`, `# type: ignore`, `as any`,
+  lint disables, skipped, focused or deleted tests. The `shortcuts` check blocks them.
+- Writing TLA+, Lean or property tests? Follow the `rung-tla`, `rung-lean` and `rung-property` skills.

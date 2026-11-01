@@ -90,6 +90,23 @@ On `--changed` or `--base`, the scanner also runs on the merge base, in a tempor
 and only new findings count. Otherwise findings are compared with `.rung/baselines/<id>.json`
 if present. Without either, every finding counts as new.
 
+### `shortcuts`
+
+| Field | Default | |
+|---|---|---|
+| `allow` | `[]` | Rule ids not to check, e.g. `["noqa", "lint-allow"]` |
+| `fail_on` | `warning` | Lowest level that blocks; `tests-removed`, `coverage-lowered`, `focused-test` and `relaxed-config` are `error` |
+
+Rules: `ts-ignore`, `ts-expect-error`, `any-cast`, `lint-disable` (TypeScript/JavaScript);
+`type-ignore`, `noqa` (Python); `nolint` (Go); `lint-allow`, `unsafe` (Rust); `suppress-warnings`
+(Java/Kotlin); `no-cover`, `skipped-test`, `focused-test` (test files); `relaxed-config` (tsconfig,
+pyproject, mypy and pyright settings); and, against the base, `tests-removed` (fewer test definitions
+than the base) and `coverage-lowered` (a lower `fail_under` or coverage threshold).
+
+Only what a change adds blocks. With `--base` it compares with the merge base; otherwise with
+`rung baseline <id>` if recorded, else with the merge base of the default branch. A genuinely needed
+one is accepted with `rung waive`.
+
 ### `deps`
 
 | Field | Default | |

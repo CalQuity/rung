@@ -76,6 +76,9 @@ rung draft runtime --intent "create, list and delete a todo through the HTTP API
 |---|---|---|
 | Tests | `command` | The suite fails |
 | Bug fixes | `rung prove` | The new test passes *without* the fix, so it proves nothing |
+| Shortcuts to green | `shortcuts` | A change adds `@ts-ignore`, `# type: ignore`, `as any`, a lint disable, a skipped, focused or deleted test, a lowered coverage threshold or a relaxed type-checker setting |
+| Type checking and lint | `command` | The project's own `tsc`, pyright, mypy, ruff, ESLint, `go vet` or Clippy fails (`rung init` records the ones it finds configured) |
+| Laws on real code | `rung draft property` | A Hypothesis or fast-check property fails, or no deliberately broken copy of the code can fail it |
 | Real behaviour (UI, API, CLI) | `evidence` | The drive script fails or records no evidence; `require = [".webm"]` demands a video. Without a script, an agent's browser or computer-use recording, attested with `rung attest`, holds until the code changes |
 | Secrets | `scan` (gitleaks) | A new secret appears |
 | Vulnerable dependencies | `scan` (osv-scanner) | A new known vulnerability appears |
@@ -100,6 +103,19 @@ A refund never exceeds the original charge, even under concurrent retries.
 
 `rung laws` shows whether each law currently **holds**: approved, enforced, and every enforcing
 verdict fresh. Agents may propose laws; only people approve them.
+
+## Property tests that are tested themselves
+
+`rung draft property pricing.py --intent "a total is never negative and equals the discounted sum"`
+has the model write Hypothesis (Python) or fast-check (TypeScript) properties for the laws, then:
+
+- runs them on the real code. A property that fails is a finding for you, never sent back to the
+  model to make it pass;
+- breaks the code on purpose, one token at a time (`<` to `<=`, `+` to `-`, `and` to `or`), and
+  runs them again. Properties that no broken copy can fail are too weak to catch anything, so the
+  surviving bugs go back to the model as the reason to strengthen them.
+
+The result is a `command` check and proposed laws in `LAWS.md`.
 
 ## Formal methods where they pay
 
@@ -179,7 +195,7 @@ any OpenAI-compatible endpoint, including local models. Rung never stores creden
 | `rung attest <check> <files> --by <tool>` | Record evidence an agent or person captured (Claude in Chrome, Codex, computer use) |
 | `rung baseline <check>` | Accept a scan's existing findings |
 | `rung waive <check> <fingerprint> --reason ...` | Accept one finding until an expiry date |
-| `rung draft tla\|lean\|runtime` | Model-drafted spec, proof or drive script; a checker decides |
+| `rung draft tla\|lean\|property\|runtime` | Model-drafted spec, proof, property tests or drive script; a checker decides |
 | `rung agents [--hooks]` | Agent skill, AGENTS.md rules, enforcement hook |
 | `rung doctor` | Which tools and model CLIs are available |
 | `rung ledger [--prune]` | Check the verdict files for corruption |
@@ -194,6 +210,8 @@ Configuration lives in `rung.toml`; see [docs/CONFIG.md](https://github.com/CalQ
 - A checker never reports `pass` unless its tool confirmed the result. Missing tools and
   malformed output are errors, and so is a TLA+ spec that reaches only one state.
 - A file that changes while a check runs voids the verdict.
+- The ways an agent can get to green without fixing anything (silencing the type checker or linter,
+  skipping or deleting tests, lowering coverage thresholds) block in the `shortcuts` check.
 - Gitleaks always runs with `--redact`, and secret-looking values (tokens, keys, credentials in
   URLs) are masked before command output is stored in the ledger. That masking is best effort:
   commands should not print secrets.
