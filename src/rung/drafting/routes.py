@@ -85,7 +85,9 @@ def python_routes(rel: str, text: str) -> list[Route]:
     for m in _PY_MOUNT.finditer(text):
         if arg := _PREFIX_ARG.search(m.group(3)):
             routes.append(Route("MOUNT", arg.group(1), rel, _line_of(text, m.start())))
-        elif m.group(2) == "mount" and (path := re.match(r"""\s*["']([^"']+)["']""", m.group(3))):
+        # Starlette's `app.mount("/static", ...)`; a path always starts with "/", which also keeps out
+        # requests' `session.mount("https://", adapter)`, a transport adapter rather than a route.
+        elif m.group(2) == "mount" and (path := re.match(r"""\s*["'](/[^"']*)["']""", m.group(3))):
             routes.append(Route("MOUNT", path.group(1), rel, _line_of(text, m.start())))
     return routes
 
