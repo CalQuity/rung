@@ -17,7 +17,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from rung.errors import ToolMissing
+from rung.core.errors import ToolMissing
 
 STANDARD_AXIOMS = frozenset({"propext", "Classical.choice", "Quot.sound"})
 
@@ -32,7 +32,17 @@ ESCAPE_HATCHES = {
     "extern": re.compile(r"@\[\s*extern\b"),
 }
 
+# Proofs that only work because the statement is true of anything, such as `0 ≤ n` for a natural number.
+# One-line `rfl`, `simp` or `decide` proofs are left alone: they often prove real properties of a model.
+TRIVIAL_PROOFS = frozenset({
+    "trivial", "by trivial", "True.intro", "Nat.zero_le _", "by exact Nat.zero_le _", "Nat.zero_le n",
+    "le_refl _", "Nat.le_refl _", "by exact le_refl _", "by exact Nat.le_refl _",
+})  # fmt: skip
+_THEOREM = re.compile(r"^(?:theorem|lemma)\s+(\S+)([\s\S]*?):=\s*([\s\S]*?)(?=^\S|\Z)", re.M)
+KNOWN_GOOD_TOOLCHAIN = "leanprover/lean4:v4.35.0"
+
 _BLOCK_COMMENT = re.compile(r"/-.*?-/", re.S)
+_STRING = re.compile(r'"(?:\\.|[^"\\])*"')
 _LINE_COMMENT = re.compile(r"--[^\n]*")
 _AXIOMS_LINE = re.compile(r"'([^']+)' depends on axioms: \[([^\]]*)\]")
 _NO_AXIOMS_LINE = re.compile(r"'([^']+)' does not depend on any axioms")
@@ -43,6 +53,7 @@ class LeanResult:
     verdict: str  # pass | fail | error
     reason: str
     findings: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     axioms: dict[str, list[str]] = field(default_factory=dict)
     output: str = ""
 
@@ -54,8 +65,52 @@ def find_lake() -> str:
     return lake
 
 
+def toolchain() -> str:
+    """The Lean toolchain to pin: `RUNG_LEAN_TOOLCHAIN`, else the newest installed release, else a known-good one.
+
+    Never trust a model to pick it: models remember old versions, and old toolchains both lack
+    current APIs and can build executables that newer operating systems refuse to load.
+    """
+    if pinned := os.environ.get("RUNG_LEAN_TOOLCHAIN"):
+        return pinned
+    elan = shutil.which("elan") or str(Path.home() / ".elan" / "bin" / "elan")
+    try:
+        out = subprocess.run([elan, "toolchain", "list"], capture_output=True, text=True, timeout=30).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return KNOWN_GOOD_TOOLCHAIN
+    releases = re.findall(r"leanprover/lean4:v(\d+)\.(\d+)\.(\d+)(?![\w-])", out)
+    if not releases:
+        return KNOWN_GOOD_TOOLCHAIN
+    newest = max(releases, key=lambda v: tuple(int(x) for x in v))
+    return "leanprover/lean4:v" + ".".join(newest)
+
+
+def lake_libraries(project: Path) -> list[str]:
+    """The `[[lean_lib]]` names in `lakefile.toml`: the modules to import when auditing theorems."""
+    try:
+        import tomllib
+
+        data = tomllib.loads((project / "lakefile.toml").read_text())
+    except (OSError, ValueError):
+        return []
+    return [lib["name"] for lib in data.get("lean_lib", []) if isinstance(lib, dict) and lib.get("name")]
+
+
+def weak_theorems(project: Path) -> list[str]:
+    """Theorems whose entire proof is a one-liner that would prove the statement about anything."""
+    weak = []
+    for path in sorted(project.rglob("*.lean")):
+        if ".lake" in path.parts:
+            continue
+        for name, _statement, proof in _THEOREM.findall(strip_comments(path.read_text())):
+            if " ".join(proof.split()) in TRIVIAL_PROOFS:
+                weak.append(f"{name}: proved by `{' '.join(proof.split())}`; it may say nothing about the model")
+    return weak
+
+
 def strip_comments(source: str) -> str:
-    return _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub("", source))
+    """Remove comments and string literals, so a word inside either is never mistaken for code."""
+    return _LINE_COMMENT.sub("", _STRING.sub('""', _BLOCK_COMMENT.sub("", source)))
 
 
 def scan_sources(project: Path) -> list[str]:
@@ -104,7 +159,7 @@ def run(project: Path, theorems: list[str], *, timeout: int = 1800) -> LeanResul
     findings = scan_sources(project)
     axioms: dict[str, list[str]] = {}
     if theorems:
-        modules = sorted({t.rsplit(".", 1)[0] for t in theorems if "." in t})
+        modules = lake_libraries(project) or sorted({t.rsplit(".", 1)[0] for t in theorems if "." in t})
         axioms, audit_out = audit_axioms(lake, project, modules, theorems)
         output += "\n" + audit_out
         for theorem in theorems:
@@ -115,7 +170,11 @@ def run(project: Path, theorems: list[str], *, timeout: int = 1800) -> LeanResul
             if extra:
                 findings.append(f"{theorem}: depends on non-standard axioms {', '.join(extra)}")
 
+    warnings = weak_theorems(project)
     if findings:
-        return LeanResult("fail", f"{len(findings)} trust problem(s)", findings, axioms, output)
+        return LeanResult("fail", f"{len(findings)} trust problem(s)", findings=findings, warnings=warnings,
+                          axioms=axioms, output=output)  # fmt: skip
     checked = f"{len(theorems)} theorem(s) kernel-checked" if theorems else "build succeeded"
-    return LeanResult("pass", checked, findings, axioms, output)
+    if warnings:
+        checked += f", {len(warnings)} possibly trivial"
+    return LeanResult("pass", checked, findings=findings, warnings=warnings, axioms=axioms, output=output)

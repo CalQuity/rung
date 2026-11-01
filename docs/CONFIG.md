@@ -31,9 +31,24 @@ run = "pytest -q"
 covers = ["src/**", "tests/**"]
 ```
 
-Every check has `id`, `kind` and optionally `covers`: glob patterns (`**` allowed) for the files
-whose change makes its verdict stale. A check with no `covers` and no spec files runs on every
-`--changed` run. Rung's own files (`.rung/`, `rung.toml`, `LAWS.md`) are never part of coverage.
+### Models
+
+Checks never use a model: every verdict comes from a deterministic tool. A model is used only by
+`rung draft`, to write a first version of a spec, proof or drive script that a checker then accepts
+or rejects. You choose it: `provider` picks Claude Code, Codex or an OpenAI-compatible endpoint, and
+`model` is passed through as that tool's `--model` / `-m`. Left empty, the tool's own default applies
+(Claude Code's default model, or the model in `~/.codex/config.toml`). Each drafted check records
+`drafted_by = "<provider>:<model>"`. Replies are schema-constrained JSON (`--json-schema`,
+`--output-schema`, or `response_format`).
+
+### Checks
+
+Every check has `id` (letters, digits, `.`, `_`, `-`), `kind` and optionally `covers`: glob
+patterns (`*`, `**`, `?`, `[abc]`) for the files whose change makes its verdict stale. `command`
+and `evidence` checks with no `covers` cover the whole project, so any change stales them; narrow
+`covers` to keep them fresh longer. A scan's verdict also depends on its baseline and the waivers
+file, and expires when a waiver it relied on expires. Rung validates `rung.toml` before running
+anything and rejects wrong types instead of guessing. Rung's own files (`.rung/`, `rung.toml`, `LAWS.md`) are never part of coverage.
 Instead each verdict records a hash of its check's declaration, so editing a check stales only
 that check. `timeout` (seconds) is accepted by every kind.
 

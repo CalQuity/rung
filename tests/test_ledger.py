@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from rung import ledger
+from rung.core import ledger
 
 
 def _record(root: Path, verdict: str = "pass") -> dict:

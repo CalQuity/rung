@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from rung import config
+from rung.core import config
 
 
 def test_load_and_round_trip(project: Path) -> None:

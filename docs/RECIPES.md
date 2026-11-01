@@ -1,7 +1,6 @@
 # Recipes
 
-Rung has no special modules for web apps, APIs or CRUD code. A handful of check kinds cover
-all of them. These recipes show the combinations that pay off for common kinds of project.
+These recipes show the check combinations that pay off for common kinds of project.
 Start with the first two rows of every recipe; add the rest where a mistake would be expensive.
 
 ## Every project

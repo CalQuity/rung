@@ -15,7 +15,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from rung.errors import ToolMissing
+from rung.core.errors import ToolMissing
 
 DEFAULT_JAR = Path.home() / ".cache" / "rung" / "tla2tools.jar"
 JAR_URL = "https://github.com/tlaplus/tlaplus/releases/latest/download/tla2tools.jar"

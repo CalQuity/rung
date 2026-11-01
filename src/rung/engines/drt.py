@@ -20,6 +20,8 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from rung.core.proc import run as run_process
+
 
 @dataclass
 class Side:
@@ -27,13 +29,8 @@ class Side:
     cwd: Path
 
     def run(self, inputs: list[str], timeout: int) -> list[str]:
-        proc = subprocess.run(
-            shlex.split(self.command),
-            cwd=self.cwd,
-            input="".join(line + "\n" for line in inputs),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
+        proc = run_process(
+            shlex.split(self.command), cwd=self.cwd, timeout=timeout, stdin="".join(line + "\n" for line in inputs)
         )
         if proc.returncode != 0:
             raise RuntimeError(f"`{self.command}` exited {proc.returncode}: {proc.stderr.strip()[:500]}")

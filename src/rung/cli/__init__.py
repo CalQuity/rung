@@ -5,14 +5,15 @@ from __future__ import annotations
 import argparse
 import sys
 
-from rung import __version__, providers
+from rung import __version__
+from rung.checks.presets import PRESETS
 from rung.cli import commands as c
 from rung.cli.output import Output
-from rung.config import CHECK_KINDS, ConfigError
+from rung.core.config import CHECK_KINDS, ConfigError
+from rung.core.errors import RungError, ToolMissing
+from rung.core.git import GitError
+from rung.drafting import providers
 from rung.engines.sarif import LEVELS
-from rung.errors import RungError, ToolMissing
-from rung.gitutil import GitError
-from rung.presets import PRESETS
 
 EXIT_USAGE, EXIT_TOOL, EXIT_GIT = 2, 3, 4
 
@@ -78,6 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--base", help="branch without the fix (default: the repository's default branch)")
     s.add_argument("--tests", nargs="*", help="test files to carry over (default: test files changed on this branch)")
     s.add_argument("--expect", help="text the failing run must contain, e.g. the assertion")
+    s.add_argument("--cwd", default=".", help="directory to run the test command in (e.g. backend)")
     add("ledger", c.cmd_ledger, "verify the evidence ledger's hash chain")
 
     s = add("laws", c.cmd_laws, "list laws and whether each one holds")
@@ -86,6 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("kind", choices=[k for k in CHECK_KINDS if k not in ("tla", "lean", "drt")])
     s.add_argument("id")
     s.add_argument("--run", help="command to run (command, evidence, custom scan)")
+    s.add_argument("--cwd", help="directory to run the command in, relative to the project root")
     s.add_argument("--tool", choices=list(PRESETS), help="scanner preset (scan)")
     s.add_argument("--fail-on", choices=LEVELS, help="lowest SARIF level that blocks (scan)")
     s.add_argument("--require", nargs="*", help="artifact suffixes the evidence must include, e.g. .webm")
@@ -103,7 +106,8 @@ def build_parser() -> argparse.ArgumentParser:
     s = add("draft", c.cmd_draft, "draft a TLA+ spec, a Lean model or a runtime verification script; a checker decides")
     s.add_argument("kind", choices=["tla", "lean", "runtime"])
     s.add_argument("files", nargs="*", help="source files to model (tla, lean) or to focus on (runtime)")
-    s.add_argument("--intent", help="what the code must guarantee, in plain words")
+    s.add_argument("--intent", help="what the code must guarantee, or (runtime) which feature to drive")
+    s.add_argument("--require", nargs="*", help="(runtime) evidence the script must leave, e.g. .webm for a video")
     s.add_argument("--id")
     s.add_argument("--out")
     return p

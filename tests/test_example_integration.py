@@ -13,10 +13,11 @@ from pathlib import Path
 
 import pytest
 
-from rung import checks, config
-from rung.checkers import Outcome
+from rung.checks import runner
+from rung.checks.base import Outcome
+from rung.core import config
+from rung.core.errors import ToolMissing
 from rung.engines import lean, tla
-from rung.errors import ToolMissing
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "lease-queue"
 BUGGY_GUARD = "if worker in job.claimed_by and not job.done:"
@@ -44,7 +45,7 @@ def _copy_example(tmp_path: Path) -> Path:
 
 def _verdicts(root: Path) -> dict[str, Outcome]:
     cfg = config.load(root)
-    return {c.id: checks.run_check(cfg, c).outcome for c in cfg.checks}
+    return {c.id: runner.run_check(cfg, c).outcome for c in cfg.checks}
 
 
 def test_buggy_queue_fails_where_the_readme_says(tmp_path: Path) -> None:

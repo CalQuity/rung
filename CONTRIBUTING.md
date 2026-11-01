@@ -13,25 +13,23 @@ To run the integration test locally, install Java 11+, put
 
 ## Layout
 
+Each layer imports only from the layers below it.
+
 | Path | What |
 |---|---|
-| `src/rung/cli/` | Argument parsing (`__init__.py`), commands (`commands.py`), terminal and JSON output |
-| `src/rung/checks.py` | Selects checks (all, by id, touched by a diff), runs them, records verdicts |
-| `src/rung/checkers/` | One class per check kind; `REGISTRY` maps kinds to checkers |
+| `src/rung/cli/` | Argument parsing, terminal/JSON output, and `commands/` (`setup`, `run`, `manage`, `draft`) |
+| `src/rung/agents/` | Agent skills and the AGENTS.md section (`install`), the Claude Code Stop hook (`hooks`) |
+| `src/rung/drafting/` | Model providers with structured output, and the TLA+, Lean and runtime drafters |
+| `src/rung/guides/` | Markdown guidance used both as drafting prompts and as agent skills |
+| `src/rung/analysis/` | Repository survey, recommended plan, report |
+| `src/rung/checks/` | Check kinds (`registry` maps kinds to checkers), the `runner`, scan presets, baselines and waivers, fix proofs |
 | `src/rung/engines/` | Tool wrappers with no knowledge of `rung.toml`: TLC, Lean, differential testing, SARIF |
-| `src/rung/ledger.py` | Content-addressed, hash-chained verdicts and freshness |
-| `src/rung/findings.py` | Baselines, waivers and triage of scan findings |
-| `src/rung/gitutil.py` | Changed files, merge bases, worktrees, gitignore-aware globbing |
-| `src/rung/prove.py` | Fail-first proofs for bug-fix tests |
-| `src/rung/draft.py`, `runtime.py` | Model-drafted specs, models and drive scripts; a checker decides |
-| `src/rung/providers.py` | Model providers (Claude Code CLI, Codex CLI, OpenAI-compatible) |
-| `src/rung/agents.py` | Agent skill, AGENTS.md section, Stop hook |
-| `src/rung/laws.py`, `report.py`, `survey.py`, `plan.py`, `presets.py` | Laws, reports, repo survey, recommendations, scanner presets |
+| `src/rung/core/` | Config, ledger, laws, git, errors |
 | `examples/lease-queue` | The worked example, used by the integration test |
 
-To add a check kind, subclass `rung.checkers.base.Checker`, register it in
-`rung/checkers/__init__.py`, add the kind to `CHECK_KINDS` in `config.py`, and document its
-fields in `docs/CONFIG.md`.
+To add a check kind, subclass `rung.checks.base.Checker`, register it in `rung/checks/registry.py`,
+add the kind to `CHECK_KINDS` in `rung/core/config.py`, and document its fields in `docs/CONFIG.md`.
+To change what models or agents are told, edit the Markdown in `src/rung/guides/`.
 
 ## Rules for changes
 

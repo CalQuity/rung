@@ -3,7 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from rung import cli, ledger
+from rung import cli
+from rung.core import ledger
 
 
 def run(project: Path, *args: str) -> int:
@@ -92,17 +93,58 @@ def test_editing_a_check_stales_only_that_check(project: Path) -> None:
         .replace('-c \'pass\'"\ncovers = ["src/*.py"]', '-c \'pass\' "\ncovers = ["src/*.py"]', 1)
     )
     (project / "rung.toml").write_text(text)
-    from rung import checks, config
+    from rung.checks import runner
+    from rung.core import config
 
     cfg = config.load(project)
-    states = {s.check_id: s.state for s in checks.statuses(cfg)}
+    states = {s.check_id: s.state for s in runner.statuses(cfg)}
     assert states == {"unit": "stale", "other": "fresh"}
 
 
 def test_writing_verdicts_never_stales_a_whole_repo_check(project: Path) -> None:
     run(project, "add", "command", "everything", "--run", f"{sys.executable} -c 'pass'", "--covers", "**/*")
     run(project, "check")
-    from rung import checks, config
+    from rung.checks import runner
+    from rung.core import config
 
     cfg = config.load(project)
-    assert all(s.state == "fresh" for s in checks.statuses(cfg))
+    assert all(s.state == "fresh" for s in runner.statuses(cfg))
+
+
+def test_a_failing_check_shows_its_stderr_too(project: Path) -> None:
+    script = "import sys; print('step 1 ok'); sys.exit('expected version 1.0, got none')"
+    run(project, "add", "command", "noisy", "--run", f'{sys.executable} -c "{script}"')
+    assert run(project, "check", "noisy") == 1
+    lines = ledger.read(project)[-1]["details"]["lines"]
+    assert lines[0] == "step 1 ok" and lines[-1] == "expected version 1.0, got none"
+
+
+def test_build_output_never_stales_a_whole_repo_check(project: Path) -> None:
+    run(project, "add", "command", "everything", "--run", f"{sys.executable} -c 'pass'", "--covers", "**/*")
+    run(project, "check", "everything")
+    build = project / "spec" / "lean" / ".lake" / "build"
+    build.mkdir(parents=True)
+    (build / "model").write_text("binary")
+    from rung.checks import runner
+    from rung.core import config
+
+    cfg = config.load(project)
+    assert runner.status(cfg, cfg.check("everything")).state == "fresh"
+
+
+def test_s1_init_registers_detected_test_suites(tmp_path: Path) -> None:
+    (tmp_path / "backend" / "tests").mkdir(parents=True)
+    (tmp_path / "backend" / "pyproject.toml").write_text('[project]\nname = "b"\ndependencies = ["pytest"]\n')
+    assert run(tmp_path, "init", "--provider", "none") == 0
+    from rung.core import config
+
+    check = config.load(tmp_path).check("backend-tests")
+    assert check.get("cwd") == "backend" and check.covers == ["backend/**"]
+
+
+def test_s4_add_emits_json(project: Path, capsys) -> None:
+    import json
+
+    capsys.readouterr()
+    assert run(project, "--json", "add", "command", "lint", "--run", "true") == 0
+    assert json.loads(capsys.readouterr().out)["check"] == "lint"

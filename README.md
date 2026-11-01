@@ -1,9 +1,14 @@
 # Rung
 
-**Prove your code works, not just that it builds.** Rung is a command-line tool for codebases
-where coding agents write a lot of the code. It runs your tests, security scanners, runtime
-checks, TLA+ model checks and Lean proofs. It records each result in a ledger tied to the
-exact bytes it checked, and it blocks a pull request only on what that pull request breaks.
+**Know what has actually been verified, and against which code.** Rung is a command-line tool
+for codebases where coding agents write a lot of the code. It runs your tests, security scanners,
+runtime checks, TLA+ model checks and Lean proofs, and records each result in a ledger tied to
+the exact bytes it checked. A result expires the moment those bytes change, and a pull request
+is blocked only on what it introduces.
+
+What a pass means depends on the check: a test suite proves what its tests assert, TLC proves an
+invariant over every state of a model, a Lean proof holds for the model it is about. Rung makes
+each of those explicit and keeps them current; it cannot make a weak test strong.
 
 ```console
 $ rung check --changed
@@ -36,7 +41,7 @@ a change does what was meant. Rung's answer is three habits.
 ## Quick start
 
 ```bash
-uv tool install git+https://github.com/CalQuity/rung   # PyPI release coming
+uv tool install rung-cli          # or: pipx install rung-cli  (the command is `rung`)
 cd your-repo
 rung init                         # survey the repo, wire up installed scanners, choose a model
 rung check                        # run everything and record verdicts
@@ -52,8 +57,6 @@ rung draft runtime --intent "create, list and delete a todo through the HTTP API
 
 ## What it checks
 
-Rung has no special modules for web, API or CRUD code. It has a few check kinds that cover them all.
-
 | Concern | Check | What blocks |
 |---|---|---|
 | Tests | `command` | The suite fails |
@@ -67,7 +70,7 @@ Rung has no special modules for web, API or CRUD code. It has a few check kinds 
 | Concurrency and protocols | `tla` | TLC finds an interleaving that breaks an invariant |
 | Core logic | `lean` + `drt` | A proof fails or cheats, or the code disagrees with the proven model |
 
-See [docs/RECIPES.md](docs/RECIPES.md) for APIs, web apps, libraries, job queues and monorepos.
+See [docs/RECIPES.md](https://github.com/CalQuity/rung/blob/main/docs/RECIPES.md) for APIs, web apps, libraries, job queues and monorepos.
 
 ## Laws
 
@@ -96,16 +99,25 @@ needs them, and the model drafts the first version.
   Lean checks pass only when `#print axioms` shows no `sorry`, no `native_decide` and no
   invented axioms.
 
-[`examples/lease-queue`](examples/lease-queue) shows both catching a real bug, plus a
+[`examples/lease-queue`](https://github.com/CalQuity/rung/tree/main/examples/lease-queue) shows both catching a real bug, plus a
 three-step case only the differential test finds.
 
 ## In CI
 
 ```yaml
-- uses: actions/checkout@v7
-  with:
-    fetch-depth: 0
-- uses: CalQuity/rung@v0.1.1
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write # only for the report comment; without it the gate still works
+jobs:
+  rung:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: CalQuity/rung@v0.1.2
 ```
 
 The action runs the checks a pull request touches against its merge base. It keeps a single
@@ -117,7 +129,9 @@ action, use `rung check --changed` and `rung report`.
 `rung agents` writes a Claude Code skill and an `AGENTS.md` section, which Codex, Cursor and
 others read. With `--hooks` it also installs a Claude Code `Stop` hook. An agent whose edits
 touch a check that is not freshly passing is told which `rung check` to run, and cannot finish
-until it has. The guidance can be ignored; the hook cannot.
+until it has. This is a best-effort local guard: it lets the agent stop on a second attempt (so it
+can never trap one), allows the stop if Rung itself cannot run, and looks at uncommitted edits.
+CI with `rung check --changed` is the enforcement boundary.
 
 Drafting uses a model you already have. `rung init` reuses your `claude` or `codex` login, or
 any OpenAI-compatible endpoint, including local models. Rung never stores credentials.
@@ -144,26 +158,45 @@ any OpenAI-compatible endpoint, including local models. Rung never stores creden
 Every command takes `-C DIR` and `--json`. Exit codes: `0` ok, `1` a check or gate failed,
 `2` configuration or usage error, `3` a required tool is missing, `4` git error.
 
-Configuration lives in `rung.toml`; see [docs/CONFIG.md](docs/CONFIG.md).
+Configuration lives in `rung.toml`; see [docs/CONFIG.md](https://github.com/CalQuity/rung/blob/main/docs/CONFIG.md).
 
 ## How Rung stays honest
 
 - A checker never reports `pass` unless its tool confirmed the result. Missing tools and
   malformed output are errors, and so is a TLA+ spec that reaches only one state.
 - A file that changes while a check runs voids the verdict.
-- Gitleaks always runs with `--redact`; secret values never reach output, reports or the ledger.
+- Gitleaks always runs with `--redact`, and secret-looking values (tokens, keys, credentials in
+  URLs) are masked before command output is stored in the ledger. That masking is best effort:
+  commands should not print secrets.
 - Waivers need a reason, an approver and an expiry date. Expired waivers stop applying.
-- Ledger entries are hash-chained, and `rung ledger` detects a rewritten history.
+- Ledger entries are hash-chained, so an entry edited or removed in the middle is detected, and a
+  broken chain makes every verdict untrusted. The chain is an integrity aid, not an authenticated
+  audit trail: whoever can rewrite the whole file can rehash it, so review changes to `.rung/` and
+  `LAWS.md` like any other change (CODEOWNERS helps).
+- Approving a law or adding a waiver is a file edit, not an authenticated signature.
 - Rung collects no telemetry.
 
-Rung's own repository is checked by Rung: see [`rung.toml`](rung.toml) and [`LAWS.md`](LAWS.md).
+Rung's own repository is checked by Rung: see [`rung.toml`](https://github.com/CalQuity/rung/blob/main/rung.toml) and [`LAWS.md`](https://github.com/CalQuity/rung/blob/main/LAWS.md).
 
 ## Requirements
 
-Python 3.11+. Each check needs its own tool: Java 11+ and
-[`tla2tools.jar`](https://github.com/tlaplus/tlaplus/releases) for TLA+,
-[Lean via elan](https://lean-lang.org/install/) for Lean, and the scanners you enable.
-`rung doctor` says what is missing and how to install it.
+- **Python 3.11+** and **git**.
+- **The tools for the checks you enable.** Java 11+ and
+  [`tla2tools.jar`](https://github.com/tlaplus/tlaplus/releases) for TLA+;
+  [Lean via elan](https://lean-lang.org/install/) for Lean; gitleaks, osv-scanner, zizmor and so on for
+  scans. `rung doctor` lists what is missing and how to install it.
+- **A coding agent or model, only for `rung draft`.** Checks never use a model. To have Rung draft
+  specs, proofs and drive scripts, install and log in to one of:
+  - [Claude Code](https://docs.claude.com/en/docs/claude-code): `npm install -g @anthropic-ai/claude-code`, then `claude auth login`
+  - [Codex CLI](https://github.com/openai/codex): `npm install -g @openai/codex`, then `codex login`
+  - any OpenAI-compatible endpoint (Ollama, vLLM, a hosted API): set `base_url`, `model` and the key
+    variable under `[llm]` in `rung.toml`
+
+  `rung init` lists the ones it finds, asks which to use and offers to log you in;
+  `rung init --provider claude-cli` skips the question. Rung reuses the tool's own login and never
+  stores credentials. Pick the model with `model = "..."` under `[llm]`; empty means the tool's default.
+- **For agent enforcement (`rung agents --hooks`)**: `rung` must be on the `PATH` Claude Code sees,
+  which `uv tool install rung-cli` provides.
 
 ## Credits
 
@@ -179,9 +212,14 @@ Rung builds on other people's ideas and says so.
 - Diff-scoped reporting and agent hooks were informed by
   [React Doctor](https://github.com/millionco/react-doctor).
 - Counterexample-driven repair of TLA+ specs follows TraceFix and related work.
+- The TLA+ and Lean guides in `src/rung/guides/` are distilled from the TLA+ VS Code extension's
+  knowledge base and [tlaplus/AgentSkills](https://github.com/tlaplus/AgentSkills) (MIT),
+  [opum-ai/proof-skills](https://github.com/opum-ai/proof-skills) (MIT),
+  [leanprover/skills](https://github.com/leanprover/skills) (Apache-2.0) and
+  [alok/vericoding-skill](https://github.com/alok/vericoding-skill) (MIT).
 
 Rung is not affiliated with or endorsed by any of these projects.
 
 ## License
 
-[Apache License 2.0](LICENSE).
+[Apache License 2.0](https://github.com/CalQuity/rung/blob/main/LICENSE).
