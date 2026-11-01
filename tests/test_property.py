@@ -58,7 +58,7 @@ def pricing(tmp_path: Path) -> Path:
 
 def test_mutants_change_one_token_and_never_strings_or_comments(tmp_path: Path) -> None:
     src = tmp_path / "m.py"
-    src.write_text('x = a < b  # a < b\ny = "a < b"\nz = p and q\n')
+    src.write_text('x = a < b  # a < b\ny = "a < b"\n"""\nDocs: a or b.\n"""\nz = p and q\n')
     found = {m.mutated for m in mutate.mutants(src)}
     assert found == {"x = a <= b  # a < b", "z = p or q"}
 

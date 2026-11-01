@@ -80,8 +80,8 @@ class Provider:
         self.models_used: set[str] = set()  # the models that actually answered, as each tool reports them
 
     def models(self) -> str:
-        """The models that answered so far, else the configured one, else "default"."""
-        return ", ".join(sorted(self.models_used)) or self.config.model or "default"
+        """The models that answered so far, else the configured one, else the CLI's own default."""
+        return ", ".join(sorted(self.models_used)) or self.config.model or "the CLI's default model"
 
     def available(self) -> bool:
         return False

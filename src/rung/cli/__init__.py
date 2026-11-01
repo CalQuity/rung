@@ -62,6 +62,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = add("init", c.cmd_init, "survey the repo, choose a model provider, write rung.toml")
     s.add_argument("--provider", choices=list(providers.PROVIDERS))
+    s.add_argument("--model", help="model for drafting, passed to the provider (e.g. sonnet, opus, gpt-6.1-sol); "
+                   "empty uses the CLI's own default")  # fmt: skip
     add("plan", c.cmd_plan, "recommend checks for this repo")
     add("doctor", c.cmd_doctor, "show which checkers, scanners and model CLIs are available")
     s = add("agents", c.cmd_agents, "install the agent skill and AGENTS.md rules (and enforcement hooks)")
@@ -120,6 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--require", nargs="*", help="(runtime) evidence the script must leave, e.g. .webm for a video")
     s.add_argument("--id")
     s.add_argument("--out")
+    s.add_argument("--model", help="model for this draft only (default: [llm] model in rung.toml, else the CLI's)")
     return p
 
 
