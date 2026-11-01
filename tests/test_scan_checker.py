@@ -98,3 +98,31 @@ def test_findings_in_ignored_files_are_not_project_findings(repo: Path) -> None:
     (repo / "cache" / "compiled.py").write_text("TOKEN = 'TODO-SECRET in a build artifact'\n")
     base = git.merge_base(repo, "main")
     assert runner.run_check(cfg, cfg.check("secrets"), base=base).verdict == "pass"
+
+
+# Recorded from osv-scanner 2.7.0 on a requirements.txt naming a package that is not on PyPI: without
+# `--no-resolve` it exits 127 with an empty SARIF; with it, the manifest is scanned as written.
+FAKE_OSV = r"""#!{python}
+import pathlib, sys
+args = sys.argv[1:]
+out = pathlib.Path(args[args.index("--output-file") + 1])
+out.write_text('{{"version": "2.1.0", "runs": [{{"tool": {{"driver": {{"name": "osv-scanner"}}}}, "results": []}}]}}')
+if "--no-resolve" not in args and "stripe-checkout-retry-pro" in pathlib.Path("requirements.txt").read_text():
+    sys.stderr.write("Error during extraction: (extracting as transitivedependency/requirements) failed "
+                     "resolution for requirements.txt: package System(7):stripe-checkout-retry-pro: not found\n")
+    sys.exit(127)
+"""
+
+
+def test_osv_preset_scans_a_manifest_that_names_an_unresolvable_package(repo: Path, monkeypatch) -> None:
+    bin_dir = repo.parent / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "osv-scanner"
+    fake.write_text(FAKE_OSV.format(python=sys.executable))
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+    (repo / "requirements.txt").write_text("stripe-checkout-retry-pro>=1.2\n")
+    (repo / "rung.toml").write_text('[[check]]\nid = "vulnerable-deps"\nkind = "scan"\ntool = "osv-scanner"\n')
+    cfg = config.load(repo)
+    result = runner.run_check(cfg, cfg.check("vulnerable-deps"))
+    assert result.verdict == "pass", result.outcome.summary  # the `deps` check is what flags the invented package
