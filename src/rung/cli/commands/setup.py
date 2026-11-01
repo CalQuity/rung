@@ -45,6 +45,8 @@ def cmd_init(args, out: Output) -> int:
 
     if not existing or args.provider:
         cfg.llm = _choose_provider(args.provider)
+    if args.model is not None:
+        cfg.llm.model = args.model
     provider = providers.get(cfg.llm)
     state = provider.login_state()
     needs_login = not state.ok and cfg.llm.provider in ("claude-cli", "codex-cli")

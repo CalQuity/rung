@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import tomllib
+from dataclasses import replace
 from pathlib import Path
 
 from rung import agents
@@ -28,6 +29,11 @@ def drafted_by(cfg: Config, provider: providers.Provider | None = None) -> str:
     return f"{cfg.llm.provider}:{model}"
 
 
+def _provider(cfg: Config, args) -> providers.Provider:
+    """The configured provider, with `--model` applied to this draft only (rung.toml is not changed)."""
+    return providers.get(replace(cfg.llm, model=args.model) if args.model else cfg.llm)
+
+
 def _slug(paths: list[str]) -> str:
     return re.sub(r"[^a-z0-9]+", "-", Path(paths[0]).stem.lower()).strip("-") or "spec"
 
@@ -42,10 +48,12 @@ def _lean_exe(project: Path) -> str:
 
 
 def _draft_runtime(args, cfg: Config, out: Output) -> int:
-    provider = providers.get(cfg.llm)
+    provider = _provider(cfg, args)
     info = survey.survey(cfg.root)
     check_id = args.id or "runtime"
-    out.line(f"Drafting a runtime verification script with {drafted_by(cfg)}; Rung runs it until it proves itself.")
+    out.line(
+        f"Drafting a runtime verification script with {drafted_by(cfg, provider)}; Rung runs it until it proves itself."
+    )
     result = runtime.draft_runtime(
         provider,
         cfg.root,
@@ -92,11 +100,11 @@ def _draft_runtime(args, cfg: Config, out: Output) -> int:
 def _draft_property(args, cfg: Config, out: Output, sources: list[Path], rel: list[str]) -> int:
     root = cfg.root
     check_id = args.id or f"{_slug(rel)}-properties"
+    provider = _provider(cfg, args)
     out.line(
-        f"Drafting property tests for {', '.join(rel)} with {drafted_by(cfg)}; Rung runs them, then breaks "
+        f"Drafting property tests for {', '.join(rel)} with {drafted_by(cfg, provider)}; Rung runs them, then breaks "
         "the code on purpose to see whether they notice ..."
     )
-    provider = providers.get(cfg.llm)
     result, target = property_draft.draft(provider, root, sources, _slug(rel), intent=args.intent or "")
     test_rel = target.test_file.relative_to(root).as_posix()
     out.emit({"ok": result.ok, "message": result.message, "rounds": result.rounds, "trace": result.trace,
@@ -133,7 +141,7 @@ def cmd_draft(args, out: Output) -> int:
         return _draft_runtime(args, cfg, out)
     if not args.files:
         raise ConfigError(f"`rung draft {args.kind}` needs the source files to model")
-    provider = providers.get(cfg.llm)
+    provider = _provider(cfg, args)
     root = cfg.root
     sources = [(root / p).resolve() for p in args.files]
     missing = [str(s) for s in sources if not s.is_file()]
@@ -145,7 +153,7 @@ def cmd_draft(args, out: Output) -> int:
     check_id = args.id or f"{_slug(rel)}-{args.kind}"
     target = root / (args.out or f"spec/{args.kind}/{_slug(rel)}")
     target.mkdir(parents=True, exist_ok=True)
-    out.line(f"Drafting {args.kind} for {', '.join(rel)} with {drafted_by(cfg)} ...")
+    out.line(f"Drafting {args.kind} for {', '.join(rel)} with {drafted_by(cfg, provider)} ...")
 
     drafter = tla_draft.draft if args.kind == "tla" else lean_draft.draft
     result = drafter(provider, root, sources, target, intent=args.intent or "")

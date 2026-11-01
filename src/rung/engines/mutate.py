@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from rung.core.config import write_atomic
+from rung.engines.shortcuts import split_lines
 
 PY = (".py",)
 JS = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
@@ -79,9 +80,14 @@ def mutants(path: Path, limit: int = 12, lines: set[int] | None = None) -> list[
     else:
         return []
     found: list[Mutant] = []
-    for number, line in enumerate(path.read_text().splitlines(), 1):
+    text = path.read_text()
+    # Lines with no code at all (inside a docstring, a template literal or a block comment) are skipped.
+    code_of = [code for code, _ in split_lines(path.name, text)]
+    for number, line in enumerate(text.splitlines(), 1):
         stripped = line.strip()
         if lines is not None and number not in lines:
+            continue
+        if not code_of[number - 1].strip():
             continue
         if not stripped or stripped.startswith((comment, "import ", "from ", "@", "*", "/*", '"""', "'''")):
             continue
