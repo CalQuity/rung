@@ -10,6 +10,7 @@ from rung import agents
 from rung.analysis import survey
 from rung.cli.commands.common import GATE_FAILED, OK, add_check, load_config
 from rung.cli.output import Output
+from rung.core import laws
 from rung.core.config import Check, Config, ConfigError
 from rung.drafting import lean as lean_draft
 from rung.drafting import providers, runtime
@@ -40,7 +41,13 @@ def _draft_runtime(args, cfg: Config, out: Output) -> int:
     check_id = args.id or "runtime"
     out.line(f"Drafting a runtime verification script with {drafted_by(cfg)}; Rung runs it until it proves itself.")
     result = runtime.draft_runtime(
-        provider, cfg.root, info, focus=args.files, check_id=check_id, intent=args.intent or ""
+        provider,
+        cfg.root,
+        info,
+        focus=args.files,
+        check_id=check_id,
+        intent=args.intent or "",
+        require=tuple(args.require or ()),
     )
     out.emit({"ok": result.ok, "message": result.message, "rounds": result.rounds, "covers": result.covers,
               "files": [str(f.relative_to(cfg.root)) for f in result.files], "evidence": result.evidence})  # fmt: skip
@@ -55,10 +62,14 @@ def _draft_runtime(args, cfg: Config, out: Output) -> int:
     if not result.ok:
         out.line("The last script is kept for you to finish by hand; it is not registered as a check.")
         return GATE_FAILED
-    run = f"python3 {(runtime.VERIFY_DIR / 'drive.py').as_posix()}"
     add_check(
         cfg,
-        Check(check_id, "evidence", result.covers, {"run": run, "timeout": 600, "drafted_by": drafted_by(cfg)}),
+        Check(
+            check_id,
+            "evidence",
+            result.covers,
+            {"run": result.run, "timeout": 900, "require": list(args.require or []), "drafted_by": drafted_by(cfg)},
+        ),
         out,
     )
     skill = agents.install_verify_skill(cfg.root, cfg.name, check_id)
@@ -124,5 +135,9 @@ def cmd_draft(args, out: Output) -> int:
                 "cases": 2000, "max_len": 8, "specs": [f"{project}/**/*.lean", f"{project}/drt_adapter.py"],
             }  # fmt: skip
             add_check(cfg, Check(f"{check_id}-drt", "drt", rel, options), out)
-    out.line("Propose the guarantees as laws in LAWS.md (status: proposed); approve them after reading.")
+    enforcing = [check_id] if args.kind == "tla" else [check_id, f"{check_id}-drt"]
+    added = laws.propose(root, result.laws, enforcing)
+    if added:
+        out.line(f"Proposed {len(added)} law(s) in {laws.LAWS_FILE}: {', '.join(added)}.")
+        out.line("Read each one; approve with `rung laws --approve <id>` only if it says what you mean.")
     return OK

@@ -6,15 +6,18 @@ import re
 from pathlib import Path
 
 from rung import guides
-from rung.drafting.common import FILES, DraftResult, files_of, safe_write, schema, source_block
+from rung.drafting.common import FILES, LAWS, LAWS_FORMAT, DraftResult, files_of, safe_write, schema, source_block
 from rung.drafting.providers import Provider
 from rung.engines import tla
 
-FORMAT = """
+FORMAT = (
+    """
 
 Return `files` with exactly two entries: `<Module>.tla` (starting `---- MODULE <Module> ----` and ending
 `====`) and `<Module>.cfg`. Put anything you want the developer to know in `notes`."""
-SCHEMA = schema(files=FILES, notes={"type": "string"})
+    + LAWS_FORMAT
+)
+SCHEMA = schema(files=FILES, laws=LAWS, notes={"type": "string"})
 
 # Slips language models make in TLA+ that are safe to correct mechanically before SANY sees the spec.
 UNICODE_OPERATORS = {
@@ -63,7 +66,7 @@ def draft(
     files: list[Path] = []
     for round_no in range(1, max_rounds + 1):
         reply = provider.complete_json(prompt, schema=SCHEMA, system=system, cwd=root)
-        produced, notes = files_of(reply), reply["notes"].strip()
+        produced, notes, laws = files_of(reply), reply["notes"].strip(), reply["laws"]
         spec_name = next((n for n in produced if n.endswith(".tla")), None)
         cfg_name = next((n for n in produced if n.endswith(".cfg")), None)
         if not spec_name or not cfg_name:
@@ -80,10 +83,11 @@ def draft(
                 round_no,
                 tla.render_trace(result.trace),
                 notes=notes,
+                laws=laws,
             )
         if result.verdict == "pass" and result.distinct_states > 1:
             return DraftResult(True, f"model-checked {result.distinct_states} distinct states, no violation",
-                               files, round_no, notes=notes)  # fmt: skip
+                               files, round_no, notes=notes, laws=laws)  # fmt: skip
         problem = (
             (result.reason + "\n" + result.output[-2000:])
             if result.verdict == "error"

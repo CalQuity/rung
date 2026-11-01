@@ -3,7 +3,8 @@
 `tla.md` and `lean.md` are distilled, in our own words, from MIT and Apache-2.0 sources:
 the TLA+ VS Code extension's knowledge base and tlaplus/AgentSkills (MIT),
 opum-ai/proof-skills (MIT), leanprover/skills (Apache-2.0) and alok/vericoding-skill (MIT),
-plus what Rung's own drafts got wrong in practice.
+plus what Rung's own drafts got wrong in practice. `runtime.md` follows the verification-skill
+and feature-map approach of Lauren Tan's pstack, enforced by running the script before it counts.
 """
 
 from __future__ import annotations

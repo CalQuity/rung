@@ -158,10 +158,23 @@ Rung's own repository is checked by Rung: see [`rung.toml`](https://github.com/C
 
 ## Requirements
 
-Python 3.11+. Each check needs its own tool: Java 11+ and
-[`tla2tools.jar`](https://github.com/tlaplus/tlaplus/releases) for TLA+,
-[Lean via elan](https://lean-lang.org/install/) for Lean, and the scanners you enable.
-`rung doctor` says what is missing and how to install it.
+- **Python 3.11+** and **git**.
+- **The tools for the checks you enable.** Java 11+ and
+  [`tla2tools.jar`](https://github.com/tlaplus/tlaplus/releases) for TLA+;
+  [Lean via elan](https://lean-lang.org/install/) for Lean; gitleaks, osv-scanner, zizmor and so on for
+  scans. `rung doctor` lists what is missing and how to install it.
+- **A coding agent or model, only for `rung draft`.** Checks never use a model. To have Rung draft
+  specs, proofs and drive scripts, install and log in to one of:
+  - [Claude Code](https://docs.claude.com/en/docs/claude-code): `npm install -g @anthropic-ai/claude-code`, then `claude auth login`
+  - [Codex CLI](https://github.com/openai/codex): `npm install -g @openai/codex`, then `codex login`
+  - any OpenAI-compatible endpoint (Ollama, vLLM, a hosted API): set `base_url`, `model` and the key
+    variable under `[llm]` in `rung.toml`
+
+  `rung init` lists the ones it finds, asks which to use and offers to log you in;
+  `rung init --provider claude-cli` skips the question. Rung reuses the tool's own login and never
+  stores credentials. Pick the model with `model = "..."` under `[llm]`; empty means the tool's default.
+- **For agent enforcement (`rung agents --hooks`)**: `rung` must be on the `PATH` Claude Code sees,
+  which `uv tool install rung-cli` provides.
 
 ## Credits
 

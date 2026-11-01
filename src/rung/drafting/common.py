@@ -26,6 +26,18 @@ FILES = {
     },
 }
 STRINGS = {"type": "array", "items": {"type": "string"}}
+LAWS = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {"id": {"type": "string"}, "text": {"type": "string"}},
+        "required": ["id", "text"],
+        "additionalProperties": False,
+    },
+}
+LAWS_FORMAT = """
+- `laws`: each guarantee the spec or proofs check, as one plain sentence a non-specialist can approve,
+  with a short kebab-case `id`. These are added to LAWS.md as proposals; a person approves them."""
 
 
 def schema(**properties: dict[str, Any]) -> dict[str, Any]:
@@ -43,6 +55,7 @@ class DraftResult:
     alphabet: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     notes: str = ""  # what the model wants the developer to know
+    laws: list[dict[str, str]] = field(default_factory=list)  # proposed laws, for a person to approve
 
 
 def files_of(reply: dict[str, Any]) -> dict[str, str]:

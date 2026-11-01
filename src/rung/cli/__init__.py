@@ -106,7 +106,8 @@ def build_parser() -> argparse.ArgumentParser:
     s = add("draft", c.cmd_draft, "draft a TLA+ spec, a Lean model or a runtime verification script; a checker decides")
     s.add_argument("kind", choices=["tla", "lean", "runtime"])
     s.add_argument("files", nargs="*", help="source files to model (tla, lean) or to focus on (runtime)")
-    s.add_argument("--intent", help="what the code must guarantee, in plain words")
+    s.add_argument("--intent", help="what the code must guarantee, or (runtime) which feature to drive")
+    s.add_argument("--require", nargs="*", help="(runtime) evidence the script must leave, e.g. .webm for a video")
     s.add_argument("--id")
     s.add_argument("--out")
     return p

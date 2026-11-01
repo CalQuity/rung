@@ -69,6 +69,28 @@ def load(root: Path) -> list[Law]:
     return parse(path.read_text()) if path.exists() else []
 
 
+def propose(root: Path, proposals: list[dict[str, str]], enforced_by: list[str]) -> list[str]:
+    """Append laws as `proposed`, skipping ids that already exist. Returns the ids added."""
+    path = root / LAWS_FILE
+    existing = {law.id for law in load(root)}
+    text = path.read_text() if path.exists() else TEMPLATE
+    added = []
+    for item in proposals:
+        law_id = re.sub(r"[^a-z0-9-]+", "-", item.get("id", "").lower()).strip("-")
+        sentence = " ".join(item.get("text", "").split())
+        if not law_id or not sentence or law_id in existing:
+            continue
+        text = (
+            text.rstrip()
+            + f"\n\n## {law_id}\n{sentence}\n- enforced by: {', '.join(enforced_by)}\n- status: proposed\n"
+        )
+        existing.add(law_id)
+        added.append(law_id)
+    if added:
+        path.write_text(text)
+    return added
+
+
 def set_status(root: Path, law_id: str, status: str) -> None:
     path = root / LAWS_FILE
     lines = path.read_text().splitlines()

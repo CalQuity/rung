@@ -16,6 +16,8 @@ verdict goes stale and the script must be re-proven.
 from __future__ import annotations
 
 import json
+import shlex
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -25,6 +27,7 @@ from rung.checks.base import Context
 from rung.checks.command import EvidenceChecker
 from rung.core import git
 from rung.core.config import Check
+from rung.core.errors import ToolMissing
 from rung.drafting.common import FILES, STRINGS, files_of, safe_write, schema
 from rung.drafting.providers import Provider
 
@@ -34,12 +37,24 @@ CONTEXT_FILES = (
     "docker-compose.yml", "compose.yaml", "manage.py", "main.py", "app.py", "go.mod", "Cargo.toml",
 )  # fmt: skip
 MAX_CONTEXT_BYTES = 60_000
-SCHEMA = schema(files=FILES, sources=STRINGS, notes={"type": "string"})
+SCHEMA = schema(files=FILES, sources=STRINGS, requirements=STRINGS, notes={"type": "string"})
 
 FORMAT = """
 
 Return `files` with `drive.py` and `FEATURES.md`, `sources` with globs of the source files the driven
-feature depends on, and `notes` with anything the developer should know."""
+feature depends on, `requirements` with the Python packages the script imports beyond the standard
+library (e.g. `playwright`; empty if none), and `notes` with anything the developer should know."""
+
+
+def run_command(requirements: list[str]) -> str:
+    """How Rung runs the drive script: plain Python, or an isolated uv environment with its packages."""
+    script = (VERIFY_DIR / "drive.py").as_posix()
+    if not requirements:
+        return f"python3 {script}"
+    if not shutil.which("uv"):
+        raise ToolMissing(f"the drive script needs {', '.join(requirements)}; install uv (https://docs.astral.sh/uv/)")
+    withs = " ".join(f"--with {shlex.quote(r)}" for r in requirements)
+    return f"uv run --no-project {withs} python {script}"
 
 
 @dataclass
@@ -51,6 +66,7 @@ class RuntimeDraft:
     covers: list[str] = field(default_factory=list)
     evidence: list[str] = field(default_factory=list)
     notes: str = ""
+    run: str = ""
 
 
 def gather_context(root: Path, info: Inspection, focus: list[str]) -> str:
@@ -76,12 +92,13 @@ def gather_context(root: Path, info: Inspection, focus: list[str]) -> str:
 
 def draft_runtime(
     provider: Provider, root: Path, info: Inspection, *, focus: list[str], check_id: str = "runtime",
-    intent: str = "", max_rounds: int = 4,
+    intent: str = "", max_rounds: int = 4, require: tuple[str, ...] = (),
 ) -> RuntimeDraft:  # fmt: skip
     out_dir = root / VERIFY_DIR
     prompt = (
         "Write the verification script and feature map for this project.\n"
         + (f"Drive this feature: {intent}\n" if intent else "")
+        + (f"The evidence must include: {', '.join(require)} (e.g. `.webm` means a video).\n" if require else "")
         + "\n"
         + gather_context(root, info, focus)
     )
@@ -94,13 +111,12 @@ def draft_runtime(
             continue
         files = safe_write(out_dir, produced)
         covers = [g.strip() for g in reply["sources"] if g.strip()]
-
-        run = f"python3 {(VERIFY_DIR / 'drive.py').as_posix()}"
-        check = Check(check_id, "evidence", covers, {"run": run, "timeout": 600})
+        run = run_command([p.strip() for p in reply["requirements"] if p.strip()])
+        check = Check(check_id, "evidence", covers, {"run": run, "timeout": 900, "require": list(require)})
         outcome = EvidenceChecker().run(Context(root=root), check)
         if outcome.verdict == "pass":
             return RuntimeDraft(True, outcome.summary, files, round_no, covers, list(outcome.evidence),
-                                reply["notes"].strip())  # fmt: skip
+                                reply["notes"].strip(), run)  # fmt: skip
         prompt += (
             f"\n\nRung ran your script and it did not prove the feature ({outcome.summary}):\n"
             + "\n".join(outcome.lines[-30:])

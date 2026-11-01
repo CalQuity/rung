@@ -35,7 +35,11 @@ def _files(**files: str) -> list[dict[str, str]]:
     return [{"path": path, "content": content} for path, content in files.items()]
 
 
-SPEC_REPLY = {"files": _files(**{"Q.tla": "---- MODULE Q ----\n====", "Q.cfg": "SPECIFICATION Spec"}), "notes": ""}
+SPEC_REPLY = {
+    "files": _files(**{"Q.tla": "---- MODULE Q ----\n====", "Q.cfg": "SPECIFICATION Spec"}),
+    "laws": [{"id": "one-owner", "text": "A job has at most one owner."}],
+    "notes": "",
+}
 
 
 def _source(tmp_path: Path) -> Path:
@@ -51,9 +55,9 @@ def test_schemas_are_strict_and_checked() -> None:
     assert tla_draft.SCHEMA["additionalProperties"] is False
     assert set(tla_draft.SCHEMA["required"]) == set(tla_draft.SCHEMA["properties"])
     with pytest.raises(ProviderError, match="missing `notes`"):
-        check_shape({"files": []}, tla_draft.SCHEMA)
+        check_shape({"files": [], "laws": []}, tla_draft.SCHEMA)
     with pytest.raises(ProviderError, match=r"\$\.files\[0\]\.content: expected a string"):
-        check_shape({"files": [{"path": "a", "content": 1}], "notes": ""}, tla_draft.SCHEMA)
+        check_shape({"files": [{"path": "a", "content": 1}], "laws": [], "notes": ""}, tla_draft.SCHEMA)
 
 
 def test_files_of_and_safe_write(tmp_path: Path) -> None:
@@ -110,7 +114,7 @@ def _lean_reply(theorems: list[str]) -> dict[str, Any]:
         "M.lean": "def x := 1", "Main.lean": "def main : IO Unit := pure ()", "drt_adapter.py": "print()",
         "lean-toolchain": "leanprover/lean4:v4.0.0",
     })  # fmt: skip
-    return {"files": files, "theorems": theorems, "alphabet": ["0", "1"], "exe": "m", "notes": ""}
+    return {"files": files, "theorems": theorems, "alphabet": ["0", "1"], "exe": "m", "laws": [], "notes": ""}
 
 
 def _lean_ok(warnings: list[str]) -> lean.LeanResult:
@@ -163,6 +167,7 @@ DRIVE_OK = {
         "FEATURES.md": "# Features\n## version\n- How a user reaches it: `app --version`",
     }),
     "sources": ["src/**/*.py"],
+    "requirements": [],
     "notes": "",
 }  # fmt: skip
 DRIVE_NO_EVIDENCE = {**DRIVE_OK, "files": _files(**{"drive.py": "pass", "FEATURES.md": "# Features"})}
@@ -182,3 +187,29 @@ def test_runtime_draft_gives_up_without_registering(tmp_path: Path) -> None:
     provider = ScriptedProvider([DRIVE_NO_EVIDENCE] * 2)
     result = runtime.draft_runtime(provider, tmp_path, survey.survey(tmp_path), focus=[], max_rounds=2)
     assert not result.ok and result.rounds == 2
+
+
+def test_runtime_run_command_isolates_declared_packages(monkeypatch) -> None:
+    assert runtime.run_command([]) == "python3 .rung/verify/drive.py"
+    monkeypatch.setattr(runtime.shutil, "which", lambda name: "/usr/bin/uv")
+    assert runtime.run_command(["playwright"]) == "uv run --no-project --with playwright python .rung/verify/drive.py"
+
+
+def test_runtime_draft_can_require_a_video(tmp_path: Path) -> None:
+    provider = ScriptedProvider([DRIVE_OK, DRIVE_OK])
+    result = runtime.draft_runtime(
+        provider, tmp_path, survey.survey(tmp_path), focus=[], max_rounds=2, require=(".webm",)
+    )
+    assert not result.ok  # a transcript alone does not satisfy a required video
+    assert ".webm" in provider.prompts[0] and "required evidence missing: .webm" in provider.prompts[1]
+
+
+def test_drafts_carry_proposed_laws_that_are_never_duplicated(tmp_path: Path, monkeypatch) -> None:
+    from rung.core import laws
+
+    monkeypatch.setattr(tla, "run", lambda *a, **k: tla.TLCResult("pass", "ok", distinct_states=9))
+    result = tla_draft.draft(ScriptedProvider([SPEC_REPLY]), tmp_path, [_source(tmp_path)], tmp_path / "spec")
+    assert laws.propose(tmp_path, result.laws, ["queue-tla"]) == ["one-owner"]
+    assert laws.propose(tmp_path, result.laws, ["queue-tla"]) == []
+    (law,) = laws.load(tmp_path)
+    assert (law.status, law.enforced_by) == ("proposed", ["queue-tla"])

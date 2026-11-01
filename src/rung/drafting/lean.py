@@ -12,11 +12,22 @@ import sys
 from pathlib import Path
 
 from rung import guides
-from rung.drafting.common import FILES, STRINGS, DraftResult, files_of, safe_write, schema, source_block
+from rung.drafting.common import (
+    FILES,
+    LAWS,
+    LAWS_FORMAT,
+    STRINGS,
+    DraftResult,
+    files_of,
+    safe_write,
+    schema,
+    source_block,
+)
 from rung.drafting.providers import Provider
 from rung.engines import drt, lean
 
-FORMAT = """
+FORMAT = (
+    """
 
 Return:
 - `files`: `lakefile.toml` (a `[[lean_lib]]` and a `[[lean_exe]]` whose `root = "Main"`), `<Lib>.lean`,
@@ -25,7 +36,11 @@ Return:
 - `alphabet`: every action code `Main.lean` accepts, as strings.
 - `exe`: the `[[lean_exe]]` name.
 - `notes`: anything the developer should know."""
-SCHEMA = schema(files=FILES, theorems=STRINGS, alphabet=STRINGS, exe={"type": "string"}, notes={"type": "string"})
+    + LAWS_FORMAT
+)
+SCHEMA = schema(
+    files=FILES, theorems=STRINGS, alphabet=STRINGS, exe={"type": "string"}, laws=LAWS, notes={"type": "string"}
+)
 
 DRT_SMOKE_CASES = 300
 
@@ -90,7 +105,7 @@ def draft(
             )
             continue
         base = DraftResult(True, result.reason, files, round_no, theorems=theorems, alphabet=alphabet,
-                           warnings=result.warnings, notes=reply["notes"].strip())  # fmt: skip
+                           warnings=result.warnings, notes=reply["notes"].strip(), laws=reply["laws"])  # fmt: skip
         if check.verdict == "fail" and check.minimal:
             m = check.minimal
             base.message = (
