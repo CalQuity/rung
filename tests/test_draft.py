@@ -213,3 +213,16 @@ def test_drafts_carry_proposed_laws_that_are_never_duplicated(tmp_path: Path, mo
     assert laws.propose(tmp_path, result.laws, ["queue-tla"]) == []
     (law,) = laws.load(tmp_path)
     assert (law.status, law.enforced_by) == ("proposed", ["queue-tla"])
+
+
+def test_runtime_context_reaches_sub_projects(tmp_path: Path) -> None:
+    for i in range(500):
+        (tmp_path / "aaa_demo").mkdir(exist_ok=True)
+        (tmp_path / "aaa_demo" / f"f{i:03}.json").write_text("{}")
+    app = tmp_path / "frontend" / "src" / "app"
+    app.mkdir(parents=True)
+    (tmp_path / "frontend" / "package.json").write_text('{"dependencies": {"next": "16"}}')
+    (app / "page.tsx").write_text("export default function Home() { return <h1>Books</h1> }")
+    text = runtime.gather_context(tmp_path, survey.survey(tmp_path), ["frontend/package.json"])
+    assert "--- frontend/src/app/page.tsx ---" in text and "<h1>Books</h1>" in text
+    assert text.index("frontend/src/app/page.tsx") < text.index("aaa_demo/f000.json")

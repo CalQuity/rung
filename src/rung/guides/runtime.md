@@ -22,11 +22,22 @@ check: it passes only if the script exits 0 **and** leaves artifacts in `$RUNG_E
   success. Never weaken an assertion to make the script pass.
 - Never print or save secrets; read credentials only from environment variables. If the feature
   needs a login you do not have, drive a feature that does not, and say so in `notes`.
+- Isolate state so several agents can verify at once: a free port, and a temporary data directory,
+  database file or schema per run. Never share or wipe a developer's own data.
+- Prefer real dependencies. A mock records what a service did the last time someone looked, so a
+  check against it proves less; if you must stub an external API, say so under the feature's
+  Gotchas.
+- If `RUNG_TARGET_URL` is set, drive that running deployment (a preview or per-change environment)
+  instead of launching the app locally. This is how a system too large to start from one script is
+  verified.
 
 ## Evidence
 
 Write everything into `Path(os.environ["RUNG_EVIDENCE_DIR"])`. Evidence must survive cleanup.
 
+- A structured result, `result.json`: the feature, whether it passed, and each assertion with what
+  was expected and what was observed. Also print it as the last line of stdout, so an agent can read
+  the outcome without parsing logs.
 - Commands: a transcript of each command and its output, `transcript.txt`.
 - HTTP: each request and response as JSON, `http_exchanges.json`.
 - Server logs: what the app printed while you drove it, `server.log`.

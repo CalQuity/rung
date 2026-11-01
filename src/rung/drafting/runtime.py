@@ -69,22 +69,50 @@ class RuntimeDraft:
     run: str = ""
 
 
+# Files that usually show how an app starts and what a user sees first, per project directory.
+ENTRY_GLOBS = (
+    "README.md", "package.json", "pyproject.toml", "app/page.*", "src/app/page.*", "app/layout.*",
+    "src/app/layout.*", "pages/index.*", "src/pages/index.*", "src/main.*", "src/index.*", "main.py", "app.py",
+    "manage.py", "cmd/*/main.go", "src/main.rs",
+)  # fmt: skip
+MAX_LISTED_FILES = 400
+SURVEY_KEYS = ("languages", "surfaces", "test_commands", "ci", "projects")
+
+
+def _context_files(root: Path, info: Inspection, focus: list[str], files: list[str]) -> list[str]:
+    """Focus files first, then each project's docs, manifests and entry points, then root build files."""
+    chosen: list[str] = list(focus)
+    for project in info.projects:
+        prefix = "" if project.path == "." else f"{project.path}/"
+        for pattern in ENTRY_GLOBS:
+            chosen += [f for f in files if git.glob_match(prefix + pattern, f)]
+    chosen += list(CONTEXT_FILES)
+    return list(dict.fromkeys(chosen))
+
+
 def gather_context(root: Path, info: Inspection, focus: list[str]) -> str:
-    """What the model sees: the survey, a file list, the project's own docs and entry points."""
+    """What the model sees: the survey, a file list, and the project's own docs and entry points.
+
+    Files near the focus come first in the listing, so a sub-project (`frontend/`) is never hidden
+    behind hundreds of unrelated files that sort earlier.
+    """
     files = git.list_files(root)
+    focus_dirs = {str(Path(f).parent) for f in focus} - {"."}
+    near = [f for f in files if any(f.startswith(d + "/") for d in focus_dirs)]
+    listing = list(dict.fromkeys(near + files))[:MAX_LISTED_FILES]
     parts = [
         "Survey:",
-        json.dumps({k: info.to_dict()[k] for k in ("languages", "surfaces", "test_commands", "ci")}, indent=1),
+        json.dumps({k: info.to_dict()[k] for k in SURVEY_KEYS}, indent=1),
         "",
-        "Files (first 300):",
-        "\n".join(files[:300]),
+        f"Files ({len(listing)} of {len(files)}, those near the focus first):",
+        "\n".join(listing),
     ]
     budget = MAX_CONTEXT_BYTES
-    for rel in [*focus, *CONTEXT_FILES]:
+    for rel in _context_files(root, info, focus, files):
         path = root / rel
         if not path.is_file() or budget <= 0:
             continue
-        text = path.read_text(errors="ignore")[: min(budget, 15_000)]
+        text = path.read_text(errors="ignore")[: min(budget, 12_000)]
         budget -= len(text)
         parts += ["", f"--- {rel} ---", text]
     return "\n".join(parts)
