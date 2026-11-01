@@ -16,6 +16,7 @@ The loop:
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -25,7 +26,7 @@ from pathlib import Path
 from rung import guides
 from rung.core import proc
 from rung.core.config import ConfigError
-from rung.core.errors import ToolMissing
+from rung.core.errors import RungError, ToolMissing
 from rung.drafting.common import LAWS, LAWS_FORMAT, DraftResult, schema, source_block
 from rung.drafting.providers import Provider
 from rung.engines import mutate
@@ -145,8 +146,10 @@ def classify(returncode: int, output: str) -> str:
 
 
 def _run(target: Target) -> tuple[int, str]:
+    # Never cache bytecode for the files Rung mutates (see `mutate.applied`); other caches stay.
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
     try:
-        result = proc.run(target.argv, cwd=target.project, timeout=RUN_TIMEOUT)
+        result = proc.run(target.argv, cwd=target.project, timeout=RUN_TIMEOUT, env=env)
     except FileNotFoundError as exc:
         raise ToolMissing(f"cannot run `{target.command}`: {exc}") from exc
     except subprocess.TimeoutExpired:
@@ -154,12 +157,16 @@ def _run(target: Target) -> tuple[int, str]:
     return result.returncode, (result.stdout or "") + (result.stderr or "")
 
 
-def mutation_score(target: Target, sources: list[Path]) -> tuple[int, list[mutate.Mutant]]:
+def backup_dir(root: Path) -> Path:
+    return root / ".rung" / "cache" / "mutation-backups"
+
+
+def mutation_score(target: Target, sources: list[Path], root: Path) -> tuple[int, list[mutate.Mutant]]:
     """Run the property file against each mutant; return how many it caught and which survived."""
     sample = [m for s in sources for m in mutate.mutants(s, limit=MAX_MUTANTS)][:MAX_MUTANTS]
     survivors = []
     for mutant in sample:
-        with mutate.applied(mutant):
+        with mutate.applied(mutant, backup_dir(root)):
             code, _ = _run(target)
         if code == 0:
             survivors.append(mutant)
@@ -173,6 +180,12 @@ def _tail(text: str, n: int = 60) -> str:
 def draft(
     provider: Provider, root: Path, sources: list[Path], slug: str, *, intent: str = "", max_rounds: int = 4
 ) -> tuple[DraftResult, Target]:
+    if restored := mutate.recover(backup_dir(root)):
+        raise RungError(
+            "a previous draft was killed while a deliberate bug was in the code; restored "
+            + ", ".join(str(p.relative_to(root)) for p in restored)
+            + ". Check `git diff`, then draft again."
+        )
     target = target_for(root, sources, slug)
     system = guides.load("property") + FORMAT
     imports = (
@@ -207,7 +220,7 @@ def draft(
         if verdict == "error":
             prompt += f"\n\nThe test file did not run cleanly:\n{_tail(output)}\nFix the test (not the code)."
             continue
-        caught, survivors = mutation_score(target, sources)
+        caught, survivors = mutation_score(target, sources, root)
         total = caught + len(survivors)
         if total == 0 or (caught and (caught / total >= GOOD_ENOUGH or round_no == max_rounds)):
             score = f"caught {caught} of {total} deliberate bugs" if total else "no mutants could be made"
