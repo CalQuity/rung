@@ -22,6 +22,8 @@ class Preset:
     fail_on: str = "warning"
     # Severity for results the tool reports without a level (gitleaks reports none).
     default_level: str = "warning"
+    # Days a verdict stays valid even if no file changes: advisory databases update daily.
+    max_age_days: int | None = None
     covers: list[str] = field(default_factory=lambda: ["**/*"])
     verified: bool = False
 
@@ -43,6 +45,7 @@ PRESETS: dict[str, Preset] = {
             "dependencies with known vulnerabilities",
             "osv-scanner scan source -r . -f sarif --output-file {out}",
             "brew install osv-scanner  |  https://github.com/google/osv-scanner",
+            max_age_days=1,
             covers=[
                 "**/requirements*.txt",
                 "**/pyproject.toml",

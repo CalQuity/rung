@@ -106,7 +106,7 @@ def prove(
         proof.verdict, proof.summary = "error", "files changed while the proof ran; re-run it"
 
     slug = re.sub(r"[^a-z0-9]+", "-", command.lower()).strip("-")[:40] or "tests"
-    ledger.append(
+    ledger.record(
         root,
         check_id=f"proof:{slug}",
         kind="proof",
@@ -117,6 +117,7 @@ def prove(
         context=mb,
         details={
             "command": command, "cwd": cwd, "base": mb, "tests": chosen, "expect": expect or "",
+            "files": sorted(before),
             "base_returncode": base_run.returncode, "head_returncode": head_run.returncode,
             "base_tail": redact_lines(base_run.tail), "head_tail": redact_lines(head_run.tail),
         },

@@ -6,7 +6,7 @@ build/
 *.egg-info/
 .pytest_cache/
 
-# Rung scratch space; the ledger itself (.rung/ledger.jsonl) is meant to be committed.
+# Rung's local cache and evidence; the verdicts in .rung/verdicts/ are meant to be committed.
 .rung/cache/
 .rung/runs/
 # Evidence artifacts can be large; the ledger keeps their hashes. Upload them from CI.

@@ -46,6 +46,12 @@ class Checker:
     def default_covers(self, check: Check) -> list[str]:
         return []
 
+    def max_age_days(self, check: Check) -> int | None:
+        """How long a verdict stays valid regardless of file changes (for checks whose data changes)."""
+        if "max_age_days" not in check.options:
+            return None
+        return check.get_int("max_age_days", 0) or None
+
     def covers(self, check: Check) -> list[str]:
         return check.covers or self.default_covers(check)
 

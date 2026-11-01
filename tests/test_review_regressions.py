@@ -44,7 +44,7 @@ def test_b1_deleting_a_baseline_stales_the_scan_verdict(repo: Path) -> None:
     cfg = _toml(repo, '[[check]]\nid = "scan1"\nkind = "scan"\nrun = "true"\ncovers = ["src/**"]\n')
     check = cfg.check("scan1")
     findings.save_baseline(repo, "scan1", [], "abc")
-    ledger.append(
+    ledger.record(
         repo, check_id="scan1", kind="scan", verdict="pass", summary="ok",
         covers=ledger.snapshot(repo, runner.covers(check)), specs=ledger.snapshot(repo, runner.specs(check)),
         definition=runner.definition(check),
@@ -57,7 +57,7 @@ def test_b1_deleting_a_baseline_stales_the_scan_verdict(repo: Path) -> None:
 def test_b1_an_expired_waiver_stales_the_verdict(repo: Path) -> None:
     cfg = _toml(repo, f'[[check]]\nid = "c"\nkind = "command"\nrun = "{PY} -c \'pass\'"\ncovers = ["src/**"]\n')
     check = cfg.check("c")
-    ledger.append(repo, check_id="c", kind="command", verdict="pass", covers={}, specs={}, summary="ok",
+    ledger.record(repo, check_id="c", kind="command", verdict="pass", covers={}, specs={}, summary="ok",
                   definition=runner.definition(check), valid_until="2020-01-01")  # fmt: skip
     status = runner.status(cfg, check)
     assert status.state == "stale" and "expired" in status.changed[-1]
@@ -65,7 +65,7 @@ def test_b1_an_expired_waiver_stales_the_verdict(repo: Path) -> None:
 
 def test_b2_a_broken_ledger_is_never_trusted(project: Path, capsys) -> None:
     assert rung(project, "check") == 0
-    path = project / ledger.LEDGER_PATH
+    path = ledger.verdict_path(project, "unit")
     entry = json.loads(path.read_text())
     entry["summary"] = "tampered"
     path.write_text(json.dumps(entry) + "\n")
@@ -205,19 +205,20 @@ def test_b14_a_differential_test_with_zero_cases_is_an_error(repo: Path) -> None
 
 
 def _append(root: str, n: int) -> None:
-    for _ in range(n):
-        ledger.append(Path(root), check_id="c", kind="command", verdict="pass", covers={}, specs={}, summary="x")
+    for i in range(n):
+        ledger.record(Path(root), check_id=f"c{i % 3}", kind="command", verdict="pass", covers={}, specs={},
+                      summary="x")  # fmt: skip
 
 
-def test_b15_concurrent_writers_keep_the_chain_intact(tmp_path: Path) -> None:
+def test_b15_concurrent_writers_never_corrupt_verdicts(tmp_path: Path) -> None:
     ctx = multiprocessing.get_context("spawn")
     procs = [ctx.Process(target=_append, args=(str(tmp_path), 6)) for _ in range(4)]
     for p in procs:
         p.start()
     for p in procs:
         p.join()
-    entries = ledger.read(tmp_path)
-    assert len(entries) == 24 and ledger.verify_chain(entries) == []
+    assert ledger.problems(tmp_path) == []
+    assert set(ledger.read_all(tmp_path)) == {"c0", "c1", "c2"}
 
 
 def test_b16_a_timeout_kills_the_whole_process_tree(project: Path, tmp_path: Path) -> None:
@@ -239,4 +240,4 @@ def test_sec1_secrets_in_command_output_are_redacted_in_the_ledger(project: Path
     token = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
     rung(project, "add", "command", "leaky", "--run", f"{PY} -c 'print(\"token {token}\")'")
     rung(project, "check", "leaky")
-    assert token not in (project / ledger.LEDGER_PATH).read_text()
+    assert token not in ledger.verdict_path(project, "leaky").read_text()
