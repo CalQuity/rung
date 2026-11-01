@@ -102,10 +102,10 @@ three-step case only the differential test finds.
 ## In CI
 
 ```yaml
-- uses: actions/checkout@v5
+- uses: actions/checkout@v7
   with:
     fetch-depth: 0
-- uses: CalQuity/rung@v0.1.0
+- uses: CalQuity/rung@v0.1.1
 ```
 
 The action runs the checks a pull request touches against its merge base. It keeps a single
