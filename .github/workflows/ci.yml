@@ -24,7 +24,25 @@ jobs:
       - run: uv sync
       - run: uv run ruff format --check .
       - run: uv run ruff check .
-      - run: uv run pytest -q
+      - run: uv run pyright
+      - run: uv run pytest -q --cov --cov-report=term
+
+  lint-actions:
+    # actionlint (with shellcheck) for the workflows, and shellcheck for the composite action's bash.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Install actionlint (pinned, checksum verified)
+        run: |
+          curl -fsSL -o actionlint.tar.gz \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint.tar.gz" | sha256sum --check
+          tar -xzf actionlint.tar.gz actionlint
+      - run: ./actionlint -color
+      - run: uv run --no-project --with pyyaml python scripts/shellcheck_action.py
 
   formal:
     # Runs the example end to end with the real TLC model checker and Lean kernel.

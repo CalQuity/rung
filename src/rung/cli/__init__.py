@@ -33,10 +33,13 @@ def _common_options(*, defaults: bool) -> argparse.ArgumentParser:
     overwritten by the subcommand's own default.
     """
     parser = argparse.ArgumentParser(add_help=False)
-    unset = {} if defaults else {"default": argparse.SUPPRESS}
-    parser.add_argument("-C", "--dir", help="project directory (default: current)", **({"default": "."} | unset))
-    parser.add_argument("--json", action="store_true", help="print machine-readable JSON", **unset)
-    parser.add_argument("--no-color", action="store_true", help="disable colour", **unset)
+    suppress = not defaults
+    parser.add_argument("-C", "--dir", help="project directory (default: current)",
+                        default=argparse.SUPPRESS if suppress else ".")  # fmt: skip
+    parser.add_argument("--json", action="store_true", help="print machine-readable JSON",
+                        default=argparse.SUPPRESS if suppress else False)  # fmt: skip
+    parser.add_argument("--no-color", action="store_true", help="disable colour",
+                        default=argparse.SUPPRESS if suppress else False)  # fmt: skip
     return parser
 
 

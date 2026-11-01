@@ -2,8 +2,10 @@
 
 ```bash
 uv sync
-uv run pytest -q           # unit tests; the example integration test skips without TLC/Lean
-uv run ruff format . && uv run ruff check .
+uv run pre-commit install    # ruff, ruff format and pyright on every commit, as in CI
+uv run pytest -q --cov       # the example integration test skips without TLC/Lean
+uv run pyright               # type check (editors read the same [tool.pyright] settings)
+actionlint                   # workflows, if you change .github/ (CI also shellchecks action.yml)
 ```
 
 To run the integration test locally, install Java 11+, put
