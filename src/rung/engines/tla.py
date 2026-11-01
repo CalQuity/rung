@@ -44,6 +44,40 @@ class TLCResult:
     output: str = ""
 
 
+_CFG_SECTION = re.compile(
+    r"^\s*(INVARIANTS?|PROPERTY|PROPERTIES|CONSTRAINTS?|ACTION_CONSTRAINTS?|CHECK_DEADLOCK|"
+    r"CONSTANTS?|SPECIFICATION|INIT|NEXT|SYMMETRY|VIEW|ALIAS|POSTCONDITION)\b(.*)$"
+)
+
+
+def declared_properties(cfg: Path) -> dict[str, list[str]]:
+    """What a TLC config asks TLC to check, and settings that narrow what a pass means."""
+    out: dict[str, list[str]] = {"invariants": [], "properties": [], "narrowing": []}
+    try:
+        text = cfg.read_text()
+    except OSError:
+        return out
+    section = ""
+    for raw in text.splitlines():
+        line = raw.split("\\*", 1)[0].strip()
+        if not line:
+            continue
+        if m := _CFG_SECTION.match(line):
+            section, rest = m.group(1), m.group(2).strip()
+            if section.startswith("CONSTRAINT") or section.startswith("ACTION_CONSTRAINT"):
+                out["narrowing"].append("state constraint")
+            if section == "CHECK_DEADLOCK" and rest.upper().startswith("FALSE"):
+                out["narrowing"].append("deadlock checking off")
+            names = rest.split()
+        else:
+            names = line.split()
+        if section.startswith("INVARIANT"):
+            out["invariants"] += names
+        elif section.startswith("PROPERT"):
+            out["properties"] += names
+    return out
+
+
 def find_jar() -> Path:
     jar = Path(os.environ.get("RUNG_TLA2TOOLS", DEFAULT_JAR)).expanduser()
     if not jar.is_file():

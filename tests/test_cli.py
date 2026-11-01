@@ -38,8 +38,9 @@ def test_failing_command_fails_the_run(project: Path) -> None:
 def test_missing_tool_is_an_error_verdict_not_a_crash(project: Path, monkeypatch, capsys) -> None:
     monkeypatch.setenv("RUNG_TLA2TOOLS", str(project / "nope.jar"))
     (project / "Spec.tla").write_text("---- MODULE Spec ----\n====\n")
+    (project / "Spec.cfg").write_text("SPECIFICATION Spec\nINVARIANT TypeOK\n")
     with (project / "rung.toml").open("a") as fh:
-        fh.write('\n[[check]]\nid = "proto"\nkind = "tla"\nspec = "Spec.tla"\ncovers = []\n')
+        fh.write('\n[[check]]\nid = "proto"\nkind = "tla"\nspec = "Spec.tla"\nconfig = "Spec.cfg"\ncovers = []\n')
     assert run(project, "check", "proto") == 1
     assert "tla2tools.jar not found" in capsys.readouterr().out
     assert ledger.history(project)[-1]["verdict"] == "error"

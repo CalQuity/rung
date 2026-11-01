@@ -241,3 +241,52 @@ def test_sec1_secrets_in_command_output_are_redacted_in_the_ledger(project: Path
     rung(project, "add", "command", "leaky", "--run", f"{PY} -c 'print(\"token {token}\")'")
     rung(project, "check", "leaky")
     assert token not in ledger.verdict_path(project, "leaky").read_text()
+
+
+# --- second review ---------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["cd src && python3 -c pass", "pytest | tee out.txt", "FOO=1 pytest", "pytest; echo done", "cd src"],
+)
+def test_r2_shell_syntax_in_commands_is_rejected(tmp_path: Path, command: str) -> None:
+    (tmp_path / "rung.toml").write_text(f'[[check]]\nid = "x"\nkind = "command"\nrun = {json.dumps(command)}\n')
+    with pytest.raises(config.ConfigError, match="without a shell"):
+        config.load(tmp_path)
+
+
+def test_r2_an_explicit_shell_is_allowed(tmp_path: Path) -> None:
+    (tmp_path / "rung.toml").write_text('[[check]]\nid = "x"\nkind = "command"\nrun = "sh -c \'cd src && pytest\'"\n')
+    assert config.load(tmp_path).check("x").get("run").startswith("sh -c")
+
+
+def test_r2_a_tla_config_without_invariants_fails(tmp_path: Path) -> None:
+    from rung.engines import tla
+
+    cfg = tmp_path / "S.cfg"
+    cfg.write_text("SPECIFICATION Spec\n")
+    assert tla.declared_properties(cfg)["invariants"] == []
+    cfg.write_text("SPECIFICATION Spec\nINVARIANTS\n    TypeOK\n    Safe\nCHECK_DEADLOCK FALSE\n")
+    declared = tla.declared_properties(cfg)
+    assert declared["invariants"] == ["TypeOK", "Safe"] and declared["narrowing"] == ["deadlock checking off"]
+
+
+def test_r2_lean_escape_hatches_with_attributes_and_sorryax(tmp_path: Path) -> None:
+    from rung.engines import lean
+
+    (tmp_path / "P.lean").write_text(
+        "theorem anything : 1 = 2 := sorryAx _ false\n@[simp] axiom cheat : forall n : Nat, n = n + 1\n"
+    )
+    findings = lean.scan_sources(tmp_path)
+    assert any("sorry" in f for f in findings) and any("axiom declaration" in f for f in findings)
+
+
+def test_r2_lean_audits_every_theorem_when_none_are_listed(tmp_path: Path) -> None:
+    from rung.engines import lean
+
+    (tmp_path / "M.lean").write_text(
+        "namespace Billing\ntheorem refund_bounded : True := trivial\nnamespace Inner\n"
+        "@[simp] theorem nested : True := trivial\nend Inner\nend Billing\ntheorem top : True := trivial\n"
+    )
+    assert lean.discover_theorems(tmp_path) == ["Billing.refund_bounded", "Billing.Inner.nested", "top"]

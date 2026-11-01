@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import tempfile
 import tomllib
 from dataclasses import dataclass, field
@@ -93,6 +94,38 @@ def find_root(start: Path) -> Path:
     raise ConfigError(f"no {CONFIG_NAME} in {start} or its parents; run `rung init`")
 
 
+SHELL_TOKENS = {"&&", "||", "|", ";", ">", ">>", "<", "2>", "2>&1", "&"}
+SHELLS = {"sh", "bash", "zsh", "dash", "fish", "cmd", "powershell", "pwsh"}
+
+
+def check_command(check_id: str, key: str, command: str) -> None:
+    """Commands run without a shell. Reject shell syntax instead of passing it to a program as arguments.
+
+    Without this, `cd src && pytest` runs `/usr/bin/cd` on macOS, which ignores its arguments and
+    exits 0: a pass that never ran the tests.
+    """
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        raise ConfigError(f"check {check_id!r}: `{key}` is not a valid command ({exc})") from exc
+    if not argv:
+        raise ConfigError(f"check {check_id!r}: `{key}` is empty")
+    if Path(argv[0]).name in SHELLS:
+        return  # an explicit shell, e.g. sh -c "cd src && pytest", is the supported way
+    problem = ""
+    if any(t in SHELL_TOKENS or t.startswith(("$(", "`")) or t.endswith(";") or "&&" in t or "||" in t for t in argv):
+        problem = "uses shell syntax (&&, |, ;, redirects)"
+    elif "=" in argv[0] and not argv[0].startswith(("-", "/", ".")):
+        problem = "starts with an environment assignment"
+    elif argv[0] == "cd":
+        problem = "starts with `cd` (use the check's `cwd` option instead)"
+    if problem:
+        raise ConfigError(
+            f"check {check_id!r}: `{key}` {problem}, but commands run without a shell. "
+            f'Use `cwd`, or wrap it explicitly: sh -c "{command}"'
+        )
+
+
 def _validate_check(check: Check) -> None:
     for key in INT_OPTIONS:
         if key in check.options:
@@ -103,6 +136,9 @@ def _validate_check(check: Check) -> None:
     for key in ("run", "cwd", "tool", "spec", "config", "project", "model", "impl", "fail_on"):
         if key in check.options and not isinstance(check.options[key], str):
             raise ConfigError(f"check {check.id!r}: `{key}` must be a string")
+    for key in ("run", "model", "impl"):
+        if key in check.options:
+            check_command(check.id, key, check.options[key])
 
 
 def load(root: Path) -> Config:

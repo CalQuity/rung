@@ -23,9 +23,11 @@ STANDARD_AXIOMS = frozenset({"propext", "Classical.choice", "Quot.sound"})
 
 # Constructs that let a "proof" compile without the kernel checking it.
 ESCAPE_HATCHES = {
-    "sorry": re.compile(r"\bsorry\b"),
+    "sorry": re.compile(r"\bsorry(?:Ax)?\b"),
     "admit": re.compile(r"\badmit\b"),
-    "axiom declaration": re.compile(r"^\s*(?:private\s+|protected\s+)?axiom\s", re.M),
+    "axiom declaration": re.compile(
+        r"^\s*(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|noncomputable|unsafe|partial)\s+)*axiom\s", re.M
+    ),
     "native_decide": re.compile(r"\bnative_decide\b"),
     "unsafe definition": re.compile(r"^\s*(?:@\[[^\]]*\]\s*)?unsafe\s", re.M),
     "implemented_by": re.compile(r"\bimplemented_by\b"),
@@ -96,6 +98,30 @@ def lake_libraries(project: Path) -> list[str]:
     return [lib["name"] for lib in data.get("lean_lib", []) if isinstance(lib, dict) and lib.get("name")]
 
 
+_NAMESPACE = re.compile(r"^\s*(namespace|end|section)\s+([\w.]+)?", re.M)
+_DECL = re.compile(r"^\s*(?:@\[[^\]]*\]\s*)*(?:(?:private|protected)\s+)?(?:theorem|lemma)\s+([\w.']+)", re.M)
+
+
+def discover_theorems(project: Path) -> list[str]:
+    """Fully qualified names of every theorem in the project's own sources (namespaces resolved)."""
+    names = []
+    for path in sorted(project.rglob("*.lean")):
+        if ".lake" in path.parts or path.name == "lakefile.lean":
+            continue
+        stack: list[str] = []
+        for line in strip_comments(path.read_text()).splitlines():
+            if m := _NAMESPACE.match(line):
+                keyword, name = m.group(1), m.group(2)
+                if keyword == "namespace" and name:
+                    stack.append(name)
+                elif keyword == "end" and stack and name == stack[-1]:
+                    stack.pop()
+                continue
+            if m := _DECL.match(line):
+                names.append(".".join([*stack, m.group(1)]))
+    return names
+
+
 def weak_theorems(project: Path) -> list[str]:
     """Theorems whose entire proof is a one-liner that would prove the statement about anything."""
     weak = []
@@ -157,6 +183,9 @@ def run(project: Path, theorems: list[str], *, timeout: int = 1800) -> LeanResul
         return LeanResult("fail", "lake build failed", output=output)
 
     findings = scan_sources(project)
+    if "declaration uses 'sorry'" in output or "declaration uses `sorry`" in output:
+        findings.append("the build reports a declaration that uses `sorry`")
+    theorems = theorems or discover_theorems(project)
     axioms: dict[str, list[str]] = {}
     if theorems:
         modules = lake_libraries(project) or sorted({t.rsplit(".", 1)[0] for t in theorems if "." in t})
