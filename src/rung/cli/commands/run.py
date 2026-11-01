@@ -83,10 +83,14 @@ def cmd_prove(args, out: Output) -> int:
     out.emit({
         "verdict": result.verdict, "summary": result.summary, "tests": result.tests,
         "base": result.base.__dict__ if result.base else None, "head": result.head.__dict__ if result.head else None,
+        "cases": [c.__dict__ for c in result.cases],
     })  # fmt: skip
     out.line(f"{out.badge(result.verdict, VERDICT_STYLE, 6)}{result.summary}")
     for t in result.tests:
         out.detail(f"test: {t}")
+    for c in result.cases:
+        label = "proven" if c.proven else "NOT PROVEN"
+        out.detail(f"{label:10} {c.test}  (merge base: {c.base}, branch: {c.head})")
     if result.base and result.verdict != "pass":
         out.detail(f"merge base run (exit {result.base.returncode}):")
         for line in result.base.tail[-12:]:

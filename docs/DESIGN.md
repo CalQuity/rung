@@ -74,6 +74,12 @@ A regression test that passes before the fix proves nothing, and agents write su
 they must fail, then runs them on the branch where they must pass. `--expect` names text the
 failure must contain, so an import error does not count as the bug being caught.
 
+One failing test can hide a weak one in the same file, so when the command runs pytest, both runs
+also write a JUnit XML report and each test the branch adds or changes (found by comparing the test
+functions' code with the merge base) is judged on its own. Any of them that passes or skips on the
+merge base fails the proof, by name. `--json` lists each one as `cases`, with its outcome on both
+sides. Other runners are judged by the whole run.
+
 ### Runtime evidence that proves itself
 
 `rung draft runtime` has the model write a drive script and a feature map. Rung runs the script
