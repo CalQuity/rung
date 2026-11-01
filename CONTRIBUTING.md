@@ -43,3 +43,20 @@ To change what models or agents are told, edit the Markdown in `src/rung/guides/
   `docs/DESIGN.md` in the same change.
 - Every runner change comes with a test that uses recorded tool output, so the suite
   runs without the tool installed.
+
+## Releasing
+
+1. Bump the version in `pyproject.toml`, `src/rung/__init__.py` and `.claude-plugin/plugin.json`, and the
+   `CalQuity/rung@v…` references in `README.md` and `skills/setup/SKILL.md`.
+   `tests/test_release_consistency.py` fails if any of them disagree.
+2. Merge to `main` through a pull request.
+3. A maintainer pushes the tag (`git tag -a vX.Y.Z -m "Rung X.Y.Z" && git push origin vX.Y.Z`); only
+   admins can create `v*` tags. `release.yml` checks the tag matches the version, tests, and publishes
+   `rung-cli` to PyPI through Trusted Publishing.
+
+## The setup skill and plugin
+
+`skills/setup/SKILL.md` is what developers give their coding agents to set Rung up; `.claude-plugin/`
+publishes it as a Claude Code plugin (`/plugin install rung --marketplace CalQuity/rung`, then
+`/rung:setup`). Validate changes with `claude plugin validate .`. The skills Rung installs *into* a
+project (`rung agents`) live in `src/rung/guides/` instead.
