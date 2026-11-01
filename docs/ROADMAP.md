@@ -12,7 +12,7 @@
 - Fix proofs: a new test must fail on the merge base and pass on the branch
 - Runtime verification scripts drafted by a model and kept only once they pass
 - Claude Code Stop hook that blocks finishing with unverified changes
-- Content-addressed, hash-chained ledger; `LAWS.md`
+- Per-check verdict files bound to their inputs; `LAWS.md`
 - GitHub Action with a sticky report comment; Rung verifies its own repository
 
 ## Next

@@ -28,8 +28,8 @@ exact code it covers, and it should expire on its own.**
    the behaviour can be stated precisely: queues, leases, retries, money, permissions.
 5. **Close the shortcuts.** An agent's easiest path to green is to weaken the check, so
    Rung rejects `sorry` and friends, audits theorem axioms, fails vacuous specs, voids
-   verdicts whose files changed mid-run, and hash-chains the ledger.
-6. **Plain files are the interface.** `rung.toml`, `LAWS.md`, `.rung/ledger.jsonl` and
+   verdicts whose files changed mid-run, and distrusts edited verdict files.
+6. **Plain files are the interface.** `rung.toml`, `LAWS.md`, `.rung/verdicts/` and
    the line protocol are the contract. Any tool, agent or future reimplementation can
    read and write them.
 
@@ -43,7 +43,7 @@ exact code it covers, and it should expire on its own.**
 | Runtime | `evidence` running a script that drives the real app | Hashed artifacts: transcripts, request/response pairs, screenshots, video |
 | Protocol | `tla` | TLC result over every reachable state; counterexample trace |
 | Model | `lean` + `drt` | Kernel-checked theorems with audited axioms; agreement with the code on random inputs |
-| Ledger | always | Hash-chained, content-addressed verdicts |
+| Ledger | always | One verdict file per check, bound to its inputs |
 
 The ladder is applied by escalation, not climbed everywhere. Every repository gets the cheap
 rungs. TLA+ is recommended only for code that holds state across steps, and Lean only for

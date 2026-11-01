@@ -22,11 +22,15 @@ MAX_LISTED = 10
 
 
 def project_findings(root: Path, found: list[sarif.Finding]) -> list[sarif.Finding]:
-    """Drop findings in files git ignores (caches, build output); scanners like `gitleaks dir` read them."""
+    """Drop findings in Rung's own state and in files git ignores (caches, build output)."""
+    found = [f for f in found if not f.path.startswith(".rung/")]
     if not found or not git.is_repo(root):
         return found
     files = set(git.list_files(root))
-    return [f for f in found if not f.path or f.path in files or not (root / f.path).is_file()]
+    return [
+        f for f in found
+        if not f.path.startswith(".rung/") and (not f.path or f.path in files or not (root / f.path).is_file())
+    ]  # fmt: skip
 
 
 class ScanChecker(Checker):

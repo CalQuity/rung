@@ -32,7 +32,11 @@ def stop_hook(cwd: Path, payload: str) -> tuple[int, str]:
     try:
         root = config.find_root(cwd)
         cfg = config.load(root)
-        changed = git.changed_files(root, "HEAD")
+        # Compare with where the branch left its base, so committing the edits does not hide them.
+        try:
+            changed = git.changed_files(root, git.default_base(root))
+        except git.GitError:
+            changed = git.changed_files(root, "HEAD")
     except Exception:
         return 0, ""
     if not changed:

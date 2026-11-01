@@ -184,10 +184,10 @@ Configuration lives in `rung.toml`; see [docs/CONFIG.md](https://github.com/CalQ
   URLs) are masked before command output is stored in the ledger. That masking is best effort:
   commands should not print secrets.
 - Waivers need a reason, an approver and an expiry date. Expired waivers stop applying.
-- Ledger entries are hash-chained, so an entry edited or removed in the middle is detected, and a
-  broken chain makes every verdict untrusted. The chain is an integrity aid, not an authenticated
-  audit trail: whoever can rewrite the whole file can rehash it, so review changes to `.rung/` and
-  `LAWS.md` like any other change (CODEOWNERS helps).
+- Each verdict file carries a hash of its own contents, so a hand-edited, truncated or conflicted
+  file reads as "re-run this check". That is an integrity aid, not a signature: whoever can write
+  the file can rehash it, so CI re-runs what a change touches (`rung check --changed`) and changes
+  to `.rung/` and `LAWS.md` deserve review like any other change (CODEOWNERS helps).
 - Approving a law or adding a waiver is a file edit, not an authenticated signature.
 - Rung collects no telemetry.
 

@@ -6,7 +6,8 @@
 |---|---|---|
 | `rung.toml` | yes | Declared checks and the model provider |
 | `LAWS.md` | yes | Laws and the checks that enforce them |
-| `.rung/ledger.jsonl` | yes | Hash-chained verdicts |
+| `.rung/verdicts/<check>.json` | yes | Each check's latest verdict, bound to a digest of its inputs |
+| `.rung/cache/` | no | Per-file digests and the local run history |
 | `.rung/baselines/<check>.json` | yes | Accepted existing findings for a scan check |
 | `.rung/waivers.toml` | yes | Accepted individual findings, with reasons and expiry dates |
 | `.rung/verify/` | yes | Generated drive script and feature map (`rung draft runtime`) |

@@ -107,9 +107,9 @@ Drafts propose laws in `LAWS.md` as `proposed`. Never approve a law yourself
 
 ## 7. Commit
 
-Commit `rung.toml`, `LAWS.md`, `.rung/ledger.jsonl`, `.rung/baselines/` (if any), `.rung/verify/` (if
-any), the CI workflow and the agent files. `.rung/evidence/` is ignored by Rung's defaults; add it to
-`.gitignore` if it is not.
+Commit `rung.toml`, `LAWS.md`, `.rung/verdicts/`, `.rung/baselines/` (if any), `.rung/verify/` (if
+any), the CI workflow and the agent files. `.rung/evidence/` and `.rung/cache/` are local; add them to
+`.gitignore` if they are not.
 
 ## Using Rung day to day
 

@@ -16,7 +16,7 @@ from rung.checks import findings, runner
 from rung.core import config, git, ledger
 from rung.engines import sarif
 
-from .conftest import commit_all
+from .conftest import commit_all, run_git
 
 PY = sys.executable
 DRIVER = {"tool": {"driver": {"name": "t"}}}
@@ -290,3 +290,44 @@ def test_r2_lean_audits_every_theorem_when_none_are_listed(tmp_path: Path) -> No
         "@[simp] theorem nested : True := trivial\nend Inner\nend Billing\ntheorem top : True := trivial\n"
     )
     assert lean.discover_theorems(tmp_path) == ["Billing.refund_bounded", "Billing.Inner.nested", "top"]
+
+
+def test_r2_a_different_secret_on_the_same_line_is_a_new_finding(tmp_path: Path) -> None:
+    def doc() -> dict:
+        region = {"startLine": 1, "startColumn": 8, "endLine": 1, "endColumn": 30, "snippet": {"text": "REDACTED"}}
+        location = {"physicalLocation": {"artifactLocation": {"uri": "conf.py"}, "region": region}}
+        result = {
+            "ruleId": "slack-bot-token",
+            "message": {"text": "slack-bot-token in conf.py"},
+            "locations": [location],
+        }
+        return {"runs": [{"tool": {"driver": {"name": "gitleaks"}}, "results": [result]}]}
+
+    (tmp_path / "conf.py").write_text("TOKEN='xoxb-1111111111-AAAAAAAAAAA'\n")
+    (before,) = sarif.parse(doc(), tmp_path)
+    (tmp_path / "conf.py").write_text("TOKEN='xoxb-2222222222-BBBBBBBBBBB'\n")
+    (after,) = sarif.parse(doc(), tmp_path)
+    assert before.fingerprint != after.fingerprint
+
+
+def test_r2_secrets_in_any_scanners_messages_are_redacted(tmp_path: Path) -> None:
+    token = "ghp_" + "abcdefghijklmnopqrstuvwxyz0123456789"
+    doc = {"runs": [{"tool": {"driver": {"name": "custom"}},
+                     "results": [{"ruleId": "r", "message": {"text": f"found {token}"}}]}]}  # fmt: skip
+    (f,) = sarif.parse(doc, tmp_path)
+    assert token not in f.message
+
+
+def test_r2_the_stop_hook_sees_committed_edits(repo: Path) -> None:
+    from rung import agents
+
+    (repo / "src").mkdir()
+    (repo / "src" / "core.py").write_text("x = 1\n")
+    cfg = _toml(repo, f'[[check]]\nid = "unit"\nkind = "command"\nrun = "{PY} -c \'pass\'"\ncovers = ["src/*.py"]\n')
+    runner.run_check(cfg, cfg.check("unit"))
+    commit_all(repo, "base")
+    run_git(repo, "checkout", "-qb", "agent")
+    (repo / "src" / "core.py").write_text("x = 2\n")
+    commit_all(repo, "agent commits its edit")
+    code, _ = agents.stop_hook(repo, "{}")
+    assert code == 2
