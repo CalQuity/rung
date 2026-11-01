@@ -11,6 +11,7 @@ until a person adds it to `allow`.
 from __future__ import annotations
 
 import json
+import os
 import re
 import tomllib
 import urllib.error
@@ -55,12 +56,24 @@ def _pep508_names(specs: list[str]) -> set[str]:
     return names
 
 
-def parse_manifest(path: str, text: str, read: Callable[[str], str | None] | None = None) -> set[Package]:
+def parse_manifest(
+    path: str, text: str, read: Callable[[str], str | None] | None = None, seen: frozenset[str] = frozenset()
+) -> set[Package]:
     """Direct dependencies declared in one manifest file.
 
     `read(relative_path)` returns another file's text (or None), used to follow `-r` includes
-    in requirements files at the same revision.
+    in requirements files at the same revision. Includes outside the repository, and cycles, are
+    not followed. A manifest that cannot be parsed raises RungError.
     """
+    try:
+        return _parse_manifest(path, text, read, seen | {path})
+    except (json.JSONDecodeError, tomllib.TOMLDecodeError, AttributeError, TypeError) as exc:
+        raise RungError(f"{path}: cannot read its dependencies ({exc})") from exc
+
+
+def _parse_manifest(
+    path: str, text: str, read: Callable[[str], str | None] | None, seen: frozenset[str]
+) -> set[Package]:
     name = Path(path).name
     if name.endswith(".txt"):
         names: set[str] = set()
@@ -68,9 +81,11 @@ def parse_manifest(path: str, text: str, read: Callable[[str], str | None] | Non
         for raw in text.splitlines():
             line = raw.split("#", 1)[0].strip()
             if line.startswith(("-r ", "--requirement ", "-c ", "--constraint ")) and read:
-                included = (Path(path).parent / line.split(None, 1)[1].strip()).as_posix()
+                included = os.path.normpath(Path(path).parent / line.split(None, 1)[1].strip())
+                if included.startswith(("..", "/")) or included in seen:
+                    continue
                 if (inner := read(included)) is not None:
-                    names |= {p.name for p in parse_manifest(included, inner, read)}
+                    names |= {p.name for p in parse_manifest(included, inner, read, seen)}
             elif line and not line.startswith(("-", "git+", "http:", "https:", ".", "/")):
                 specs.append(line)
         return {Package("pypi", n) for n in names | _pep508_names(specs)}
@@ -190,10 +205,12 @@ class DepsChecker(Checker):
 
     def run(self, ctx: Context, check: Check) -> Outcome:
         min_age = check.get_int("min_age_days", 30)
-        allow = {a.lower() for a in check.get_list("allow")}
+        allow = {_normalize_pypi(a) for a in check.get_list("allow")}
         head = declared(ctx.root)
         base = declared_at(ctx.root, ctx.base) if ctx.base else set()
-        added = sorted((p for p in head - base if p.name.lower() not in allow), key=lambda p: (p.ecosystem, p.name))
+        added = sorted(
+            (p for p in head - base if _normalize_pypi(p.name) not in allow), key=lambda p: (p.ecosystem, p.name)
+        )
         if not added:
             return Outcome("pass", f"no new dependencies to vet ({len(head)} declared)")
 

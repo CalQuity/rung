@@ -331,3 +331,68 @@ def test_r2_the_stop_hook_sees_committed_edits(repo: Path) -> None:
     commit_all(repo, "agent commits its edit")
     code, _ = agents.stop_hook(repo, "{}")
     assert code == 2
+
+
+def test_r2_a_misspelled_option_is_an_error_with_a_suggestion(tmp_path: Path) -> None:
+    from rung.core.config import ConfigError, load
+
+    (tmp_path / "rung.toml").write_text('[[check]]\nid = "t"\nkind = "command"\nrun = "true"\ntmeout = 5\n')
+    with pytest.raises(ConfigError, match="did you mean `timeout`"):
+        load(tmp_path)
+
+
+def test_r2_rewriting_rung_toml_keeps_it_readable(tmp_path: Path) -> None:
+    from rung.core.config import write_atomic
+
+    target = tmp_path / "rung.toml"
+    write_atomic(target, "x = 1\n")
+    assert target.stat().st_mode & 0o777 == 0o644
+
+
+def test_r2_requirements_includes_cannot_loop_or_leave_the_repo() -> None:
+    from rung.checks import deps
+
+    files = {"requirements.txt": "-r requirements.txt\n-r ../../etc/secret.txt\nrequests\n"}
+    found = deps.parse_manifest("requirements.txt", files["requirements.txt"], files.get)
+    assert {p.name for p in found} == {"requests"}
+
+
+def test_r2_a_malformed_manifest_is_a_rung_error() -> None:
+    from rung.checks import deps
+    from rung.core.errors import RungError
+
+    with pytest.raises(RungError, match=r"package\.json"):
+        deps.parse_manifest("package.json", "{not json")
+
+
+def test_r2_allow_matches_names_however_they_are_spelled(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from rung.checks import deps
+    from rung.checks.base import Context
+    from rung.core.config import Check
+
+    (repo / "requirements.txt").write_text("hallucinated-pkg-zzq\n")
+    monkeypatch.setattr(deps, "first_published", lambda pkg: None)
+    check = Check("deps", "deps", [], {"allow": ["Hallucinated_Pkg.zzq"]})
+    assert deps.DepsChecker().run(Context(root=repo), check).verdict == "pass"
+
+
+def test_r2_files_written_by_the_check_are_named(repo: Path) -> None:
+    script = "open('out.txt', 'w').write(__import__('time').time().hex())"
+    cfg = _toml(repo, f'[[check]]\nid = "gen"\nkind = "command"\nrun = "{PY} -c \\"{script}\\""\n')
+    result = runner.run_check(cfg, cfg.check("gen"))
+    assert result.verdict == "error" and "out.txt" in result.outcome.summary
+
+
+def test_r2_unexpected_exceptions_exit_2_without_a_traceback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from rung import cli
+    from rung.cli import commands
+
+    def boom(*_: object) -> int:
+        raise KeyError("surprise")
+
+    monkeypatch.setattr(commands, "cmd_doctor", boom)
+    monkeypatch.delenv("RUNG_DEBUG", raising=False)
+    assert cli.main(["doctor"]) == 2
+    assert "unexpected error" in capsys.readouterr().err

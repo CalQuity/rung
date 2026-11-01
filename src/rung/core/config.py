@@ -8,6 +8,7 @@ restricted to letters, digits, `.`, `_` and `-`.
 
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import re
@@ -27,6 +28,17 @@ CHECK_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 INT_OPTIONS = ("timeout", "cases", "min_len", "max_len", "seed", "min_age_days")
 # Options that must be lists of strings wherever they appear.
 LIST_OPTIONS = ("specs", "require", "allow", "theorems", "alphabet")
+# Every option each kind understands; anything else is a typo that would otherwise do nothing.
+COMMON_OPTIONS = ("timeout", "max_age_days", "specs")
+KIND_OPTIONS = {
+    "command": ("run", "cwd"),
+    "evidence": ("run", "cwd", "require"),
+    "scan": ("tool", "run", "cwd", "fail_on", "default_level"),
+    "deps": ("allow", "min_age_days"),
+    "tla": ("spec", "config"),
+    "lean": ("project", "theorems"),
+    "drt": ("model", "impl", "model_cwd", "impl_cwd", "alphabet", "cases", "min_len", "max_len", "seed"),
+}
 
 
 class ConfigError(RungError, ValueError):
@@ -127,13 +139,20 @@ def check_command(check_id: str, key: str, command: str) -> None:
 
 
 def _validate_check(check: Check) -> None:
+    known = (*COMMON_OPTIONS, *KIND_OPTIONS[check.kind])
+    for key in check.options:
+        if key not in known:
+            close = difflib.get_close_matches(key, (*known, "covers"), n=1)
+            hint = f"; did you mean `{close[0]}`?" if close else f"; {check.kind} checks take {', '.join(known)}"
+            raise ConfigError(f"check {check.id!r}: unknown option `{key}`{hint}")
     for key in INT_OPTIONS:
         if key in check.options:
             check.get_int(key, 0)
     for key in LIST_OPTIONS:
         if key in check.options:
             check.get_list(key)
-    for key in ("run", "cwd", "tool", "spec", "config", "project", "model", "impl", "fail_on"):
+    for key in ("run", "cwd", "tool", "spec", "config", "project", "model", "impl", "fail_on", "default_level",
+                "model_cwd", "impl_cwd"):  # fmt: skip
         if key in check.options and not isinstance(check.options[key], str):
             raise ConfigError(f"check {check.id!r}: `{key}` must be a string")
     for key in ("run", "model", "impl"):
@@ -215,6 +234,8 @@ def write_atomic(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     try:
+        # mkstemp creates the file 0600; keep the existing mode, or use the usual 0644.
+        os.chmod(tmp, path.stat().st_mode & 0o7777 if path.exists() else 0o644)
         with os.fdopen(fd, "w") as fh:
             fh.write(text)
         os.replace(tmp, path)
