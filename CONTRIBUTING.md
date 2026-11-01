@@ -46,13 +46,26 @@ To change what models or agents are told, edit the Markdown in `src/rung/guides/
 
 ## Releasing
 
-1. Bump the version in `pyproject.toml`, `src/rung/__init__.py` and `.claude-plugin/plugin.json`, and the
+1. Move the CHANGELOG.md entries out of "unreleased". Bump the version in `pyproject.toml`, `src/rung/__init__.py` and `.claude-plugin/plugin.json`, and the
    `CalQuity/rung@v…` references in `README.md` and `skills/setup/SKILL.md`.
    `tests/test_release_consistency.py` fails if any of them disagree.
 2. Merge to `main` through a pull request.
 3. A maintainer pushes the tag (`git tag -a vX.Y.Z -m "Rung X.Y.Z" && git push origin vX.Y.Z`); only
    admins can create `v*` tags. `release.yml` checks the tag matches the version, tests, and publishes
    `rung-cli` to PyPI through Trusted Publishing.
+
+## Versioning
+
+Rung follows semantic versioning, read the 0.x way: until 1.0, a minor release (0.2, 0.3) may change
+the public contract, and a patch release (0.1.3) does not. The public contract is:
+
+- the `rung.toml` format and the meaning of each check option;
+- the files under `.rung/` that are committed (verdicts, baselines, waivers, `verify/`);
+- `LAWS.md`, the `--json` output, and the exit codes;
+- the GitHub Action's inputs and outputs.
+
+Every change to it is listed in CHANGELOG.md under **Changed**, with what to do after upgrading.
+Options are deprecated with a warning for at least one minor release before they are removed.
 
 ## The setup skill and plugin
 

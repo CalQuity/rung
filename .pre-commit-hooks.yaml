@@ -1,0 +1,8 @@
+- id: rung-check
+  name: rung check --changed
+  description: Run the Rung checks the current branch touches, and block what it introduces.
+  entry: rung check --changed
+  language: python
+  pass_filenames: false
+  always_run: true
+  stages: [pre-push]
