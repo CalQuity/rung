@@ -54,5 +54,5 @@ jobs:
         with:
           name: dist
           path: dist/
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-      - run: uv publish --trusted-publishing always dist/*
+      # Trusted Publishing, plus PEP 740 attestations that tie each file to this workflow run.
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3

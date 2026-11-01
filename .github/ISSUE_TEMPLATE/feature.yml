@@ -1,0 +1,15 @@
+name: Feature request
+description: A check, integration or workflow Rung should support.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to verify or prevent?
+      description: Describe the problem first, then the change you have in mind.
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: What do you do today instead?

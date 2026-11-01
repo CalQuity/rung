@@ -142,6 +142,15 @@ against, so the action lists any edits to them in the report and as annotations;
 `policy-changes: fail` to fail the gate on them until a reviewer accepts. Without the action, use
 `rung check --changed` and `rung report`.
 
+To run the same check before every push, add Rung to `.pre-commit-config.yaml`:
+
+```yaml
+- repo: https://github.com/CalQuity/rung
+  rev: v0.1.2
+  hooks:
+    - id: rung-check
+```
+
 ## With coding agents
 
 `rung agents` writes a Claude Code skill and an `AGENTS.md` section, which Codex, Cursor and

@@ -1,0 +1,34 @@
+name: Bug report
+description: Rung gave a wrong verdict, crashed, or did something unexpected.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: A wrong pass (a "false green") is the most serious kind of bug; say if this is one.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The commands you ran, and the relevant part of rung.toml.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `rung --version` and `rung doctor`
+      description: Shows the versions of Rung, Python, TLC, Lean and the scanners. Remove anything private.
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [macOS, Linux, Windows, GitHub Actions runner, Other]
+    validations:
+      required: true
