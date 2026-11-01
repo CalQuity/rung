@@ -70,7 +70,12 @@ def run_check(config: Config, check: Check, *, base: str | None = None) -> Resul
     # Hash before and after: a file edited mid-run must not be recorded as verified.
     after = (ledger.snapshot(root, cover_patterns), ledger.snapshot(root, spec_patterns))
     if after != before:
-        outcome = Outcome("error", "files changed while the check ran; re-run it", outcome.lines)
+        moved = sorted(p for b, a in zip(before, after, strict=True) for p in set(b) | set(a) if b.get(p) != a.get(p))
+        hint = (
+            "files it covers changed while it ran: " + ", ".join(moved[:5]) + (" ..." if len(moved) > 5 else "")
+            + ". If the check writes them itself (coverage, reports), add them to .gitignore or narrow `covers`."
+        )  # fmt: skip
+        outcome = Outcome("error", hint, outcome.lines)
     ledger.record(
         root,
         check_id=check.id,

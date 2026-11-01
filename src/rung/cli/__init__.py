@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from rung import __version__
@@ -137,6 +138,11 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         out.error("interrupted")
         return 130
+    except Exception as exc:  # a bug or an unexpected input: say so briefly, not with a traceback
+        if os.environ.get("RUNG_DEBUG"):
+            raise
+        out.error(f"unexpected error: {type(exc).__name__}: {exc} (set RUNG_DEBUG=1 for the traceback)")
+        return EXIT_USAGE
 
 
 if __name__ == "__main__":

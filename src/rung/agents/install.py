@@ -12,6 +12,7 @@ from pathlib import Path
 
 from rung import guides
 from rung.agents.hooks import HOOK_COMMAND
+from rung.core.config import ConfigError
 
 BEGIN, END = "<!-- rung:begin -->", "<!-- rung:end -->"
 
@@ -102,7 +103,10 @@ def install_stop_hook(root: Path) -> Path:
     """Add the Stop hook to `.claude/settings.json`, keeping everything already there."""
     path = root / ".claude" / "settings.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    settings = json.loads(path.read_text()) if path.exists() else {}
+    try:
+        settings = json.loads(path.read_text()) if path.exists() else {}
+    except json.JSONDecodeError as exc:
+        raise ConfigError(f"{path} is not plain JSON ({exc}); add the Stop hook by hand or remove comments") from exc
     stop = settings.setdefault("hooks", {}).setdefault("Stop", [])
     present = any(h.get("command") == HOOK_COMMAND for group in stop for h in group.get("hooks", []))
     if not present:
