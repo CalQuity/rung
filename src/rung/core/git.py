@@ -95,6 +95,32 @@ def show(root: Path, commit: str, path: str) -> str:
     return _git(root, "show", f"{commit}:./{path}")
 
 
+def show_many(root: Path, commit: str, paths: list[str]) -> dict[str, bytes]:
+    """The contents of many files at `commit` in one `git cat-file --batch` process (missing ones left out)."""
+    if not paths:
+        return {}
+    request = "".join(f"{commit}:./{p}\n" for p in paths).encode()
+    try:
+        proc = subprocess.run(["git", "cat-file", "--batch"], cwd=root, input=request, capture_output=True,
+                              check=False, timeout=600)  # fmt: skip
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise GitError(f"git cat-file failed: {exc}") from exc
+    if proc.returncode != 0:
+        raise GitError(f"git cat-file failed: {proc.stderr.decode(errors='replace').strip()}")
+    out, data, pos = {}, proc.stdout, 0
+    for path in paths:
+        end = data.index(b"\n", pos)
+        header = data[pos:end].split()
+        pos = end + 1
+        if len(header) == 3 and header[1] == b"blob":
+            size = int(header[2])
+            out[path] = data[pos : pos + size]
+            pos += size + 1
+        elif len(header) == 3:  # a tree or other object: skip its body
+            pos += int(header[2]) + 1
+    return out
+
+
 def files_at(root: Path, commit: str) -> list[str]:
     """Files under `root` as they were at `commit`."""
     return _paths(_git(root, "ls-tree", "-r", "-z", "--name-only", commit, "--", "."))
