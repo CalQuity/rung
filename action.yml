@@ -17,6 +17,11 @@ inputs:
   working-directory:
     description: Directory containing rung.toml.
     default: "."
+  policy-changes:
+    description: >-
+      What to do when the pull request edits what decides the gate (rung.toml, LAWS.md, waivers,
+      baselines, scanner configs): "warn" lists them in the report, "fail" also fails the gate.
+    default: "warn"
 
 outputs:
   passed:
@@ -54,18 +59,43 @@ runs:
           fi
           args+=(--changed --base "origin/$BASE_REF")
         fi
+        read -ra ids <<< "$CHECKS"
         set +e
-        # shellcheck disable=SC2086 # CHECKS is a space-separated list of ids
-        rung check $CHECKS "${args[@]}"
+        rung check "${ids[@]}" "${args[@]}"
         code=$?
         if [ "$code" -eq 0 ]; then echo "passed=true" >> "$GITHUB_OUTPUT"; else echo "passed=false" >> "$GITHUB_OUTPUT"; fi
         echo "code=$code" >> "$GITHUB_OUTPUT"
+
+    - name: Flag policy changes
+      id: policy
+      if: github.base_ref != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        BASE_REF: ${{ github.base_ref }}
+      run: |
+        # The PR's own rung.toml, waivers and baselines decide its gate, so a reviewer must see edits to them.
+        changed=$(git diff --name-only "origin/$BASE_REF...HEAD" -- rung.toml LAWS.md .rung/waivers.toml \
+          .rung/baselines .gitleaks.toml .gitleaksignore .semgrep.yml .semgrepignore)
+        if [ -n "$changed" ]; then
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          while read -r file; do echo "::warning file=$file::This pull request changes what decides the Rung gate"; done <<< "$changed"
+          {
+            echo "### Policy files changed in this pull request"
+            echo
+            echo "These decide what the gate checks and accepts; review them like code:"
+            echo
+            while read -r file; do echo "- \`$file\`"; done <<< "$changed"
+            echo
+          } > "$RUNNER_TEMP/rung-policy.md"
+        fi
 
     - name: Write report
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: |
         rung report > "$RUNNER_TEMP/rung-report.md"
+        if [ -f "$RUNNER_TEMP/rung-policy.md" ]; then cat "$RUNNER_TEMP/rung-policy.md" >> "$RUNNER_TEMP/rung-report.md"; fi
         cat "$RUNNER_TEMP/rung-report.md" >> "$GITHUB_STEP_SUMMARY"
 
     - name: Post or update the pull request comment
@@ -79,7 +109,8 @@ runs:
         PR: ${{ github.event.pull_request.number }}
       run: |
         existing=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
-          --jq '.[] | select(.body | startswith("<!-- rung-report -->")) | .id' | head -n 1)
+          --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- rung-report -->"))) | .id' \
+          | head -n 1)
         if [ -n "$existing" ]; then
           gh api -X PATCH "repos/$REPO/issues/comments/$existing" -F "body=@$RUNNER_TEMP/rung-report.md" > /dev/null
         else
@@ -87,10 +118,15 @@ runs:
         fi
 
     - name: Gate
-      if: steps.check.outputs.passed != 'true'
+      if: steps.check.outputs.passed != 'true' || (inputs.policy-changes == 'fail' && steps.policy.outputs.changed == 'true')
       shell: bash
       env:
         CODE: ${{ steps.check.outputs.code }}
+        PASSED: ${{ steps.check.outputs.passed }}
       run: |
-        echo "Rung checks failed (exit $CODE). See the report above."
+        if [ "$PASSED" = "true" ]; then
+          echo "The pull request changes Rung policy files and policy-changes is \"fail\". See the report above."
+        else
+          echo "Rung checks failed (exit $CODE). See the report above."
+        fi
         exit 1

@@ -136,8 +136,11 @@ jobs:
 ```
 
 The action runs the checks a pull request touches against its merge base. It keeps a single
-report comment up to date and fails only on what the pull request introduced. Without the
-action, use `rung check --changed` and `rung report`.
+report comment up to date and fails only on what the pull request introduced. The pull request's
+own `rung.toml`, `LAWS.md`, waivers, baselines and scanner configs decide what it is checked
+against, so the action lists any edits to them in the report and as annotations; set
+`policy-changes: fail` to fail the gate on them until a reviewer accepts. Without the action, use
+`rung check --changed` and `rung report`.
 
 ## With coding agents
 
@@ -145,7 +148,8 @@ action, use `rung check --changed` and `rung report`.
 others read. With `--hooks` it also installs a Claude Code `Stop` hook. An agent whose edits
 touch a check that is not freshly passing is told which `rung check` to run, and cannot finish
 until it has. This is a best-effort local guard: it lets the agent stop on a second attempt (so it
-can never trap one), allows the stop if Rung itself cannot run, and looks at uncommitted edits.
+can never trap one), allows the stop if Rung itself cannot run, and looks at everything changed since the branch
+left its base, committed or not.
 CI with `rung check --changed` is the enforcement boundary.
 
 Drafting uses a model you already have. `rung init` reuses your `claude` or `codex` login, or
