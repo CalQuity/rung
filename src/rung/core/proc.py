@@ -47,7 +47,7 @@ def run(
         # Anything the command left behind in its group (a server it backgrounded) goes too.
         if proc.returncode is not None:
             _kill_tree(proc, posix)
-    return subprocess.CompletedProcess(list(argv), proc.returncode, out[-MAX_OUTPUT:], err[-MAX_OUTPUT:])
+    return subprocess.CompletedProcess(list(argv), proc.wait(), out[-MAX_OUTPUT:], err[-MAX_OUTPUT:])
 
 
 def _kill_tree(proc: subprocess.Popen[str], posix: bool) -> None:

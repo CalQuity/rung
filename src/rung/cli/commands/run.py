@@ -21,12 +21,8 @@ def _print_result(result: runner.Result, out: Output) -> None:
 
 def cmd_check(args, out: Output) -> int:
     cfg = load_config(args)
-    base = None
-    changed = None
-    if args.changed or args.base:
-        base = resolve_base(cfg.root, args.base)
-    if args.changed:
-        changed = git.changed_files(cfg.root, base)
+    base: str | None = resolve_base(cfg.root, args.base) if args.changed or args.base else None
+    changed = git.changed_files(cfg.root, base) if args.changed and base else None
     selected = runner.select(cfg, args.ids, changed)
     if args.ci:
         # Reuse a verdict only if it is fresh and was made against the same comparison base.

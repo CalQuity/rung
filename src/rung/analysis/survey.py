@@ -88,7 +88,7 @@ class Inspection:
 
     @property
     def primary_language(self) -> str:
-        return max(self.languages, key=self.languages.get) if self.languages else "unknown"
+        return max(self.languages, key=lambda name: self.languages[name]) if self.languages else "unknown"
 
     def to_dict(self) -> dict:
         return asdict(self)

@@ -18,6 +18,12 @@ run = "uv run ruff check ."
 covers = ["src/**/*.py", "tests/**/*.py", "pyproject.toml"]
 
 [[check]]
+id = "types"
+kind = "command"
+run = "uv run pyright"
+covers = ["src/**/*.py", "pyproject.toml"]
+
+[[check]]
 id = "format"
 kind = "command"
 run = "uv run ruff format --check ."
