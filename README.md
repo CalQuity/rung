@@ -36,7 +36,7 @@ a change does what was meant. Rung's answer is three habits.
 ## Quick start
 
 ```bash
-uv tool install git+https://github.com/CalQuity/rung   # PyPI release coming
+uv tool install rung-cli          # or: pipx install rung-cli  (the command is `rung`)
 cd your-repo
 rung init                         # survey the repo, wire up installed scanners, choose a model
 rung check                        # run everything and record verdicts
@@ -67,7 +67,7 @@ Rung has no special modules for web, API or CRUD code. It has a few check kinds 
 | Concurrency and protocols | `tla` | TLC finds an interleaving that breaks an invariant |
 | Core logic | `lean` + `drt` | A proof fails or cheats, or the code disagrees with the proven model |
 
-See [docs/RECIPES.md](docs/RECIPES.md) for APIs, web apps, libraries, job queues and monorepos.
+See [docs/RECIPES.md](https://github.com/CalQuity/rung/blob/main/docs/RECIPES.md) for APIs, web apps, libraries, job queues and monorepos.
 
 ## Laws
 
@@ -96,7 +96,7 @@ needs them, and the model drafts the first version.
   Lean checks pass only when `#print axioms` shows no `sorry`, no `native_decide` and no
   invented axioms.
 
-[`examples/lease-queue`](examples/lease-queue) shows both catching a real bug, plus a
+[`examples/lease-queue`](https://github.com/CalQuity/rung/tree/main/examples/lease-queue) shows both catching a real bug, plus a
 three-step case only the differential test finds.
 
 ## In CI
@@ -105,7 +105,7 @@ three-step case only the differential test finds.
 - uses: actions/checkout@v7
   with:
     fetch-depth: 0
-- uses: CalQuity/rung@v0.1.1
+- uses: CalQuity/rung@v0.1.2
 ```
 
 The action runs the checks a pull request touches against its merge base. It keeps a single
@@ -144,7 +144,7 @@ any OpenAI-compatible endpoint, including local models. Rung never stores creden
 Every command takes `-C DIR` and `--json`. Exit codes: `0` ok, `1` a check or gate failed,
 `2` configuration or usage error, `3` a required tool is missing, `4` git error.
 
-Configuration lives in `rung.toml`; see [docs/CONFIG.md](docs/CONFIG.md).
+Configuration lives in `rung.toml`; see [docs/CONFIG.md](https://github.com/CalQuity/rung/blob/main/docs/CONFIG.md).
 
 ## How Rung stays honest
 
@@ -156,7 +156,7 @@ Configuration lives in `rung.toml`; see [docs/CONFIG.md](docs/CONFIG.md).
 - Ledger entries are hash-chained, and `rung ledger` detects a rewritten history.
 - Rung collects no telemetry.
 
-Rung's own repository is checked by Rung: see [`rung.toml`](rung.toml) and [`LAWS.md`](LAWS.md).
+Rung's own repository is checked by Rung: see [`rung.toml`](https://github.com/CalQuity/rung/blob/main/rung.toml) and [`LAWS.md`](https://github.com/CalQuity/rung/blob/main/LAWS.md).
 
 ## Requirements
 
@@ -184,4 +184,4 @@ Rung is not affiliated with or endorsed by any of these projects.
 
 ## License
 
-[Apache License 2.0](LICENSE).
+[Apache License 2.0](https://github.com/CalQuity/rung/blob/main/LICENSE).

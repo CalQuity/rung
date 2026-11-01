@@ -72,6 +72,6 @@ checkers with LLM-only verification loops.
 
 ## Distribution
 
-1. PyPI as `rung` (`uv tool install rung`, `pipx install rung`).
+1. PyPI as `rung-cli` (`uv tool install rung-cli`), published from CI by `release.yml` via Trusted Publishing.
 2. A Homebrew tap that also installs Java and elan.
 3. Prebuilt binaries after the Rust port.
