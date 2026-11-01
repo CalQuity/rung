@@ -110,12 +110,7 @@ def target_for(root: Path, sources: list[Path], slug: str) -> Target:
         ext = "ts" if first.suffix in (".ts", ".tsx", ".mts", ".cts") else "js"
         test = project / "tests" / "properties" / f"{slug}.property.test.{ext}"
         rel = test.relative_to(project).as_posix()
-        if "vitest" in deps:
-            argv = ["npx", "vitest", "run", rel]
-        elif "jest" in deps:
-            argv = ["npx", "jest", rel]
-        else:
-            raise ToolMissing("property tests run under Vitest or Jest; neither is in package.json")
+        argv = _js_runner(pkg, deps, rel)
         return Target("typescript", project, test, argv)
     raise ConfigError(f"property tests are drafted for Python and TypeScript/JavaScript, not {first.suffix} files")
 
@@ -136,9 +131,23 @@ def undeclared(target: Target) -> list[str]:
     return []  # fast-check is required up front for TypeScript
 
 
+def _js_runner(pkg: dict, deps: dict, rel: str) -> list[str]:
+    """The project's own test runner, pointed at one file: Vitest, Jest, or Node's built-in `node --test`."""
+    script = str((pkg.get("scripts") or {}).get("test", ""))
+    if "vitest" in script or ("vitest" in deps and "jest" not in script):
+        return ["npx", "vitest", "run", rel]
+    if "jest" in script or "jest" in deps:
+        return ["npx", "jest", rel]
+    tokens = shlex.split(script) if script else []
+    if tokens and tokens[0] == "node" and "--test" in tokens:
+        # Keep the loader flags (e.g. `--import tsx`) and replace the file globs with this file.
+        return [*tokens[: tokens.index("--test") + 1], rel]
+    raise ToolMissing("property tests run under Vitest, Jest or `node --test`; package.json uses none of them")
+
+
 def classify(returncode: int, output: str) -> str:
     """pass, finding (a property failed on real code) or error (the test itself is broken)."""
-    if returncode == 0 and not re.search(r"\bno tests ran\b|No test files found", output):
+    if returncode == 0 and not re.search(r"\bno tests ran\b|No test files found|^\S*\s*tests 0$", output, re.M):
         return "pass"
     if returncode == 1 and _FINDING.search(output) and not _BROKEN_TEST.search(output):
         return "finding"

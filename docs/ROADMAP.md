@@ -5,11 +5,13 @@
 - CLI: `init`, `plan`, `doctor`, `check` (`--changed`, `--base`), `status`, `report`, `prove`,
   `laws`, `add`, `attest`, `baseline`, `waive`, `draft tla|lean|runtime`, `agents`, `hook`, `ledger`;
   `--json` and documented exit codes everywhere
-- Check kinds: `command`, `evidence`, `scan` (any SARIF tool; gitleaks, osv-scanner and zizmor
-  verified), `deps`, `tla`, `lean`, `drt`
+- Check kinds: `command`, `evidence` (scripted or attested), `scan` (any SARIF tool; gitleaks,
+  osv-scanner and zizmor verified), `shortcuts`, `deps`, `tla`, `lean`, `drt`
 - Gating on what a branch introduces (merge-base worktree or committed baseline), stable
   fingerprints, waivers with expiry
 - Fix proofs: a new test must fail on the merge base and pass on the branch
+- Property tests drafted for a law and kept only when they catch deliberate one-token bugs
+- Stack-aware setup: the project's own type checkers and linters recorded as checks
 - Runtime verification scripts drafted by a model and kept only once they pass
 - Attested evidence: recordings an agent makes with its own browser or computer-use tool
   (Claude in Chrome, Codex, computer use), bound to the code until it changes

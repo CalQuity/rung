@@ -79,6 +79,8 @@ def test_classify_separates_findings_from_broken_tests() -> None:
     assert property_draft.classify(1, "Failing test case: test_x(n=0)\nAssertionError") == "finding"
     assert property_draft.classify(1, "Failing test case: test_x(n=0)\nNameError: name 'totl'") == "error"
     assert property_draft.classify(5, "no tests ran") == "error"
+    assert property_draft.classify(0, "\u2139 tests 0\n\u2139 pass 0") == "error"  # node --test found nothing
+    assert property_draft.classify(1, "Error: Property failed after 3 tests\n{ seed: 1 }") == "finding"
 
 
 def test_a_property_no_mutant_can_fail_is_sent_back_and_a_strong_one_is_kept(pricing: Path) -> None:
@@ -110,3 +112,15 @@ def test_a_draft_killed_mid_mutant_is_repaired_on_the_next_run(pricing: Path) ->
     with pytest.raises(RungError, match=r"restored pricing\.py"):
         property_draft.draft(ScriptedProvider([]), pricing, [src], "pricing")
     assert src.read_text() == PRICING
+
+
+@pytest.mark.parametrize(
+    ("script", "deps", "expected"),
+    [
+        ("vitest run", {"vitest": "1"}, ["npx", "vitest", "run", "p.test.ts"]),
+        ("jest", {"jest": "29"}, ["npx", "jest", "p.test.ts"]),
+        ("node --import tsx --test tests/*.test.ts", {}, ["node", "--import", "tsx", "--test", "p.test.ts"]),
+    ],
+)
+def test_typescript_properties_run_under_the_projects_own_runner(script: str, deps: dict, expected: list[str]) -> None:
+    assert property_draft._js_runner({"scripts": {"test": script}}, deps, "p.test.ts") == expected
