@@ -15,7 +15,7 @@ from rung.core import laws
 from rung.core.config import Check, Config, ConfigError
 from rung.drafting import lean as lean_draft
 from rung.drafting import property as property_draft
-from rung.drafting import providers, runtime
+from rung.drafting import providers, runtime, sql_context
 from rung.drafting import tla as tla_draft
 
 
@@ -160,12 +160,20 @@ def cmd_draft(args, out: Output) -> int:
     check_id = args.id or f"{_slug(rel)}-{args.kind}"
     target = root / (args.out or f"spec/{args.kind}/{_slug(rel)}")
     target.mkdir(parents=True, exist_ok=True)
+    sql = sql_context.gather(root, sources)
+    if sql.files:
+        out.line(f"Added the SQL that defines {', '.join(sql.defined)} to the drafting context:")
+        for f in sql.files:
+            out.detail(f"added {f}", indent=2)
+    for w in sql.warnings:
+        out.line(out.style(f"WARNING {w}", "yellow"))
     out.line(f"Drafting {args.kind} for {', '.join(rel)} with {drafted_by(cfg, provider)} ...")
 
     drafter = tla_draft.draft if args.kind == "tla" else lean_draft.draft
-    result = drafter(provider, root, sources, target, intent=args.intent or "")
+    result = drafter(provider, root, sources, target, intent=args.intent or "", sql=sql)
     out.emit({"ok": result.ok, "message": result.message, "rounds": result.rounds, "trace": result.trace,
-              "files": [str(f.relative_to(root)) for f in result.files]})  # fmt: skip
+              "files": [str(f.relative_to(root)) for f in result.files], "context": result.context,
+              "warnings": result.warnings})  # fmt: skip
     out.line(f"{'OK' if result.ok else 'FAILED'} after {result.rounds} round(s): {result.message}")
     out.detail(f"drafted by {drafted_by(cfg, provider)}", indent=2)
     if result.notes:
@@ -173,6 +181,11 @@ def cmd_draft(args, out: Output) -> int:
         out.detail(result.notes, indent=2)
     for f in result.files:
         out.detail(f"wrote {f.relative_to(root)}", indent=2)
+    for w in result.warnings:
+        if w not in sql.warnings:  # those were shown before drafting
+            out.detail(w, indent=2)
+    if sql.missing and result.ok:
+        out.detail(f"this result assumes each call to {', '.join(sql.missing)} is atomic", indent=2)
     if result.trace:
         out.line("\nCounterexample:")
         out.detail(result.trace, indent=2)
@@ -180,12 +193,13 @@ def cmd_draft(args, out: Output) -> int:
     if not result.ok:
         return GATE_FAILED
 
+    covered = rel + [f for f in result.context if f not in rel]  # a changed SQL definition stales the verdict too
     if args.kind == "tla":
         spec = next(f for f in result.files if f.suffix == ".tla")
         cfg_file = next(f for f in result.files if f.suffix == ".cfg")
         options = {"spec": spec.relative_to(root).as_posix(), "config": cfg_file.relative_to(root).as_posix(),
                    "drafted_by": drafted_by(cfg, provider)}  # fmt: skip
-        add_check(cfg, Check(check_id, "tla", rel, options), out)
+        add_check(cfg, Check(check_id, "tla", covered, options), out)
     else:
         project = target.relative_to(root).as_posix()
         add_check(
@@ -205,7 +219,7 @@ def cmd_draft(args, out: Output) -> int:
                 "impl": f"python3 {project}/drt_adapter.py", "alphabet": result.alphabet,
                 "cases": 2000, "max_len": 8, "specs": [f"{project}/**/*.lean", f"{project}/drt_adapter.py"],
             }  # fmt: skip
-            add_check(cfg, Check(f"{check_id}-drt", "drt", rel, options), out)
+            add_check(cfg, Check(f"{check_id}-drt", "drt", covered, options), out)
     enforcing = [check_id] if args.kind == "tla" else [check_id, f"{check_id}-drt"]
     added = laws.propose(root, result.laws, enforcing)
     if added:

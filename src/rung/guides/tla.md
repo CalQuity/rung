@@ -28,6 +28,10 @@ wrong. A spec that passes because it says too little is worse than no spec.
 - One action per atomic region. In async or threaded code an `await`, a lock release, a network
   call or a database round trip ends a region, so a check-then-act across an `await` is **two**
   actions with a `pc` (program counter) per process. Merging them hides exactly the races TLC is for.
+- A database function is code too. When the request includes its SQL (`create function ...`),
+  model what it does: each statement it runs, the row locks (`select ... for update`) and advisory
+  locks it takes, and where its transaction commits. The newest of several definitions is the one
+  that runs. When no SQL is given for a call, model it as one atomic step and say so in `notes`.
 - Model what the environment can do as nondeterministic actions: a service going offline, a
   timeout whose request actually succeeded, a retry, a duplicate delivery, a crash and restart.
 - Use model values for identities (`Workers = {w1, w2}` in the config), not `1..N`.

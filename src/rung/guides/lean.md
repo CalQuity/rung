@@ -60,5 +60,7 @@ Rung compare the model with the real code on random inputs.
   It applies the actions from the initial state and prints the final state as one line of
   `key=value` pairs, in a fixed order.
 - `drt_adapter.py` does the same with the real code: same encoding, same initial state, same output
-  format. It must import and call the real functions, never reimplement them.
+  format. It must import and call the real functions, never reimplement them. Find the code
+  relative to the adapter or the repository root (`Path(__file__).resolve().parents[n]`); never
+  hard-code an absolute path such as a home or temporary directory, or it will not run elsewhere.
 - Use `IO.getStdin`, `stream.getLine` (an empty string means end of input) and `IO.println`.

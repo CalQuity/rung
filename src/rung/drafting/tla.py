@@ -6,7 +6,18 @@ import re
 from pathlib import Path
 
 from rung import guides
-from rung.drafting.common import FILES, LAWS, LAWS_FORMAT, DraftResult, files_of, safe_write, schema, source_block
+from rung.drafting import sql_context
+from rung.drafting.common import (
+    FILES,
+    LAWS,
+    LAWS_FORMAT,
+    DraftResult,
+    files_of,
+    machine_path_problem,
+    safe_write,
+    schema,
+    source_block,
+)
 from rung.drafting.providers import Provider
 from rung.engines import tla
 
@@ -54,14 +65,18 @@ def normalize(spec: str) -> str:
 
 
 def draft(
-    provider: Provider, root: Path, sources: list[Path], out_dir: Path, *, intent: str = "", max_rounds: int = 4
-) -> DraftResult:
+    provider: Provider, root: Path, sources: list[Path], out_dir: Path, *, intent: str = "", max_rounds: int = 4,
+    sql: sql_context.SqlContext | None = None,
+) -> DraftResult:  # fmt: skip
+    """Draft a spec for `sources`; `sql` is the SQL behind their database calls (found here when not given)."""
+    sql = sql if sql is not None else sql_context.gather(root, sources)
     system = guides.load("tla") + FORMAT
     prompt = (
         "Write a TLA+ model of this code.\n"
         + (f"What it must guarantee (from the developer): {intent}\n" if intent else "")
         + "\n"
         + source_block(root, sources)
+        + (f"\n\n{block}" if (block := sql.block(root)) else "")
     )
     files: list[Path] = []
     for round_no in range(1, max_rounds + 1):
@@ -73,6 +88,9 @@ def draft(
             prompt += "\n\nYour reply must contain one `.tla` file and one `.cfg` file."
             continue
         produced[spec_name] = normalize(produced[spec_name])
+        if problem := machine_path_problem(produced):
+            prompt += problem
+            continue
         files = safe_write(out_dir, produced)
         result = tla.run(out_dir / spec_name, out_dir / cfg_name)
         if result.verdict == "fail":
@@ -84,14 +102,18 @@ def draft(
                 tla.render_trace(result.trace),
                 notes=notes,
                 laws=laws,
+                warnings=sql.warnings,
+                context=sql.files,
             )
         if result.verdict == "pass" and result.distinct_states > 1:
             return DraftResult(True, f"model-checked {result.distinct_states} distinct states, no violation",
-                               files, round_no, notes=notes, laws=laws)  # fmt: skip
+                               files, round_no, notes=notes, laws=laws, warnings=sql.warnings,
+                               context=sql.files)  # fmt: skip
         problem = (
             (result.reason + "\n" + result.output[-2000:])
             if result.verdict == "error"
             else "TLC explored at most one state, so the invariants are vacuous. Make Init and Next reachable."
         )
         prompt += f"\n\nTLC rejected your previous spec:\n{problem}\nFix the spec (not the invariants)."
-    return DraftResult(False, f"no checkable spec after {max_rounds} rounds", files, max_rounds)
+    return DraftResult(False, f"no checkable spec after {max_rounds} rounds", files, max_rounds,
+                       warnings=sql.warnings, context=sql.files)  # fmt: skip

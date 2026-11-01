@@ -112,7 +112,10 @@ against the real app:
 
 - **`.rung/verify/drive.py`**, a script that starts the app on a free port, drives a feature the way
   a user does (Playwright for web UIs, HTTP or CLI calls otherwise) and asserts on what a user would
-  see. It never calls internal functions or test-only endpoints.
+  see. It never calls internal functions or test-only endpoints. The model is shown the routes the
+  app really serves, found in its code (FastAPI, Starlette and Flask decorators, Express, Hono and
+  Koa handlers, Next.js app and pages routers), and drives only those; when the intent names a
+  feature the app does not have, it says so in its notes instead of guessing URLs.
 - **`.rung/verify/FEATURES.md`**, a feature map: for each user-facing feature, how a user reaches it,
   how the script drives it, what observable state proves it works, and the gotchas (seed data,
   logins, flaky spots).
@@ -153,11 +156,19 @@ needs them, and the model drafts the first version.
 
 - **`rung draft tla queue.py`** writes a TLA+ model whose actions copy the code's real guards,
   then runs TLC. A counterexample stops the draft and goes to you. The model never gets to
-  edit the spec until the checker is quiet.
+  edit the spec until the checker is quiet. When the code calls database functions
+  (`supabase.rpc("claim_job")`, `select claim_job(...)` in SQL strings), Rung adds the `*.sql`
+  files that define them to the prompt, oldest definition first, and covers them with the check;
+  a call whose definition it cannot find is a warning, because the model then has to assume the
+  call is atomic.
 - **`rung draft lean pricing.py`** writes a small Lean model of the intended behaviour, proves
   its laws, and sets up a differential test that holds the real code to it on random inputs.
   Lean checks pass only when `#print axioms` shows no `sorry`, no `native_decide` and no
-  invented axioms.
+  invented axioms. It is shown the same SQL definitions.
+
+Every drafted file (spec, adapter, drive script, property test) is sent back to the model if it
+hard-codes a home or temporary directory path (`/Users/<name>/`, `/home/<name>/`, `C:\Users\`,
+`/tmp`), because it would run on one machine only.
 
 [`examples/lease-queue`](https://github.com/CalQuity/rung/tree/main/examples/lease-queue) shows both catching a real bug, plus a
 three-step case only the differential test finds.
@@ -219,7 +230,7 @@ any OpenAI-compatible endpoint, including local models. Rung never stores creden
 | `rung check [ids] [--changed] [--base REF]` | Run checks and record verdicts |
 | `rung status [--ci]` | Fresh, stale, failing; `--ci` exits 1 unless all fresh |
 | `rung report [--format md\|json]` | Checks, laws, new findings and fix proofs |
-| `rung prove 'pytest tests/test_x.py'` | Show a new test fails without the fix and passes with it |
+| `rung prove 'pytest tests/test_x.py'` | Show a new test fails without the fix and passes with it; under pytest, each new or changed test on its own |
 | `rung laws [--approve ID]` | Which laws hold |
 | `rung add <kind> <id> ...` | Declare a `command`, `evidence`, `scan` or `deps` check |
 | `rung attest <check> <files> --by <tool>` | Record evidence an agent or person captured (Claude in Chrome, Codex, computer use) |

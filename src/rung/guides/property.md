@@ -41,6 +41,8 @@ every such bug says too little, however true it is.
 - Tests only: no changes to the code under test, no network, no files outside a temporary directory,
   no randomness other than the generator's.
 - One test function per law, named after it, with the law as its docstring or a comment.
+- No absolute paths to a home or temporary directory; Rung rejects them because they work on one
+  machine only. Use paths relative to the test file, or `tmp_path`.
 
 ## When a property fails on the real code
 
