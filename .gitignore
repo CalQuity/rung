@@ -5,6 +5,9 @@ dist/
 build/
 *.egg-info/
 .pytest_cache/
+.coverage
+htmlcov/
+.hypothesis/
 
 # Rung's local cache and evidence; the verdicts in .rung/verdicts/ are meant to be committed.
 .rung/cache/
