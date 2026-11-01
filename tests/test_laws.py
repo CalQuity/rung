@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rung import laws
-from rung.ledger import Status
+from rung.core import laws
+from rung.core.ledger import Status
 
 SOURCE = """# Laws
 

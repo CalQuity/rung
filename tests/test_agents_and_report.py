@@ -4,7 +4,10 @@ import json
 import sys
 from pathlib import Path
 
-from rung import agents, checks, config, report
+from rung import agents
+from rung.analysis import report
+from rung.checks import runner
+from rung.core import config
 
 from .conftest import commit_all
 
@@ -29,7 +32,7 @@ def test_stop_hook_blocks_until_touched_checks_are_fresh(repo: Path) -> None:
     code, message = agents.stop_hook(repo, "{}")
     assert code == 2 and "rung check unit" in message
 
-    checks.run_check(cfg, cfg.check("unit"))
+    runner.run_check(cfg, cfg.check("unit"))
     assert agents.stop_hook(repo, "{}") == (0, "")
 
 
@@ -54,7 +57,7 @@ def test_hook_install_merges_with_existing_settings(tmp_path: Path) -> None:
 
 def test_report_markdown_summarizes_checks_and_laws(repo: Path) -> None:
     cfg = _project(repo)
-    checks.run_check(cfg, cfg.check("unit"))
+    runner.run_check(cfg, cfg.check("unit"))
     data = report.build(cfg)
     assert data["summary"] == {"checks_fresh": 1, "checks_total": 1, "laws_held": 1, "laws_approved": 1,
                                "new_findings": 0, "new_below_threshold": 0}  # fmt: skip

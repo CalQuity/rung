@@ -20,8 +20,8 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from rung import gitutil, ledger
-from rung.errors import RungError
+from rung.core import git, ledger
+from rung.core.errors import RungError
 
 TEST_PATTERNS = [
     "**/test_*.py", "**/*_test.py", "**/tests/**", "**/__tests__/**", "**/*.test.*",
@@ -45,7 +45,7 @@ class Proof:
 
 
 def is_test_file(path: str) -> bool:
-    return any(gitutil.glob_match(p, path) for p in TEST_PATTERNS)
+    return any(git.glob_match(p, path) for p in TEST_PATTERNS)
 
 
 def _run(command: str, cwd: Path, timeout: int) -> Run:
@@ -57,8 +57,8 @@ def prove(
     root: Path, command: str, base_ref: str, *, tests: list[str] | None = None,
     expect: str | None = None, timeout: int = 1800, cwd: str = ".",
 ) -> Proof:  # fmt: skip
-    mb = gitutil.merge_base(root, base_ref)
-    changed = gitutil.changed_files(root, base_ref)
+    mb = git.merge_base(root, base_ref)
+    changed = git.changed_files(root, base_ref)
     chosen = sorted(tests) if tests else sorted(f for f in changed if is_test_file(f))
     if not chosen:
         return Proof("error", "no changed test files on this branch; name them with --tests")
@@ -66,7 +66,7 @@ def prove(
     if missing:
         raise RungError(f"test file(s) not found: {', '.join(missing)}")
 
-    with gitutil.worktree(root, mb) as tree:
+    with git.worktree(root, mb) as tree:
         for rel in chosen:
             dest = tree / rel
             dest.parent.mkdir(parents=True, exist_ok=True)

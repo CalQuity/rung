@@ -1,48 +1,41 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from rung import draft
-from rung.config import LLMConfig
-from rung.engines import tla
-from rung.providers import Provider
+from rung.analysis import survey
+from rung.core.config import LLMConfig
+from rung.drafting import common, runtime
+from rung.drafting import lean as lean_draft
+from rung.drafting import tla as tla_draft
+from rung.drafting.providers import Provider, ProviderError, check_shape
+from rung.engines import drt, lean, tla
 
 
 class ScriptedProvider(Provider):
-    """Returns canned replies in order and records every prompt it was sent."""
+    """Returns canned JSON replies in order and records every prompt and system prompt it was sent."""
 
-    def __init__(self, replies: list[str]) -> None:
+    def __init__(self, replies: list[dict[str, Any]]) -> None:
         super().__init__(LLMConfig(provider="none"))
         self.replies = list(replies)
         self.prompts: list[str] = []
+        self.systems: list[str] = []
 
-    def complete(self, prompt: str, **_: object) -> str:
+    def complete_json(self, prompt: str, *, schema: dict[str, Any], system: str = "", **_: object) -> dict[str, Any]:
         self.prompts.append(prompt)
-        return self.replies.pop(0)
+        self.systems.append(system)
+        reply = self.replies.pop(0)
+        check_shape(reply, schema)
+        return reply
 
 
-SPEC_REPLY = """Here you go.
-```tla file=Q.tla
----- MODULE Q ----
-====
-```
-```cfg file=Q.cfg
-SPECIFICATION Spec
-```
-"""
+def _files(**files: str) -> list[dict[str, str]]:
+    return [{"path": path, "content": content} for path, content in files.items()]
 
 
-def test_parse_files_reads_fenced_blocks() -> None:
-    files = draft.parse_files(SPEC_REPLY)
-    assert set(files) == {"Q.tla", "Q.cfg"}
-    assert files["Q.cfg"] == "SPECIFICATION Spec\n"
-
-
-def test_refuses_paths_outside_the_output_dir(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="outside"):
-        draft.safe_write(tmp_path, {"../escape.tla": "x"})
+SPEC_REPLY = {"files": _files(**{"Q.tla": "---- MODULE Q ----\n====", "Q.cfg": "SPECIFICATION Spec"}), "notes": ""}
 
 
 def _source(tmp_path: Path) -> Path:
@@ -51,81 +44,141 @@ def _source(tmp_path: Path) -> Path:
     return src
 
 
+# --- shared pieces ------------------------------------------------------------------------------
+
+
+def test_schemas_are_strict_and_checked() -> None:
+    assert tla_draft.SCHEMA["additionalProperties"] is False
+    assert set(tla_draft.SCHEMA["required"]) == set(tla_draft.SCHEMA["properties"])
+    with pytest.raises(ProviderError, match="missing `notes`"):
+        check_shape({"files": []}, tla_draft.SCHEMA)
+    with pytest.raises(ProviderError, match=r"\$\.files\[0\]\.content: expected a string"):
+        check_shape({"files": [{"path": "a", "content": 1}], "notes": ""}, tla_draft.SCHEMA)
+
+
+def test_files_of_and_safe_write(tmp_path: Path) -> None:
+    assert common.files_of(SPEC_REPLY)["Q.cfg"] == "SPECIFICATION Spec\n"
+    with pytest.raises(ValueError, match="outside"):
+        common.safe_write(tmp_path, {"../escape.tla": "x"})
+
+
+def test_tla_normalizer_fixes_unicode_and_fences() -> None:
+    fixed = tla_draft.normalize("```tla\nInit == x ∈ S ∧ y ≠ 1\n```\n")
+    assert fixed == "Init == x \\in S /\\ y # 1\n"
+
+
+# --- TLA+ ---------------------------------------------------------------------------------------
+
+
 def test_counterexample_stops_the_draft_for_a_person(tmp_path: Path, monkeypatch) -> None:
-    trace = [
-        tla.TraceState(1, "Initial predicate", {"x": "0"}),
-        tla.TraceState(2, "Inc", {"x": "1"}),
-    ]
-    monkeypatch.setattr(
-        tla,
-        "run",
-        lambda *a, **k: tla.TLCResult("fail", "invariant Safe is violated", "Safe", trace),
-    )
-    provider = ScriptedProvider([SPEC_REPLY, "should never be asked"])
-    result = draft.draft_tla(provider, tmp_path, [_source(tmp_path)], tmp_path / "spec")
+    trace = [tla.TraceState(1, "Initial predicate", {"x": "0"}), tla.TraceState(2, "Inc", {"x": "1"})]
+    monkeypatch.setattr(tla, "run", lambda *a, **k: tla.TLCResult("fail", "invariant Safe is violated", "Safe", trace))
+    provider = ScriptedProvider([SPEC_REPLY])
+    result = tla_draft.draft(provider, tmp_path, [_source(tmp_path)], tmp_path / "spec")
     assert result.ok and "real bug, or wrong spec" in result.message
     assert "2. Inc" in result.trace
-    assert len(provider.prompts) == 1  # the model is not asked to "fix" a finding
+    assert len(provider.prompts) == 1  # the model is never asked to "fix" a finding
 
 
-def test_checker_errors_are_fed_back_for_repair(tmp_path: Path, monkeypatch) -> None:
-    results = iter(
-        [
-            tla.TLCResult("error", "Parse Error at line 3", output="*** Parse Error ***"),
-            tla.TLCResult("pass", "ok", distinct_states=12),
-        ]
-    )
+def test_tla_checker_errors_are_fed_back_for_repair(tmp_path: Path, monkeypatch) -> None:
+    results = iter([
+        tla.TLCResult("error", "Parse Error at line 3", output="*** Parse Error ***"),
+        tla.TLCResult("pass", "ok", distinct_states=12),
+    ])  # fmt: skip
     monkeypatch.setattr(tla, "run", lambda *a, **k: next(results))
     provider = ScriptedProvider([SPEC_REPLY, SPEC_REPLY])
-    result = draft.draft_tla(provider, tmp_path, [_source(tmp_path)], tmp_path / "spec")
+    result = tla_draft.draft(provider, tmp_path, [_source(tmp_path)], tmp_path / "spec")
     assert result.ok and result.rounds == 2
     assert "Parse Error" in provider.prompts[1]
+    assert "Writing TLA+ that mirrors code" in provider.systems[0]  # the guide is the system prompt
 
 
 def test_vacuous_spec_is_sent_back(tmp_path: Path, monkeypatch) -> None:
-    results = iter(
-        [
-            tla.TLCResult("pass", "ok", distinct_states=1),
-            tla.TLCResult("pass", "ok", distinct_states=9),
-        ]
-    )
+    results = iter([tla.TLCResult("pass", "ok", distinct_states=1), tla.TLCResult("pass", "ok", distinct_states=9)])
     monkeypatch.setattr(tla, "run", lambda *a, **k: next(results))
     provider = ScriptedProvider([SPEC_REPLY, SPEC_REPLY])
-    result = draft.draft_tla(provider, tmp_path, [_source(tmp_path)], tmp_path / "spec")
-    assert result.rounds == 2
-    assert "vacuous" in provider.prompts[1]
+    result = tla_draft.draft(provider, tmp_path, [_source(tmp_path)], tmp_path / "spec")
+    assert result.rounds == 2 and "vacuous" in provider.prompts[1]
 
 
-DRIVE_OK = """```python file=drive.py
-import os, pathlib
-out = pathlib.Path(os.environ["RUNG_EVIDENCE_DIR"])
-(out / "transcript.txt").write_text("$ app --version\\napp 1.0\\n")
-```
-```markdown file=FEATURES.md
-# Features
-## version
-- How a user reaches it: `app --version`
-```
-SOURCES: src/**/*.py
-"""
-DRIVE_NO_EVIDENCE = DRIVE_OK.replace('(out / "transcript.txt").write_text("$ app --version\\napp 1.0\\n")', "pass")
+# --- Lean ---------------------------------------------------------------------------------------
+
+
+def _lean_reply(theorems: list[str]) -> dict[str, Any]:
+    files = _files(**{
+        "lakefile.toml": 'name = "m"\n[[lean_lib]]\nname = "M"\n[[lean_exe]]\nname = "m"\nroot = "Main"',
+        "M.lean": "def x := 1", "Main.lean": "def main : IO Unit := pure ()", "drt_adapter.py": "print()",
+        "lean-toolchain": "leanprover/lean4:v4.0.0",
+    })  # fmt: skip
+    return {"files": files, "theorems": theorems, "alphabet": ["0", "1"], "exe": "m", "notes": ""}
+
+
+def _lean_ok(warnings: list[str]) -> lean.LeanResult:
+    return lean.LeanResult("pass", "1 theorem(s) kernel-checked", warnings=warnings)
+
+
+@pytest.fixture
+def pinned(monkeypatch) -> None:
+    monkeypatch.setattr(lean, "toolchain", lambda: "leanprover/lean4:v4.35.0")
+
+
+def test_lean_draft_pins_the_toolchain_and_retries_trivial_theorems_once(tmp_path: Path, monkeypatch, pinned) -> None:
+    results = iter([_lean_ok(["M.t: proved by `rfl`; it may say nothing about the model"]), _lean_ok([])])
+    monkeypatch.setattr(lean, "run", lambda *a, **k: next(results))
+    monkeypatch.setattr(lean_draft, "_drt_check", lambda *a, **k: drt.DRTResult("pass", "ok", cases=300))
+    provider = ScriptedProvider([_lean_reply(["M.t"]), _lean_reply(["M.u"])])
+    result = lean_draft.draft(provider, tmp_path, [_source(tmp_path)], tmp_path / "model")
+    assert result.ok and result.rounds == 2 and result.theorems == ["M.u"]
+    assert "may prove nothing" in provider.prompts[1]
+    assert (tmp_path / "model" / "lean-toolchain").read_text() == "leanprover/lean4:v4.35.0\n"
+    assert "v4.35.0" in provider.systems[0]
+
+
+def test_lean_draft_reports_a_divergence_instead_of_fixing_it(tmp_path: Path, monkeypatch, pinned) -> None:
+    monkeypatch.setattr(lean, "run", lambda *a, **k: _lean_ok([]))
+    divergence = drt.Divergence("1 0", "done=0", "done=1")
+    monkeypatch.setattr(lean_draft, "_drt_check", lambda *a, **k: drt.DRTResult(
+        "fail", "3 of 300 inputs diverge", cases=300, divergences=3, minimal=divergence))  # fmt: skip
+    provider = ScriptedProvider([_lean_reply(["M.u"])])
+    result = lean_draft.draft(provider, tmp_path, [_source(tmp_path)], tmp_path / "model")
+    assert result.ok and "disagree" in result.message
+    assert "model: done=0" in result.trace and len(provider.prompts) == 1
+
+
+def test_lean_draft_sends_adapter_errors_back(tmp_path: Path, monkeypatch, pinned) -> None:
+    monkeypatch.setattr(lean, "run", lambda *a, **k: _lean_ok([]))
+    checks = iter([drt.DRTResult("error", "printed 0 lines for 300 inputs"), drt.DRTResult("pass", "ok", cases=300)])
+    monkeypatch.setattr(lean_draft, "_drt_check", lambda *a, **k: next(checks))
+    provider = ScriptedProvider([_lean_reply(["M.u"]), _lean_reply(["M.u"])])
+    result = lean_draft.draft(provider, tmp_path, [_source(tmp_path)], tmp_path / "model")
+    assert result.ok and result.rounds == 2 and "printed 0 lines" in provider.prompts[1]
+
+
+# --- runtime ------------------------------------------------------------------------------------
+
+DRIVE_OK = {
+    "files": _files(**{
+        "drive.py": 'import os, pathlib\nout = pathlib.Path(os.environ["RUNG_EVIDENCE_DIR"])\n'
+                    '(out / "transcript.txt").write_text("$ app --version\\napp 1.0\\n")',
+        "FEATURES.md": "# Features\n## version\n- How a user reaches it: `app --version`",
+    }),
+    "sources": ["src/**/*.py"],
+    "notes": "",
+}  # fmt: skip
+DRIVE_NO_EVIDENCE = {**DRIVE_OK, "files": _files(**{"drive.py": "pass", "FEATURES.md": "# Features"})}
 
 
 def test_runtime_draft_registers_only_after_the_script_proves_itself(tmp_path: Path) -> None:
-    from rung import runtime, survey
-
     provider = ScriptedProvider([DRIVE_NO_EVIDENCE, DRIVE_OK])
     result = runtime.draft_runtime(provider, tmp_path, survey.survey(tmp_path), focus=[])
     assert result.ok and result.rounds == 2
     assert result.covers == ["src/**/*.py"]
     assert any(e.endswith("transcript.txt") for e in result.evidence)
-    assert "recorded no evidence" in provider.prompts[1]  # the failure was fed back for repair
+    assert "recorded no evidence" in provider.prompts[1]
     assert (tmp_path / ".rung" / "verify" / "FEATURES.md").exists()
 
 
 def test_runtime_draft_gives_up_without_registering(tmp_path: Path) -> None:
-    from rung import runtime, survey
-
     provider = ScriptedProvider([DRIVE_NO_EVIDENCE] * 2)
     result = runtime.draft_runtime(provider, tmp_path, survey.survey(tmp_path), focus=[], max_rounds=2)
     assert not result.ok and result.rounds == 2

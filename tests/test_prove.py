@@ -3,9 +3,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from rung import ledger, prove
+from rung.checks import prove
+from rung.core import ledger
 
-from .conftest import commit_all, git
+from .conftest import commit_all, run_git
 
 BUGGY = "def refund(charged, requested):\n    return requested\n"
 FIXED = "def refund(charged, requested):\n    return min(charged, requested)\n"
@@ -21,7 +22,7 @@ PYTEST = f"{sys.executable} -m pytest -q -p no:cacheprovider tests"
 def _branch(repo: Path, source: str, test: str) -> None:
     (repo / "money.py").write_text(BUGGY)
     commit_all(repo, "buggy refund")
-    git(repo, "checkout", "-qb", "fix")
+    run_git(repo, "checkout", "-qb", "fix")
     (repo / "money.py").write_text(source)
     (repo / "tests").mkdir()
     (repo / "tests" / "test_money.py").write_text(test)
@@ -57,5 +58,5 @@ def test_expect_rejects_a_base_failure_for_the_wrong_reason(repo: Path) -> None:
 
 
 def test_no_changed_tests_is_an_error(repo: Path) -> None:
-    git(repo, "checkout", "-qb", "empty")
+    run_git(repo, "checkout", "-qb", "empty")
     assert prove.prove(repo, PYTEST, "main").verdict == "error"

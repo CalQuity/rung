@@ -16,7 +16,7 @@ from collections.abc import Iterator
 from functools import lru_cache
 from pathlib import Path
 
-from rung.errors import RungError
+from rung.core.errors import RungError
 
 # Directories never worth hashing or scanning when git cannot tell us what is ignored.
 SKIP_DIRS = frozenset({

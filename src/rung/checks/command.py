@@ -7,9 +7,9 @@ import shlex
 import subprocess
 from datetime import UTC, datetime
 
-from rung import ledger
-from rung.checkers.base import Checker, Context, Outcome
-from rung.config import Check
+from rung.checks.base import Checker, Context, Outcome
+from rung.core import ledger
+from rung.core.config import Check
 
 
 def tail(proc: subprocess.CompletedProcess[str], lines: int = 15) -> list[str]:

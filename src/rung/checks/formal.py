@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import shlex
 
-from rung.checkers.base import Checker, Context, Outcome
-from rung.config import Check
+from rung.checks.base import Checker, Context, Outcome
+from rung.core.config import Check
 from rung.engines import drt, lean, tla
 
 
@@ -52,7 +52,7 @@ class LeanChecker(Checker):
             [str(t) for t in check.get("theorems", [])],
             timeout=int(check.get("timeout", 1800)),
         )
-        lines = list(result.findings)
+        lines = list(result.findings) + [f"WEAK {w}" for w in result.warnings]
         for theorem, axioms in result.axioms.items():
             lines.append(f"{theorem}: axioms [{', '.join(axioms) or 'none'}]")
         if result.verdict != "pass" and not result.findings:

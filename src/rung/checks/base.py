@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
 
-from rung.config import Check
+from rung.core.config import Check
 
 
 @dataclass

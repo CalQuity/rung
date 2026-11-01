@@ -21,7 +21,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from rung.ledger import Status
+from rung.core.ledger import Status
 
 LAWS_FILE = "LAWS.md"
 _HEADING = re.compile(r"^##\s+(\S+)\s*$")

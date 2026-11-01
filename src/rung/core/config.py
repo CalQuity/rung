@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from rung.errors import RungError
+from rung.core.errors import RungError
 
 CONFIG_NAME = "rung.toml"
 CHECK_KINDS = ("command", "evidence", "scan", "deps", "tla", "lean", "drt")

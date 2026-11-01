@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from rung import checks, laws, ledger
-from rung.config import Config
+from rung.checks import runner
+from rung.core import laws, ledger
+from rung.core.config import Config
 
 COMMENT_MARKER = "<!-- rung-report -->"
 STATE_ICON = {"fresh": "✅", "stale": "🟡", "failing": "❌", "never": "⚪"}
@@ -18,7 +19,7 @@ LAW_ICON = {"held": "✅", "unproven": "🟡", "broken": "❌", "proposed": "�
 
 
 def build(config: Config) -> dict[str, Any]:
-    statuses = {s.check_id: s for s in checks.statuses(config)}
+    statuses = {s.check_id: s for s in runner.statuses(config)}
     entries = ledger.read(config.root)
 
     rows = []

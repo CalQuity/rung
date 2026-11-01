@@ -12,8 +12,8 @@ from __future__ import annotations
 import shutil
 from dataclasses import dataclass, field
 
-from rung.presets import PRESETS
-from rung.survey import Inspection
+from rung.analysis.survey import Inspection
+from rung.checks.presets import PRESETS
 
 LADDER = (
     ("tests", "Record the test suite as evidence; prove that each bug fix's test catches the bug."),

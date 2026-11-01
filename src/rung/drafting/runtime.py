@@ -19,12 +19,14 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from rung import draft, gitutil
-from rung.checkers.base import Context
-from rung.checkers.command import EvidenceChecker
-from rung.config import Check
-from rung.providers import Provider
-from rung.survey import Inspection
+from rung import guides
+from rung.analysis.survey import Inspection
+from rung.checks.base import Context
+from rung.checks.command import EvidenceChecker
+from rung.core import git
+from rung.core.config import Check
+from rung.drafting.common import FILES, STRINGS, files_of, safe_write, schema
+from rung.drafting.providers import Provider
 
 VERIFY_DIR = Path(".rung") / "verify"
 CONTEXT_FILES = (
@@ -32,37 +34,12 @@ CONTEXT_FILES = (
     "docker-compose.yml", "compose.yaml", "manage.py", "main.py", "app.py", "go.mod", "Cargo.toml",
 )  # fmt: skip
 MAX_CONTEXT_BYTES = 60_000
+SCHEMA = schema(files=FILES, sources=STRINGS, notes={"type": "string"})
 
-SYSTEM = """You write a verification script that drives a real application the way a user does
-and records evidence. A program, not a person, will run it, with no one watching.
+FORMAT = """
 
-The script's contract:
-- Language: Python 3 standard library only (subprocess, urllib, json, time, pathlib, socket).
-  Optional: Playwright for web UIs, guarded by an import check that exits 2 with a clear message.
-- Start what it needs (dev server, CLI build) using the project's own documented commands,
-  wait until the app is actually usable (a port answers AND a real request succeeds), and
-  stop only what it started. Pick a free port; never kill processes by name.
-- Exercise ONE user-facing feature end to end through its real interface (HTTP requests,
-  CLI invocations, browser actions), never internal functions or test-only endpoints.
-- Write evidence into the directory in the RUNG_EVIDENCE_DIR environment variable:
-  transcripts of commands with their output, HTTP request/response pairs as JSON,
-  screenshots or a video for UIs. Evidence must survive cleanup.
-- Check the observable result (status codes, output text, persisted state) and exit 1 with a
-  message naming what was expected and what happened if it is wrong. Exit 0 only on success.
-- Never print or save secrets; read credentials only from environment variables.
-
-Also write a feature map: FEATURES.md listing the top 3-5 user-facing features, each with
-"How a user reaches it", "How the script drives it", "What proves it works", and the source
-files that implement it.
-
-Output fenced blocks only:
-```python file=drive.py
-...
-```
-```markdown file=FEATURES.md
-...
-```
-Then one line: SOURCES: <comma-separated globs of the source files the driven feature depends on>"""
+Return `files` with `drive.py` and `FEATURES.md`, `sources` with globs of the source files the driven
+feature depends on, and `notes` with anything the developer should know."""
 
 
 @dataclass
@@ -77,7 +54,7 @@ class RuntimeDraft:
 
 def gather_context(root: Path, info: Inspection, focus: list[str]) -> str:
     """What the model sees: the survey, a file list, the project's own docs and entry points."""
-    files = gitutil.list_files(root)
+    files = git.list_files(root)
     parts = [
         "Survey:",
         json.dumps({k: info.to_dict()[k] for k in ("languages", "surfaces", "test_commands", "ci")}, indent=1),
@@ -109,16 +86,13 @@ def draft_runtime(
     )
     files: list[Path] = []
     for round_no in range(1, max_rounds + 1):
-        reply = provider.complete(prompt, system=SYSTEM, cwd=root)
-        produced = draft.parse_files(reply)
+        reply = provider.complete_json(prompt, schema=SCHEMA, system=guides.load("runtime") + FORMAT, cwd=root)
+        produced = files_of(reply)
         if "drive.py" not in produced or "FEATURES.md" not in produced:
-            prompt += "\n\nYour reply must contain both ```python file=drive.py``` and ```markdown file=FEATURES.md```."
+            prompt += "\n\nYour reply must contain both `drive.py` and `FEATURES.md` in `files`."
             continue
-        files = draft.safe_write(out_dir, produced)
-        covers = []
-        for line in reply.splitlines():
-            if line.startswith("SOURCES:"):
-                covers = [g.strip() for g in line.removeprefix("SOURCES:").split(",") if g.strip()]
+        files = safe_write(out_dir, produced)
+        covers = [g.strip() for g in reply["sources"] if g.strip()]
 
         run = f"python3 {(VERIFY_DIR / 'drive.py').as_posix()}"
         check = Check(check_id, "evidence", covers, {"run": run, "timeout": 600})
@@ -128,6 +102,6 @@ def draft_runtime(
         prompt += (
             f"\n\nRung ran your script and it did not prove the feature ({outcome.summary}):\n"
             + "\n".join(outcome.lines[-30:])
-            + "\nFix the script. Do not weaken what it checks. Reply in the same format."
+            + "\nFix the script. Do not weaken what it checks. Return the same fields."
         )
     return RuntimeDraft(False, f"no passing verification script after {max_rounds} rounds", files, max_rounds)

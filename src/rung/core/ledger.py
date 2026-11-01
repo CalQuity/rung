@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from rung import gitutil
+from rung.core import git
 
 LEDGER_PATH = Path(".rung") / "ledger.jsonl"
 GENESIS = "0" * 64
@@ -33,7 +33,7 @@ def file_digest(path: Path) -> str:
 
 
 def snapshot(root: Path, patterns: list[str]) -> dict[str, str]:
-    return {rel: file_digest(root / rel) for rel in gitutil.expand(root, patterns)}
+    return {rel: file_digest(root / rel) for rel in git.expand(root, patterns)}
 
 
 def _entry_hash(entry: dict[str, Any]) -> str:
@@ -71,7 +71,7 @@ def append(
         "verdict": verdict,
         "summary": summary,
         "at": datetime.now(UTC).isoformat(timespec="seconds"),
-        "commit": gitutil.head(root),
+        "commit": git.head(root),
         "covers": covers,
         "specs": specs,
         "definition": definition,

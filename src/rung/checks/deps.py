@@ -21,10 +21,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from rung import gitutil
-from rung.checkers.base import Checker, Context, Outcome
-from rung.config import Check
-from rung.errors import RungError
+from rung.checks.base import Checker, Context, Outcome
+from rung.core import git
+from rung.core.config import Check
+from rung.core.errors import RungError
 
 MANIFESTS = ["**/requirements*.txt", "**/pyproject.toml", "**/package.json"]
 _REQ_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
@@ -113,7 +113,7 @@ def first_published(pkg: Package) -> datetime | None:
 
 
 def _manifest_files(root: Path) -> list[str]:
-    return [f for f in gitutil.list_files(root) if any(gitutil.glob_match(p, f) for p in MANIFESTS)]
+    return [f for f in git.list_files(root) if any(git.glob_match(p, f) for p in MANIFESTS)]
 
 
 def declared(root: Path) -> set[Package]:
@@ -127,8 +127,8 @@ def declared_at(root: Path, commit: str) -> set[Package]:
     out: set[Package] = set()
     for rel in _manifest_files(root):
         try:
-            text = gitutil.show(root, commit, rel)
-        except gitutil.GitError:
+            text = git.show(root, commit, rel)
+        except git.GitError:
             continue  # the manifest did not exist at the base
         out |= parse_manifest(rel, text)
     return out

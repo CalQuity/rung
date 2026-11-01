@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from rung import findings
+from rung.checks import findings
 from rung.engines import sarif
 
 FIXTURES = Path(__file__).parent / "fixtures" / "sarif"

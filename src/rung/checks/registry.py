@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from rung.checkers.base import Checker, Context, Outcome
-from rung.checkers.command import CommandChecker, EvidenceChecker
-from rung.checkers.deps import DepsChecker
-from rung.checkers.formal import DRTChecker, LeanChecker, TLAChecker
-from rung.checkers.scan import ScanChecker
-from rung.config import ConfigError
+from rung.checks.base import Checker, Context, Outcome
+from rung.checks.command import CommandChecker, EvidenceChecker
+from rung.checks.deps import DepsChecker
+from rung.checks.formal import DRTChecker, LeanChecker, TLAChecker
+from rung.checks.scan import ScanChecker
+from rung.core.config import ConfigError
 
 REGISTRY: dict[str, Checker] = {
     c.kind: c

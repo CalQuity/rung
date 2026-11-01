@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from rung import checks, config, gitutil
-from rung.checkers import deps
+from rung.checks import deps, runner
+from rung.core import config, git
 
-from .conftest import commit_all, git
+from .conftest import commit_all, run_git
 
 
 def test_parse_requirements_ignores_options_urls_and_comments() -> None:
@@ -47,20 +47,20 @@ def _repo_with_requirements(repo: Path, lines: list[str]) -> config.Config:
     (repo / "requirements.txt").write_text("requests==2.31.0\n")
     (repo / "rung.toml").write_text('[[check]]\nid = "deps"\nkind = "deps"\n')
     commit_all(repo, "deps")
-    git(repo, "checkout", "-qb", "feature")
+    run_git(repo, "checkout", "-qb", "feature")
     (repo / "requirements.txt").write_text("\n".join(["requests==2.31.0", *lines]) + "\n")
     return config.load(repo)
 
 
 def test_new_established_package_passes(repo: Path, registry) -> None:
     cfg = _repo_with_requirements(repo, ["httpx==0.27"])
-    result = checks.run_check(cfg, cfg.check("deps"), base=gitutil.merge_base(repo, "main"))
+    result = runner.run_check(cfg, cfg.check("deps"), base=git.merge_base(repo, "main"))
     assert result.verdict == "pass"
 
 
 def test_hallucinated_and_brand_new_packages_block(repo: Path, registry) -> None:
     cfg = _repo_with_requirements(repo, ["reqeusts-toolbelt-pro==1.0", "fresh-pkg==0.0.1"])
-    result = checks.run_check(cfg, cfg.check("deps"), base=gitutil.merge_base(repo, "main"))
+    result = runner.run_check(cfg, cfg.check("deps"), base=git.merge_base(repo, "main"))
     assert result.verdict == "fail"
     text = "\n".join(result.outcome.lines)
     assert "MISSING pypi:reqeusts-toolbelt-pro" in text
@@ -70,5 +70,5 @@ def test_hallucinated_and_brand_new_packages_block(repo: Path, registry) -> None
 def test_allow_list_accepts_a_reviewed_package(repo: Path, registry) -> None:
     cfg = _repo_with_requirements(repo, ["fresh-pkg==0.0.1"])
     cfg.check("deps").options["allow"] = ["fresh-pkg"]
-    result = checks.run_check(cfg, cfg.check("deps"), base=gitutil.merge_base(repo, "main"))
+    result = runner.run_check(cfg, cfg.check("deps"), base=git.merge_base(repo, "main"))
     assert result.verdict == "pass"

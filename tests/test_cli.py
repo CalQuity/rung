@@ -3,7 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from rung import cli, ledger
+from rung import cli
+from rung.core import ledger
 
 
 def run(project: Path, *args: str) -> int:
@@ -92,17 +93,19 @@ def test_editing_a_check_stales_only_that_check(project: Path) -> None:
         .replace('-c \'pass\'"\ncovers = ["src/*.py"]', '-c \'pass\' "\ncovers = ["src/*.py"]', 1)
     )
     (project / "rung.toml").write_text(text)
-    from rung import checks, config
+    from rung.checks import runner
+    from rung.core import config
 
     cfg = config.load(project)
-    states = {s.check_id: s.state for s in checks.statuses(cfg)}
+    states = {s.check_id: s.state for s in runner.statuses(cfg)}
     assert states == {"unit": "stale", "other": "fresh"}
 
 
 def test_writing_verdicts_never_stales_a_whole_repo_check(project: Path) -> None:
     run(project, "add", "command", "everything", "--run", f"{sys.executable} -c 'pass'", "--covers", "**/*")
     run(project, "check")
-    from rung import checks, config
+    from rung.checks import runner
+    from rung.core import config
 
     cfg = config.load(project)
-    assert all(s.state == "fresh" for s in checks.statuses(cfg))
+    assert all(s.state == "fresh" for s in runner.statuses(cfg))

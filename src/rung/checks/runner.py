@@ -5,10 +5,11 @@ from __future__ import annotations
 import subprocess
 from dataclasses import dataclass
 
-from rung import checkers, gitutil, ledger
-from rung.checkers import Context, Outcome
-from rung.config import Check, Config
-from rung.errors import RungError
+from rung.checks import registry
+from rung.checks.base import Context, Outcome
+from rung.core import git, ledger
+from rung.core.config import Check, Config
+from rung.core.errors import RungError
 
 MAX_RECORDED_FINDINGS = 200
 
@@ -24,11 +25,11 @@ class Result:
 
 
 def covers(check: Check) -> list[str]:
-    return checkers.get(check.kind).covers(check)
+    return registry.get(check.kind).covers(check)
 
 
 def specs(check: Check) -> list[str]:
-    return checkers.get(check.kind).specs(check)
+    return registry.get(check.kind).specs(check)
 
 
 def definition(check: Check) -> str:
@@ -40,7 +41,7 @@ def touched_by(check: Check, changed: set[str]) -> bool:
     patterns = covers(check) + specs(check)
     if not patterns:
         return True
-    return any(gitutil.glob_match(p, f) for p in patterns for f in changed)
+    return any(git.glob_match(p, f) for p in patterns for f in changed)
 
 
 def select(config: Config, ids: list[str], changed: set[str] | None) -> list[Check]:
@@ -52,7 +53,7 @@ def select(config: Config, ids: list[str], changed: set[str] | None) -> list[Che
 
 def run_check(config: Config, check: Check, *, base: str | None = None) -> Result:
     root = config.root
-    checker = checkers.get(check.kind)
+    checker = registry.get(check.kind)
     cover_patterns, spec_patterns = checker.covers(check), checker.specs(check)
     before = (ledger.snapshot(root, cover_patterns), ledger.snapshot(root, spec_patterns))
     try:

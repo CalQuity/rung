@@ -40,3 +40,24 @@ def test_parse_axioms() -> None:
     assert "sorryAx" in axioms["LeaseModel.cheat"]
     assert axioms["LeaseModel.simple"] == []
     assert not set(axioms["LeaseModel.run_consistent"]) - lean.STANDARD_AXIOMS
+
+
+def test_weak_theorems_are_flagged(tmp_path: Path) -> None:
+    (tmp_path / "M.lean").write_text(
+        "theorem nonneg (n : Nat) : 0 ≤ n := Nat.zero_le _\n\n"
+        "theorem real (xs : List Nat) : (xs ++ []).length = xs.length := by\n  simp\n"
+    )
+    weak = lean.weak_theorems(tmp_path)
+    assert len(weak) == 1 and weak[0].startswith("nonneg:")  # a one-line `simp` proof is not flagged
+
+
+def test_toolchain_prefers_override_then_newest_release(monkeypatch) -> None:
+    monkeypatch.setenv("RUNG_LEAN_TOOLCHAIN", "leanprover/lean4:v9.9.9")
+    assert lean.toolchain() == "leanprover/lean4:v9.9.9"
+    monkeypatch.delenv("RUNG_LEAN_TOOLCHAIN")
+
+    class Listing:
+        stdout = "leanprover/lean4:v4.15.0\nleanprover/lean4:v4.35.0 (default)\nleanprover/lean4:v4.36.0-rc2\n"
+
+    monkeypatch.setattr(lean.subprocess, "run", lambda *a, **k: Listing())
+    assert lean.toolchain() == "leanprover/lean4:v4.35.0"

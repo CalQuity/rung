@@ -177,6 +177,11 @@ Rung builds on other people's ideas and says so.
 - Diff-scoped reporting and agent hooks were informed by
   [React Doctor](https://github.com/millionco/react-doctor).
 - Counterexample-driven repair of TLA+ specs follows TraceFix and related work.
+- The TLA+ and Lean guides in `src/rung/guides/` are distilled from the TLA+ VS Code extension's
+  knowledge base and [tlaplus/AgentSkills](https://github.com/tlaplus/AgentSkills) (MIT),
+  [opum-ai/proof-skills](https://github.com/opum-ai/proof-skills) (MIT),
+  [leanprover/skills](https://github.com/leanprover/skills) (Apache-2.0) and
+  [alok/vericoding-skill](https://github.com/alok/vericoding-skill) (MIT).
 
 Rung is not affiliated with or endorsed by any of these projects.
 

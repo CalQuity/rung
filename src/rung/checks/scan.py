@@ -10,12 +10,13 @@ import tempfile
 from datetime import date
 from pathlib import Path
 
-from rung import findings, gitutil
-from rung.checkers.base import Checker, Context, Outcome
-from rung.config import Check, ConfigError
+from rung.checks import findings
+from rung.checks.base import Checker, Context, Outcome
+from rung.checks.presets import PRESETS, Preset
+from rung.core import git
+from rung.core.config import Check, ConfigError
+from rung.core.errors import RungError, ToolMissing
 from rung.engines import sarif
-from rung.errors import RungError, ToolMissing
-from rung.presets import PRESETS, Preset
 
 MAX_LISTED = 10
 
@@ -80,7 +81,7 @@ class ScanChecker(Checker):
         head = self.collect(ctx.root, check, timeout)
 
         if ctx.base:
-            with gitutil.worktree(ctx.root, ctx.base) as tree:
+            with git.worktree(ctx.root, ctx.base) as tree:
                 base = self.collect(tree, check, timeout)
             compared = f"merge base {ctx.base[:10]}"
         else:
