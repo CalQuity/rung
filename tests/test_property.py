@@ -45,7 +45,8 @@ WRONG_LAW = STRONG.replace("max(sum(prices) - discount, 0)", "sum(prices) - disc
 
 
 def _reply(test: str) -> dict:
-    return {"test": test, "notes": "", "laws": [{"id": "total-floored", "text": "A total is never negative."}]}
+    return {"test": test, "notes": "", "laws": [{"id": "total-floored", "text": "A total is never negative.",
+                                                   "harm": "A customer is paid to shop."}]}  # fmt: skip
 
 
 @pytest.fixture

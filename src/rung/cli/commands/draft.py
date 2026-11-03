@@ -10,6 +10,7 @@ from pathlib import Path
 from rung import agents
 from rung.analysis import survey
 from rung.cli.commands.common import GATE_FAILED, OK, add_check, load_config
+from rung.cli.commands.formal import accept_draft
 from rung.cli.output import Output
 from rung.core import laws
 from rung.core.config import Check, Config, ConfigError
@@ -186,7 +187,7 @@ def cmd_draft(args, out: Output) -> int:
             out.detail(w, indent=2)
     if sql.missing and result.ok:
         out.detail(f"this result assumes each call to {', '.join(sql.missing)} is atomic", indent=2)
-    if result.trace:
+    if result.trace and args.kind != "tla":  # a TLA+ counterexample is shown by the check below, in plain words
         out.line("\nCounterexample:")
         out.detail(result.trace, indent=2)
         out.line("\nIf this is a real bug, fix the code and run `rung check`. If the spec is wrong, edit it yourself.")
@@ -199,19 +200,17 @@ def cmd_draft(args, out: Output) -> int:
         cfg_file = next(f for f in result.files if f.suffix == ".cfg")
         options = {"spec": spec.relative_to(root).as_posix(), "config": cfg_file.relative_to(root).as_posix(),
                    "drafted_by": drafted_by(cfg, provider)}  # fmt: skip
-        add_check(cfg, Check(check_id, "tla", covered, options), out)
+        check = Check(check_id, "tla", covered, options)
+        add_check(cfg, check, out)
     else:
         project = target.relative_to(root).as_posix()
-        add_check(
-            cfg,
-            Check(
-                check_id,
-                "lean",
-                [],
-                {"project": project, "theorems": result.theorems, "drafted_by": drafted_by(cfg, provider)},
-            ),
-            out,
+        check = Check(
+            check_id,
+            "lean",
+            [],
+            {"project": project, "theorems": result.theorems, "drafted_by": drafted_by(cfg, provider)},
         )
+        add_check(cfg, check, out)
         exe = _lean_exe(target)
         if exe and result.alphabet and (target / "drt_adapter.py").exists():
             options = {
@@ -225,4 +224,4 @@ def cmd_draft(args, out: Output) -> int:
     if added:
         out.line(f"Proposed {len(added)} law(s) in {laws.LAWS_FILE}: {', '.join(added)}.")
         out.line("Read each one; approve with `rung laws --approve <id>` only if it says what you mean.")
-    return OK
+    return accept_draft(cfg, check, result, out, sources=covered, by=f"rung draft ({drafted_by(cfg, provider)})")

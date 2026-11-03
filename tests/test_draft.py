@@ -37,9 +37,14 @@ def _files(**files: str) -> list[dict[str, str]]:
 
 SPEC_REPLY = {
     "files": _files(**{"Q.tla": "---- MODULE Q ----\n====", "Q.cfg": "SPECIFICATION Spec"}),
-    "laws": [{"id": "one-owner", "text": "A job has at most one owner."}],
+    "actions": [{"name": "Claim", "label": "a worker claims the job"}],
+    "invariants": [{"name": "OneOwner", "statement": "A job has at most one owner.", "harm": "Two workers run it."}],
+    "scope": {"bounds": ["Workers = {w1, w2}"], "assumptions": ["each claim is atomic"], "not_covered": []},
+    "functions": ["q.py:1 claim"],
+    "laws": [{"id": "one-owner", "text": "A job has at most one owner.", "harm": "Two workers run the same job."}],
     "notes": "",
 }
+SCOPE = {"bounds": [], "assumptions": [], "not_covered": []}
 
 
 def _source(tmp_path: Path) -> Path:
@@ -55,9 +60,9 @@ def test_schemas_are_strict_and_checked() -> None:
     assert tla_draft.SCHEMA["additionalProperties"] is False
     assert set(tla_draft.SCHEMA["required"]) == set(tla_draft.SCHEMA["properties"])
     with pytest.raises(ProviderError, match="missing `notes`"):
-        check_shape({"files": [], "laws": []}, tla_draft.SCHEMA)
+        check_shape({k: v for k, v in SPEC_REPLY.items() if k != "notes"}, tla_draft.SCHEMA)
     with pytest.raises(ProviderError, match=r"\$\.files\[0\]\.content: expected a string"):
-        check_shape({"files": [{"path": "a", "content": 1}], "laws": [], "notes": ""}, tla_draft.SCHEMA)
+        check_shape({**SPEC_REPLY, "files": [{"path": "a", "content": 1}]}, tla_draft.SCHEMA)
 
 
 def test_files_of_and_safe_write(tmp_path: Path) -> None:
@@ -114,7 +119,8 @@ def _lean_reply(theorems: list[str]) -> dict[str, Any]:
         "M.lean": "def x := 1", "Main.lean": "def main : IO Unit := pure ()", "drt_adapter.py": "print()",
         "lean-toolchain": "leanprover/lean4:v4.0.0",
     })  # fmt: skip
-    return {"files": files, "theorems": theorems, "alphabet": ["0", "1"], "exe": "m", "laws": [], "notes": ""}
+    return {"files": files, "theorems": theorems, "alphabet": ["0", "1"], "exe": "m", "scope": SCOPE, "functions": [],
+            "laws": [], "notes": ""}  # fmt: skip
 
 
 def _lean_ok(warnings: list[str]) -> lean.LeanResult:

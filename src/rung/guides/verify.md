@@ -12,3 +12,5 @@ to drive it, and what observable state proves it works.
 - A feature the script cannot reach? Drive it with your browser or computer-use tool, record it,
   and `rung attest <check> <files> --by <tool> --note "<what you saw>"` (an evidence check
   declared without `run`).
+- TLA+ and Lean checks, the formal-methods part of this kit, each have their own `verify-<check>`
+  skill; when one reports that the code changed since its model was confirmed, run `rung maintain <check>`.

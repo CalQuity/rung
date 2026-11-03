@@ -11,7 +11,7 @@ from rung.checks.presets import PRESETS
 from rung.checks.scan import ScanChecker
 from rung.cli.commands.common import OK, add_check, load_config
 from rung.cli.output import STATE_STYLE, VERDICT_STYLE, Output
-from rung.core import git, laws
+from rung.core import git, laws, modelcard
 from rung.core.config import Check, ConfigError
 
 
@@ -25,13 +25,22 @@ def cmd_laws(args, out: Output) -> int:
         out.line(f"Approved {args.approve}.")
     statuses = {s.check_id: s for s in runner.statuses(cfg)}
     rows = [(law, *laws.state(law, statuses)) for law in laws.load(cfg.root)]
-    out.emit([{"id": law.id, "text": law.text, "state": st, "why": why, "enforced_by": law.enforced_by}
+    scopes = {
+        c: modelcard.scope_lines(modelcard.load(cfg.root, c)) for law in laws.load(cfg.root) for c in law.enforced_by
+    }
+    out.emit([{"id": law.id, "text": law.text, "harm": law.harm, "state": st, "why": why,
+               "enforced_by": law.enforced_by, "scope": {c: scopes[c] for c in law.enforced_by if scopes[c]}}
               for law, st, why in rows])  # fmt: skip
     if not rows:
         out.line(f"No laws in {laws.LAWS_FILE} yet.")
     for law, st, why in rows:
         out.line(f"{out.badge(st, STATE_STYLE, 11)}{law.id}")
         out.detail(law.text, indent=11)
+        if law.harm:
+            out.detail(f"harm: {law.harm}", indent=11)
+        for check_id in law.enforced_by:
+            for line in scopes[check_id]:
+                out.detail(out.style(f"{check_id} {line}", "dim"), indent=11)
         out.detail(out.style(why, "dim"), indent=11)
     return OK
 

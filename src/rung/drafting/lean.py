@@ -17,6 +17,8 @@ from rung.drafting.common import (
     FILES,
     LAWS,
     LAWS_FORMAT,
+    SCOPE,
+    SCOPE_FORMAT,
     STRINGS,
     DraftResult,
     files_of,
@@ -38,11 +40,13 @@ Return:
 - `alphabet`: every action code `Main.lean` accepts, as strings.
 - `exe`: the `[[lean_exe]]` name.
 - `notes`: anything the developer should know."""
+    + SCOPE_FORMAT
     + LAWS_FORMAT
 )
 SCHEMA = schema(
-    files=FILES, theorems=STRINGS, alphabet=STRINGS, exe={"type": "string"}, laws=LAWS, notes={"type": "string"}
-)
+    files=FILES, theorems=STRINGS, alphabet=STRINGS, exe={"type": "string"}, scope=SCOPE, functions=STRINGS,
+    laws=LAWS, notes={"type": "string"},
+)  # fmt: skip
 
 DRT_SMOKE_CASES = 300
 
@@ -115,7 +119,8 @@ def draft(
             continue
         base = DraftResult(True, result.reason, files, round_no, theorems=theorems, alphabet=alphabet,
                            warnings=result.warnings + sql.warnings, notes=reply["notes"].strip(), laws=reply["laws"],
-                           context=sql.files)  # fmt: skip
+                           context=sql.files,
+                           described={"scope": reply["scope"], "functions": reply["functions"]})  # fmt: skip
         if check.verdict == "fail" and check.minimal:
             m = check.minimal
             base.message = (

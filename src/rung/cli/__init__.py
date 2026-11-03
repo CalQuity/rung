@@ -123,6 +123,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--id")
     s.add_argument("--out", help="where to write the result: a directory (tla, lean) or a test file (property)")
     s.add_argument("--model", help="model for this draft only (default: [llm] model in rung.toml, else the CLI's)")
+
+    # Formal models: keep a TLA+ or Lean model describing the code after the code changes.
+    s = add("maintain", c.cmd_maintain, "update a TLA+ or Lean model after the code it describes changed")
+    s.add_argument("check")
+    s.add_argument("--model", help="model for this run only (default: [llm] model in rung.toml, else the CLI's)")
+    s = add("confirm", c.cmd_confirm, "record that a person checked a TLA+ or Lean model still describes the code")
+    s.add_argument("check")
+    s.add_argument("--by", required=True, help="who reviewed the model")
+    s.add_argument("--reason", required=True, help="what they compared, e.g. the change that was reviewed")
     return p
 
 

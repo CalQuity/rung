@@ -9,12 +9,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from rung.analysis import formal
 from rung.checks import runner
 from rung.core import laws, ledger
 from rung.core.config import Config
 
 COMMENT_MARKER = "<!-- rung-report -->"
-STATE_ICON = {"fresh": "✅", "stale": "🟡", "failing": "❌", "never": "⚪"}
+STATE_ICON = {"fresh": "✅", "stale": "🟡", "failing": "❌", "never": "⚪", "drifted": "🟠"}
 LAW_ICON = {"held": "✅", "unproven": "🟡", "broken": "❌", "proposed": "📝", "unenforced": "⚪"}
 
 
@@ -45,7 +46,7 @@ def build(config: Config) -> dict[str, Any]:
     law_rows = []
     for law in laws.load(config.root):
         state, why = laws.state(law, statuses)
-        law_rows.append({"id": law.id, "text": law.text, "state": state, "why": why})
+        law_rows.append({"id": law.id, "text": law.text, "harm": law.harm, "state": state, "why": why})
 
     proofs = []
     for p in (v for v in verdicts.values() if v.get("kind") == "proof"):
@@ -68,6 +69,7 @@ def build(config: Config) -> dict[str, Any]:
         "laws": law_rows,
         "new_findings": new_findings,
         "proofs": proofs,
+        "formal": formal.rows(config, statuses),
         "ledger_intact": not any("invalid" in v for v in verdicts.values()),
         "summary": {
             "checks_fresh": trusted,
@@ -98,7 +100,8 @@ def markdown(data: dict[str, Any]) -> str:
     if data["laws"]:
         out += ["| | Law | Status |", "|---|---|---|"]
         for law in data["laws"]:
-            out.append(f"| {LAW_ICON[law['state']]} | {law['text']} | {law['state']}: {law['why']} |")
+            harm = f"<br>_Harm: {law['harm']}_" if law.get("harm") else ""
+            out.append(f"| {LAW_ICON[law['state']]} | {law['text']}{harm} | {law['state']}: {law['why']} |")
         out.append("")
 
     out += ["| | Check | Kind | Result |", "|---|---|---|---|"]
@@ -115,6 +118,8 @@ def markdown(data: dict[str, Any]) -> str:
             where = f"{f['path']}:{f['line']}" if f.get("line") else f.get("path", "")
             out.append(f"- **{f['level']}** `{f['rule']}` in `{where}` ({f['check']}): {f.get('message', '')[:200]}")
         out += ["", "</details>", ""]
+
+    out += formal.markdown(data.get("formal", []))
 
     if data["proofs"]:
         out += ["**Fix proofs**", ""]

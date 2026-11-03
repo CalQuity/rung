@@ -14,6 +14,7 @@ STATE_STYLE = {
     "stale": ("STALE", "yellow"),
     "failing": ("FAILING", "red"),
     "never": ("never run", "dim"),
+    "drifted": ("DRIFTED", "yellow"),
     "held": ("HELD", "green"),
     "unproven": ("UNPROVEN", "yellow"),
     "broken": ("BROKEN", "red"),

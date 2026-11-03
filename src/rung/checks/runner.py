@@ -10,7 +10,7 @@ from pathlib import Path
 from rung.checks import registry
 from rung.checks.base import Context, Outcome
 from rung.checks.command import evidence_dir, is_attested, missing_required
-from rung.core import git, ledger
+from rung.core import git, ledger, modelcard
 from rung.core.config import Check, Config, ConfigError
 from rung.core.errors import RungError
 from rung.core.redact import redact, redact_lines
@@ -98,6 +98,7 @@ def run_check(config: Config, check: Check, *, base: str | None = None) -> Resul
             "lines": redact_lines(outcome.lines[:60]),
             "base": base or "",
             "findings": outcome.findings[:MAX_RECORDED_FINDINGS],
+            **outcome.details,
         },
     )
     return Result(check, outcome)
@@ -107,7 +108,11 @@ def status(config: Config, check: Check, *, base: str | None = None, view: ledge
     """Whether `check`'s latest verdict still holds. With `base`, it must have been made against that base."""
     view = view or ledger.View(config.root)
     max_age = registry.get(check.kind).max_age_days(check)
-    return view.status(check.id, covers(check), specs(check), definition(check), base, max_age)
+    held = view.status(check.id, covers(check), specs(check), definition(check), base, max_age)
+    if check.kind in modelcard.KINDS and (drift := modelcard.drift(config.root, check.id)):
+        # A model whose code changed since it was confirmed proves nothing about the code, pass or not.
+        return ledger.Status(check.id, "drifted", held.entry, [f"{drift.message}: {', '.join(drift.changed)}"])
+    return held
 
 
 def statuses(config: Config, *, base: str | None = None) -> list[ledger.Status]:

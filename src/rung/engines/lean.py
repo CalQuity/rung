@@ -134,6 +134,17 @@ def weak_theorems(project: Path) -> list[str]:
     return weak
 
 
+def theorem_statements(project: Path) -> dict[str, str]:
+    """Each theorem's name and statement (the text between the name and `:=`) in the project's sources."""
+    out = {}
+    for path in sorted(project.rglob("*.lean")):
+        if ".lake" in path.parts:
+            continue
+        for name, statement, _proof in _THEOREM.findall(strip_comments(path.read_text())):
+            out[name] = statement.strip()
+    return out
+
+
 def strip_comments(source: str) -> str:
     """Remove comments and string literals, so a word inside either is never mistaken for code."""
     return _LINE_COMMENT.sub("", _STRING.sub('""', _BLOCK_COMMENT.sub("", source)))

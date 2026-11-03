@@ -163,7 +163,7 @@ def history(root: Path) -> list[dict[str, Any]]:
 @dataclass
 class Status:
     check_id: str
-    state: str  # fresh | stale | failing | never
+    state: str  # fresh | stale | failing | never | drifted (a formal model's code changed since it was confirmed)
     entry: dict[str, Any] | None
     changed: list[str]
 

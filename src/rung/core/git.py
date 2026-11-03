@@ -33,7 +33,8 @@ SKIP_DIRS = frozenset({
 
 # Rung's own outputs. Writing a verdict or recording evidence must never stale another verdict.
 # Verification inputs under `.rung/` (drive scripts, baselines, waivers) are not listed here.
-RUNG_OUTPUTS = (".rung/verdicts/", ".rung/evidence/", ".rung/cache/", ".rung/runs/", ".rung/ledger.jsonl")
+RUNG_OUTPUTS = (".rung/verdicts/", ".rung/evidence/", ".rung/cache/", ".rung/runs/", ".rung/ledger.jsonl",
+               ".rung/formal/")  # fmt: skip
 # Files whose meaning reaches a verdict another way: each verdict hashes its check's declaration.
 RUNG_STATE_FILES = frozenset({"rung.toml", "LAWS.md"})
 
@@ -244,3 +245,17 @@ def user_name(root: Path) -> str:
         return _git(root, "config", "user.name").strip()
     except GitError:
         return ""
+
+
+def diff_since(root: Path, commit: str, paths: list[str]) -> str:
+    """The working tree's changes to `paths` since `commit`, as a unified diff ("" when unchanged)."""
+    if not paths:
+        return ""
+    return _git(root, "diff", "--no-color", "--relative", commit, "--", *paths)
+
+
+def log_since(root: Path, commit: str, paths: list[str]) -> str:
+    """Hash, subject and body of each commit after `commit` that touched `paths`, newest first."""
+    if not paths:
+        return ""
+    return _git(root, "log", "--no-color", "--format=%h %s%n%b", f"{commit}..HEAD", "--", *paths).strip()

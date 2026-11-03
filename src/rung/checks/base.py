@@ -26,6 +26,7 @@ class Outcome:
     evidence: dict[str, str] = field(default_factory=dict)  # artifact path -> sha256
     findings: list[dict[str, Any]] = field(default_factory=list)
     valid_until: str = ""  # ISO date after which the verdict expires (an accepted waiver ends)
+    details: dict[str, Any] = field(default_factory=dict)  # extra structured details for the ledger
 
 
 class Checker:
