@@ -19,9 +19,12 @@ from rung.engines.sarif import LEVELS
 EXIT_USAGE, EXIT_TOOL, EXIT_GIT = 2, 3, 4
 
 DESCRIPTION = """\
-Rung keeps a ledger of what has actually been verified in a codebase, and against
-which exact code. Checks range from your test suite and security scanners to TLA+
-model checking and Lean proofs; laws in LAWS.md say what must never break.
+Rung builds a verification kit for your project and keeps a ledger of what it has
+actually verified, against which exact code. The kit takes the best of linters,
+tests, property tests, scripts that drive the running app, and formal models (TLA+,
+Lean); laws in LAWS.md say what must never break.
+
+start here: `rung init` builds the kit, `rung kit` shows it and the next command.
 
 exit codes: 0 ok · 1 a check or gate failed · 2 configuration or usage error ·
 3 a required tool is missing · 4 git error"""
@@ -60,10 +63,20 @@ def build_parser() -> argparse.ArgumentParser:
         s.set_defaults(func=func)
         return s
 
-    s = add("init", c.cmd_init, "survey the repo, choose a model provider, write rung.toml")
+    s = add(
+        "init", c.cmd_init, "build the project's verification kit: checks, agent skills, drafted scenarios and models"
+    )
     s.add_argument("--provider", choices=list(providers.PROVIDERS))
     s.add_argument("--model", help="model for drafting, passed to the provider (e.g. sonnet, opus, gpt-6.1-sol); "
                    "empty uses the CLI's own default")  # fmt: skip
+    s.add_argument(
+        "--yes",
+        action="store_true",
+        help="draft every part a model can draft without asking (app scenarios, property tests, models)",
+    )
+    s.add_argument("--no-drafts", action="store_true", help="set up the checks and agent skills only; draft nothing")
+    s.add_argument("--no-agents", action="store_true", help="do not install the agent skills and Stop hook")
+    add("kit", c.cmd_kit, "show every part of the verification kit, how it stands, and the next command")
     add("plan", c.cmd_plan, "recommend checks for this repo")
     add("doctor", c.cmd_doctor, "show which checkers, scanners and model CLIs are available")
     s = add("agents", c.cmd_agents, "install the agent skill and AGENTS.md rules (and enforcement hooks)")

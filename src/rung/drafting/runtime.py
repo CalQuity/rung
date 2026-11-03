@@ -105,6 +105,38 @@ def _flaky(first: dict | None, second: dict | None) -> list[str]:
     return sorted(f"{s}: {n}" if s else n for s, n in set(a) | set(b) if a.get((s, n)) != b.get((s, n)))
 
 
+def happy_path_advice(result: dict | None) -> str:
+    """When the happy path itself failed: what it saw, and how to tell a misread page from a real bug.
+
+    A failing happy path sends the script back, because it shows the script cannot yet drive the feature.
+    But the app may really be wrong on its main path, and a model told only "do not weaken the check"
+    keeps the assertion and fails every round. A real bug belongs in its own scenario, where Rung
+    reports it to a person as a finding.
+    """
+    if result is None:
+        return ""
+    failed = [
+        f"{s.get('name', '')}: {a.get('name', '')} "
+        f"(expected {a.get('expected', '?')!r}, observed {a.get('observed', '?')!r})"
+        for s in result.get("scenarios") or []
+        if isinstance(s, dict) and s.get("category") == "happy"
+        for a in s.get("assertions") or []
+        if isinstance(a, dict) and a.get("passed") is not True
+    ]
+    if not failed:
+        return ""
+    return (
+        "\n\nThe happy path failed on: " + "; ".join(failed[:8]) + ".\nThe happy path must pass on the app as it "
+        "is: it shows the script can drive the feature at all. For each of these, decide which it is:\n"
+        "- The script misreads the page (for example it treats a discount line or a refund shown as a negative "
+        "amount as an error, or picks the wrong element): fix how the script reads the page, keeping the check "
+        "on what the user must see.\n"
+        "- The app really is wrong here: keep the assertion unchanged, but move it into its own scenario "
+        "(category `input` or `state`, named for the bug). Rung reports a failing edge-case scenario to a person "
+        "as a finding, and never asks you to make it pass."
+    )
+
+
 def _findings(check: Check, outcome: Outcome, result: dict | None) -> list[str]:
     """Failures that belong to the app, not the script: the script ran, recorded its evidence, passed
     its happy path, and only edge-case or fault scenarios failed. Those go to a person, like a failing
@@ -241,6 +273,7 @@ def draft_runtime(
     )
     files: list[Path] = []
     checker = EvidenceChecker()
+    last_failure = ""
     for round_no in range(1, max_rounds + 1):
         reply = provider.complete_json(prompt, schema=SCHEMA, system=guides.load("runtime") + FORMAT, cwd=root)
         produced = files_of(reply)
@@ -267,9 +300,11 @@ def draft_runtime(
         result = read_result(root / first["evidence_dir"])
         findings = _findings(check, outcome, result)
         if outcome.verdict != "pass" and not findings:
+            last_failure = outcome.summary
             prompt += (
                 f"\n\nRung ran your script and it did not prove the feature ({outcome.summary}):\n"
                 + "\n".join(outcome.lines[-30:])
+                + happy_path_advice(result)
                 + "\nFix the script. Do not weaken what it checks. Return the same fields."
             )
             continue
@@ -297,4 +332,5 @@ def draft_runtime(
         if findings:
             draft.message = f"the script works and the app failed {len(findings)} assertion(s); see the findings"
         return draft
-    return RuntimeDraft(False, f"no passing verification script after {max_rounds} rounds", files, max_rounds)
+    why = f"; the last run: {last_failure}" if last_failure else ""
+    return RuntimeDraft(False, f"no passing verification script after {max_rounds} rounds{why}", files, max_rounds)

@@ -3,6 +3,31 @@
 All notable changes to Rung. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 
+## Unreleased
+
+### Added
+- **`rung kit`** shows the project's verification kit part by part: linters and type checkers, tests,
+  property tests, security gates, driving the app, formal models, and the agent skills and hook. Each
+  part lists its checks and their state (fresh, stale, failing, drifted, never run), or, when the part
+  is empty, why and the command that fills it. It ends with the one command to run next: a failing
+  check first, then a drifted model, then stale checks, then the missing parts and proposed laws.
+  `--json` gives the same.
+- **`rung init` builds the whole kit.** Besides the checks it recorded before, it installs the agent
+  skills, AGENTS.md rules and the Claude Code Stop hook (`--no-agents` to skip), then offers to draft
+  each part a model writes and the kit lacks: a script that drives the app, property tests for a pure
+  core, a TLA+ model of stateful code and a Lean model of a pure core (the formal ones only when Java
+  and TLC, or Lean, are installed). For each it lists the candidate files it found and drafts only
+  the one the person picks. `--yes` drafts every part with its top candidate without asking;
+  `--no-drafts` drafts nothing. Without a terminal, or when the provider is not logged in, it drafts
+  nothing. It ends with the kit and the next command. Running it again fills the parts still missing.
+
+### Changed
+- The survey finds web apps and APIs served with the standard library (`http.server`, `wsgiref`,
+  Node's `http.createServer`), which have no framework in their manifest, and counts a module with a
+  single pure function as a candidate for property tests or a model. A module that serves requests
+  is no longer counted as a pure core.
+- `rung init` ends with the kit instead of the recommendation list; `rung plan` still prints that.
+
 ## 0.2.0 (2026-11-03)
 
 ### Added

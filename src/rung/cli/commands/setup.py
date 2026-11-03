@@ -1,16 +1,18 @@
-"""Commands that set a project up: init, plan, doctor, agents, hook."""
+"""Commands that set a project up: init, kit, plan, doctor, agents, hook."""
 
 from __future__ import annotations
 
+import argparse
 import shutil
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from rung import agents
-from rung.analysis import plan, survey
+from rung.analysis import kit, plan, survey
 from rung.checks.presets import PRESETS
 from rung.cli.commands.common import OK, ask
-from rung.cli.output import Output
+from rung.cli.output import STATE_STYLE, Output
 from rung.core import laws
 from rung.core.config import CONFIG_NAME, Check, Config, ConfigError, LLMConfig, find_root, load, save
 from rung.core.errors import ToolMissing
@@ -95,9 +97,7 @@ def cmd_init(args, out: Output) -> int:
     (root / ".rung").mkdir(exist_ok=True)
     if not (root / laws.LAWS_FILE).exists():
         (root / laws.LAWS_FILE).write_text(laws.TEMPLATE)
-    recs = plan.plan(info, {c.id for c in cfg.checks})
-    out.emit({"root": str(root), "provider": cfg.llm.provider, "login": state.detail,
-              "added_checks": added, "survey": info.to_dict(), "plan": [r.__dict__ for r in recs]})  # fmt: skip
+
     langs = ", ".join(f"{k} ({v})" for k, v in list(info.languages.items())[:4]) or "none found"
     out.line(f"Surveyed {root}")
     out.line(f"  languages: {langs}")
@@ -107,8 +107,173 @@ def cmd_init(args, out: Output) -> int:
     if added:
         out.line(f"Added checks: {', '.join(added)}")
     out.line(f"Wrote {CONFIG_NAME}, {laws.LAWS_FILE} and .rung/.")
-    _print_plan(recs, out)
-    out.line("\nNext: `rung agents --hooks`, then `rung check`.")
+
+    installed: list[str] = []
+    if not args.no_agents and ask("\nInstall the agent skills and a Stop hook that blocks unverified work? (y/n)",
+                                  "y").lower().startswith("y"):  # fmt: skip
+        written = agents.install(root, hooks=True, lean_version=lean.toolchain().split(":")[-1])
+        installed = [str(p.relative_to(root)) for p in written]
+        out.line("Installed the agent skills, AGENTS.md rules and the Claude Code Stop hook.")
+
+    drafted = _draft_kit(args, root, info, cfg, state.ok, out)
+    cfg = load(root)
+    built = kit.build(cfg, info)
+    recs = plan.plan(info, {c.id for c in cfg.checks})
+    out.emit({"root": str(root), "provider": cfg.llm.provider, "login": state.detail, "added_checks": added,
+              "agents": installed, "drafted": drafted, "kit": built.to_dict(), "survey": info.to_dict(),
+              "plan": [r.__dict__ for r in recs]})  # fmt: skip
+    out.line("")
+    _print_kit(built, out)
+    return OK
+
+
+@dataclass
+class _Offer:
+    kind: str  # runtime | property | tla | lean
+    question: str
+    choices: list[str]  # candidate files; empty for runtime
+
+
+def _offers(cfg: Config, info: survey.Inspection) -> list[_Offer]:
+    """The parts of the kit a model can draft for this repo, which the kit does not have yet."""
+    have = {kit.part_of(c) for c in cfg.checks}
+    kinds = {c.kind for c in cfg.checks}
+    offers: list[_Offer] = []
+    if "app" not in have and info.surfaces and info.surfaces != ["library"]:
+        offers.append(_Offer("runtime", f"Draft a script that drives the {info.surfaces[0]} through scenarios and "
+                             "faults, with screenshots?", []))  # fmt: skip
+    model_files = [c.path for c in info.model_candidates[:3]]
+    if "properties" not in have and model_files:
+        offers.append(
+            _Offer("property", "Draft property tests (kept only if they catch planted bugs) for", model_files)
+        )
+    protocol_files = [c.path for c in info.protocol_candidates[:3]]
+    if "tla" not in kinds and protocol_files and _has(tla.find_java) and _has(tla.find_jar):
+        offers.append(_Offer("tla", "Model stateful code in TLA+ and check every interleaving of", protocol_files))
+    if "lean" not in kinds and model_files and _has(lean.find_lake):
+        offers.append(_Offer("lean", "Model a pure core in Lean and test the code against it:", model_files))
+    return offers
+
+
+def _has(probe) -> bool:
+    try:
+        probe()
+    except ToolMissing:
+        return False
+    return True
+
+
+def _pick(offer: _Offer, yes: bool) -> str | None:
+    """The file the person chose for this offer ("" for runtime), or None to skip it."""
+    if yes:
+        return offer.choices[0] if offer.choices else ""
+    if not offer.choices:
+        return "" if ask(f"\n{offer.question} (y/n)", "n").lower().startswith("y") else None
+    print(f"\n{offer.question}", file=sys.stderr)
+    for i, path in enumerate(offer.choices, 1):
+        print(f"  {i}. {path}", file=sys.stderr)
+    picked = ask("Choose a number, or n to skip", "n")
+    if picked.isdigit() and 0 < int(picked) <= len(offer.choices):
+        return offer.choices[int(picked) - 1]
+    return None
+
+
+def _draft_kit(args, root: Path, info: survey.Inspection, cfg: Config, logged_in: bool, out: Output) -> list[dict]:
+    """Offer to draft the parts of the kit a model writes: app scenarios, property tests, formal models.
+
+    Each is offered once, needs the person's yes (or `--yes`), and is decided by a checker, not the model.
+    """
+    if args.no_drafts or cfg.llm.provider == "none":
+        return []
+    offers = _offers(cfg, info)
+    if not offers:
+        return []
+    if not logged_in:
+        out.line(
+            f"\nSkipping the drafted parts of the kit: {cfg.llm.provider} is not logged in. `rung kit` lists them."
+        )
+        return []
+    if not args.yes and not sys.stdin.isatty():
+        return []  # nobody to ask: `rung kit` lists what can be drafted
+    if out.json_mode and not args.yes:
+        return []
+    out.line("\nA model can draft the rest of the kit; a checker keeps a draft only if it proves itself.")
+    results: list[dict] = []
+    for offer in offers:
+        target = _pick(offer, args.yes)
+        if target is None:
+            continue
+        ns = argparse.Namespace(dir=str(root), kind=offer.kind, files=[target] if target else [], intent=None,
+                                require=[".png"] if offer.kind == "runtime" else None, id=None, out=None,
+                                model=None)  # fmt: skip
+        out.line(f"\n$ rung draft {offer.kind} {target}".rstrip())
+        from rung.cli.commands.draft import cmd_draft  # drafting pulls in the providers; only load it when used
+
+        before = {c.id for c in load(root).checks}
+        try:
+            code = cmd_draft(ns, _Silent() if out.json_mode else out)
+        except (ConfigError, ToolMissing) as exc:
+            out.line(f"  skipped: {exc}")
+            code = 2
+        added = sorted({c.id for c in load(root).checks} - before)
+        results.append({"kind": offer.kind, "target": target, "exit": code, "added": added})
+    if results:
+        out.line("\nDrafted parts:")
+        for r in results:
+            what = f"{r['kind']} {r['target']}".strip()
+            if r["added"] and r["exit"] == 0:
+                verdict = f"added {', '.join(r['added'])}"
+            elif r["added"]:
+                verdict = f"added {', '.join(r['added'])}, with a finding to review (above)"
+            elif r["exit"] == 1:
+                verdict = "not added: a finding or a failed draft to review (above)"
+            else:
+                verdict = "skipped"
+            out.line(f"  {what:40} {verdict}")
+    return results
+
+
+class _Silent(Output):
+    """Swallows a nested command's own JSON document so `rung init --json` prints exactly one."""
+
+    def __init__(self) -> None:
+        super().__init__(json_mode=True, color=False)
+
+    def emit(self, payload) -> None:
+        return None
+
+
+_PART_STYLE = {"ok": ("ok", "green"), "attention": ("ATTENTION", "yellow"), "missing": ("missing", "dim"),
+               "n/a": ("n/a", "dim")}  # fmt: skip
+
+
+def _print_kit(built: kit.Kit, out: Output) -> None:
+    out.line(out.style("Verification kit", "bold"))
+    for part in built.parts:
+        out.line(f"\n{out.badge(part.state, _PART_STYLE, 10)} {out.style(part.title, 'bold')}  "
+                 f"{out.style('catches ' + part.catches, 'dim')}")  # fmt: skip
+        for e in part.entries:
+            label = out.badge(e.state, STATE_STYLE | {"installed": ("installed", "green")}, 10)
+            out.line(f"           {label} {e.check_id}" + (f"  {out.style(e.detail, 'dim')}" if e.detail else ""))
+        if not part.entries:
+            out.detail(part.missing, indent=11)
+            if part.suggest:
+                out.line(f"           {out.style('$ ' + part.suggest, 'blue')}")
+    if built.laws:
+        summary = ", ".join(f"{n} {state}" for state, n in sorted(built.laws.items()))
+        out.line(f"\n{out.style('Laws', 'bold')} (LAWS.md): {summary}")
+    if built.next_steps:
+        cmd, why = built.next_steps[0]
+        out.line(f"\n{out.style('Next:', 'bold')} {out.style(cmd, 'blue')}  {out.style(why, 'dim')}")
+    else:
+        out.line(f"\n{out.style('Every part of the kit is in place and fresh.', 'green')}")
+
+
+def cmd_kit(args, out: Output) -> int:
+    cfg = load(find_root(Path(args.dir)))
+    built = kit.build(cfg, survey.survey(cfg.root))
+    out.emit(built.to_dict())
+    _print_kit(built, out)
     return OK
 
 
