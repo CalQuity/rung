@@ -140,8 +140,8 @@ def _offers(cfg: Config, info: survey.Inspection) -> list[_Offer]:
     kinds = {c.kind for c in cfg.checks}
     offers: list[_Offer] = []
     if "app" not in have and info.surfaces and info.surfaces != ["library"]:
-        offers.append(_Offer("runtime", f"Draft a script that drives the {info.surfaces[0]} through scenarios and "
-                             "faults, with screenshots?", []))  # fmt: skip
+        offers.append(_Offer("runtime", f"Map the {info.surfaces[0]}'s features for you to approve, then draft a "
+                             "script that drives the approved ones through scenarios and faults?", []))  # fmt: skip
     model_files = [c.path for c in info.model_candidates[:3]]
     if "properties" not in have and model_files:
         offers.append(
@@ -206,22 +206,29 @@ def _draft_kit(args, root: Path, info: survey.Inspection, cfg: Config, logged_in
         ns = argparse.Namespace(dir=str(root), kind=offer.kind, files=[target] if target else [], intent=None,
                                 require=[".png"] if offer.kind == "runtime" else None, id=None, out=None,
                                 model=None)  # fmt: skip
-        out.line(f"\n$ rung draft {offer.kind} {target}".rstrip())
+        if offer.kind != "runtime":  # the app part starts with the map, which prints its own steps
+            out.line(f"\n$ rung draft {offer.kind} {target}".rstrip())
         from rung.cli.commands.draft import cmd_draft  # drafting pulls in the providers; only load it when used
 
         before = {c.id for c in load(root).checks}
+        note = ""
         try:
-            code = cmd_draft(ns, _Silent() if out.json_mode else out)
+            if offer.kind == "runtime" and (note := _map_first(args, root, out)):
+                code = 0
+            else:
+                code = cmd_draft(ns, _Silent() if out.json_mode else out)
         except (ConfigError, ToolMissing) as exc:
             out.line(f"  skipped: {exc}")
             code = 2
         added = sorted({c.id for c in load(root).checks} - before)
-        results.append({"kind": offer.kind, "target": target, "exit": code, "added": added})
+        results.append({"kind": offer.kind, "target": target, "exit": code, "added": added, "note": note})
     if results:
         out.line("\nDrafted parts:")
         for r in results:
             what = f"{r['kind']} {r['target']}".strip()
-            if r["added"] and r["exit"] == 0:
+            if r.get("note"):
+                verdict = r["note"]
+            elif r["added"] and r["exit"] == 0:
                 verdict = f"added {', '.join(r['added'])}"
             elif r["added"]:
                 verdict = f"added {', '.join(r['added'])}, with a finding to review (above)"
@@ -231,6 +238,29 @@ def _draft_kit(args, root: Path, info: survey.Inspection, cfg: Config, logged_in
                 verdict = "skipped"
             out.line(f"  {what:40} {verdict}")
     return results
+
+
+def _map_first(args, root: Path, out: Output) -> str:
+    """Draft the feature map and ask for approval before any drive script is written.
+
+    Returns why no script was drafted ("" when the approved features should be drafted now).
+    """
+    from rung.cli.commands import featuremap
+    from rung.drafting import feature_map
+
+    cfg = load(root)
+    out.line("\n$ rung map")
+    if not featuremap.has_map(root) and not featuremap.draft_map(cfg, out):
+        return "feature map: no draft met the contract (above)"
+    out.line("")
+    featuremap.print_map(cfg, out)
+    if not args.yes:
+        featuremap.review(cfg, out)
+    state = feature_map.load_state(root)
+    if state is None or not state.with_status("approved"):
+        return "feature map drafted; approve features with `rung map`, then `rung draft runtime`"
+    out.line("\n$ rung draft runtime --require .png")
+    return ""
 
 
 class _Silent(Output):
@@ -253,7 +283,9 @@ def _print_kit(built: kit.Kit, out: Output) -> None:
         out.line(f"\n{out.badge(part.state, _PART_STYLE, 10)} {out.style(part.title, 'bold')}  "
                  f"{out.style('catches ' + part.catches, 'dim')}")  # fmt: skip
         for e in part.entries:
-            label = out.badge(e.state, STATE_STYLE | {"installed": ("installed", "green")}, 10)
+            label = out.badge(
+                e.state, STATE_STYLE | {"installed": ("installed", "green"), "approved": ("approved", "green")}, 10
+            )
             out.line(f"           {label} {e.check_id}" + (f"  {out.style(e.detail, 'dim')}" if e.detail else ""))
         if not part.entries:
             out.detail(part.missing, indent=11)

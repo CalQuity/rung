@@ -12,9 +12,22 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
   is empty, why and the command that fills it. It ends with the one command to run next: a failing
   check first, then a drifted model, then stale checks, then the missing parts and proposed laws.
   `--json` gives the same.
+- **Feature map you approve.** `rung map` drafts `.rung/verify/features/` from the code: a README
+  index (baseline preconditions, driving conventions, proof and skip reporting) and one file per
+  user-facing feature with four sections: sub-features with IDs, every user entry point, the
+  driving recipe, gotchas. Rung checks the shape and sends a broken map back to the model. A person
+  then approves each feature, marks it not built yet, or drops it, in the terminal or with
+  `--approve`, `--not-built` and `--drop`; `.rung/verify/features/index.html` shows the map as cards,
+  with each sub-feature's latest result and screenshots once a script has run.
+  `rung draft runtime` drives only approved features, requires a scenario per approved sub-feature
+  (named after its ID or listing it under `covers`) or a reason under `unreachable`, and refuses a map
+  with nothing approved or features changed since approval. Approval pins digests of each feature's
+  file and source files; `rung map --redraft` refreshes the map, keeps approval for unchanged features
+  and asks again for changed ones. `rung kit` shows the map's state and the step it needs.
 - **`rung init` builds the whole kit.** Besides the checks it recorded before, it installs the agent
   skills, AGENTS.md rules and the Claude Code Stop hook (`--no-agents` to skip), then offers to draft
-  each part a model writes and the kit lacks: a script that drives the app, property tests for a pure
+  each part a model writes and the kit lacks: a feature map to approve and then a script that drives
+  the approved features (with `--yes`, the map is drafted and waits for approval), property tests for a pure
   core, a TLA+ model of stateful code and a Lean model of a pure core (the formal ones only when Java
   and TLC, or Lean, are installed). For each it lists the candidate files it found and drafts only
   the one the person picks. `--yes` drafts every part with its top candidate without asking;

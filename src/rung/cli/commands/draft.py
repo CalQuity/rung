@@ -14,10 +14,12 @@ from rung.cli.commands.formal import accept_draft
 from rung.cli.output import Output
 from rung.core import laws
 from rung.core.config import Check, Config, ConfigError
+from rung.drafting import feature_map, providers, runtime, sql_context
 from rung.drafting import lean as lean_draft
 from rung.drafting import property as property_draft
-from rung.drafting import providers, runtime, sql_context
 from rung.drafting import tla as tla_draft
+
+MAX_LISTED_EVIDENCE = 8
 
 
 def drafted_by(cfg: Config, provider: providers.Provider | None = None) -> str:
@@ -49,6 +51,12 @@ def _lean_exe(project: Path) -> str:
 
 
 def _draft_runtime(args, cfg: Config, out: Output) -> int:
+    state = feature_map.load_state(cfg.root)
+    if state is not None and not state.with_status("approved"):
+        raise ConfigError("the feature map has no approved features yet; approve the ones to drive with `rung map`")
+    if state is not None and (drift := feature_map.drifted(cfg.root, state)):
+        raise ConfigError(f"features changed since they were approved ({', '.join(drift)}); "
+                          "refresh and approve them again with `rung map --redraft`")  # fmt: skip
     provider = _provider(cfg, args)
     info = survey.survey(cfg.root)
     check_id = args.id or "runtime"
@@ -79,8 +87,11 @@ def _draft_runtime(args, cfg: Config, out: Output) -> int:
         out.detail(result.notes, indent=2)
     for f in result.files:
         out.detail(f"wrote {f.relative_to(cfg.root)}", indent=2)
-    for e in result.evidence:
+    for e in result.evidence[:MAX_LISTED_EVIDENCE]:
         out.detail(f"evidence {e}", indent=2)
+    if len(result.evidence) > MAX_LISTED_EVIDENCE:
+        out.detail(f"... and {len(result.evidence) - MAX_LISTED_EVIDENCE} more evidence file(s); "
+                   "the evidence page below shows them all", indent=2)  # fmt: skip
     if not result.ok:
         out.line("The last script is kept for you to finish by hand; it is not registered as a check.")
         return GATE_FAILED

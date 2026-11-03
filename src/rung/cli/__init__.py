@@ -77,6 +77,16 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--no-drafts", action="store_true", help="set up the checks and agent skills only; draft nothing")
     s.add_argument("--no-agents", action="store_true", help="do not install the agent skills and Stop hook")
     add("kit", c.cmd_kit, "show every part of the verification kit, how it stands, and the next command")
+    s = add("map", c.cmd_map, "draft the feature map, show it, and approve the features a drive script may drive")
+    s.add_argument(
+        "--redraft", action="store_true", help="refresh the map from the code (changed features need approval again)"
+    )
+    s.add_argument("--approve", nargs="+", metavar="FEATURE", help="approve features (or `all`)")
+    s.add_argument("--not-built", nargs="+", metavar="FEATURE", help="mark features not built yet: never driven")
+    s.add_argument("--drop", nargs="+", metavar="FEATURE", help="leave features out of the drive script")
+    s.add_argument("--by", help="who decides (default: git user.name)")
+    s.add_argument("--intent", help="what to focus the map on, e.g. 'checkout and coupons'")
+    s.add_argument("--model", help="model for this draft only (default: [llm] model in rung.toml, else the CLI's)")
     add("plan", c.cmd_plan, "recommend checks for this repo")
     add("doctor", c.cmd_doctor, "show which checkers, scanners and model CLIs are available")
     s = add("agents", c.cmd_agents, "install the agent skill and AGENTS.md rules (and enforcement hooks)")

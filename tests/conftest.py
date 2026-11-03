@@ -51,3 +51,20 @@ def repo(tmp_path: Path) -> Path:
 def commit_all(root: Path, message: str) -> None:
     run_git(root, "add", "-A")
     run_git(root, "commit", "-qm", message)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_model_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A test that reaches a real model CLI would be slow, cost money and depend on a login: fail it instead.
+
+    A test that mocks `subprocess.run` itself replaces this guard, as it should.
+    """
+    real_run = subprocess.run
+
+    def guarded(cmd, *args, **kwargs):
+        if isinstance(cmd, list) and cmd and Path(str(cmd[0])).name in ("claude", "codex") and len(cmd) > 1 \
+                and cmd[1] in ("-p", "exec"):  # fmt: skip
+            raise AssertionError(f"a test called the real {cmd[0]} CLI; pass a fake provider instead")
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", guarded)
