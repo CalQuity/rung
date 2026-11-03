@@ -72,13 +72,13 @@ jobs:
           distribution: temurin
           java-version: "21"
       - name: Install TLA+ tools (pinned, checksum verified)
-        # v1.8.0 is an upstream pre-release whose jar is rebuilt in place; the hash
-        # is GitHub's published asset digest (TLC build 2026.11.02).
+        # The latest stable release. Pre-release tags (v1.8.0, rolling) are rebuilt in place,
+        # so their checksum cannot be pinned.
         run: |
           mkdir -p ~/.cache/rung
           curl -fsSL -o ~/.cache/rung/tla2tools.jar \
-            https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
-          echo "c57d4d7bbee3ed2c89c32cb9c60cac728f751e80e2570bc4b7368ae39291fc21  $HOME/.cache/rung/tla2tools.jar" \
+            https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
+          echo "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88  $HOME/.cache/rung/tla2tools.jar" \
             | sha256sum --check
       - name: Install Lean (pinned installer, checksum verified; the toolchain is pinned by lean-toolchain)
         run: |
