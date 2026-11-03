@@ -84,6 +84,7 @@ class Inspection:
     protocol_candidates: list[Candidate] = field(default_factory=list)
     model_candidates: list[Candidate] = field(default_factory=list)
     agent_docs: list[str] = field(default_factory=list)
+    app_files: list[str] = field(default_factory=list)  # files that serve the app itself (a request handler)
     projects: list[Project] = field(default_factory=list)
 
     @property
@@ -256,6 +257,18 @@ def _detect_project(root: Path, rel: str) -> Project | None:
     return project if project.ecosystems else None
 
 
+_STDLIB_SERVER = re.compile(r"\b(BaseHTTPRequestHandler|http\.server|wsgiref\.simple_server|createServer)\b")
+_HTML = re.compile(r"text/html|<html|<form|html\.escape", re.I)
+
+
+def _served_surfaces(text: str) -> list[str]:
+    """An app served with the standard library (`http.server`, Node's `http.createServer`) has no framework
+    in its manifest to give it away; its code does."""
+    if not _STDLIB_SERVER.search(text):
+        return []
+    return ["web UI"] if _HTML.search(text) else ["HTTP API"]
+
+
 def survey(root: Path) -> Inspection:
     root = root.resolve()
     result = Inspection(root=str(root))
@@ -263,6 +276,7 @@ def survey(root: Path) -> Inspection:
     formal: dict[str, list[str]] = {"tla": [], "lean": [], "bend": [], "dafny": [], "alloy": []}
     protocol: list[Candidate] = []
     model: list[Candidate] = []
+    served: list[str] = []  # surfaces found in the code itself, for apps no manifest declares
     manifest_dirs: set[str] = {"."}
 
     for path, rel in walk(root):
@@ -295,9 +309,13 @@ def survey(root: Path) -> Inspection:
         hits = len(stateful_terms(code))
         if hits >= 6:
             protocol.append(Candidate(posix, hits, f"{hits} state/retry/lease terms in {lines} lines"))
+        serves = _served_surfaces(text)
+        served += [s for s in serves if s not in served]
+        if serves:
+            result.app_files.append(posix)
         effects = len(SIDE_EFFECTS.findall(code))
         functions = len(re.findall(r"^\s*(?:def|function|fn|func)\s", code, re.M))
-        if functions >= 2 and effects == 0 and lines <= 600:
+        if functions >= 1 and effects == 0 and not serves and lines <= 600:
             model.append(Candidate(posix, functions, f"{functions} functions and no I/O; a small pure core"))
 
     result.languages = dict(languages.most_common())
@@ -314,6 +332,7 @@ def survey(root: Path) -> Inspection:
             if surface not in result.surfaces:
                 result.surfaces.append(surface)
         result.lint += [f"{name}{where}" for name in project.lint]
+    result.surfaces += [s for s in served if s not in result.surfaces]
     if not result.surfaces and languages:
         result.surfaces.append("library")
     return result

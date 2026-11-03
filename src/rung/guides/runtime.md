@@ -51,7 +51,11 @@ applies to the feature; for one that does not (a shop with no sign-in has no `au
 the reason in `result.json` under `not_applicable`. Rung rejects a script that only drives the happy
 path.
 
-- `happy`: the main path a user takes, start to finish.
+- `happy`: the main path a user takes, start to finish. It must pass on the app as it is, because it
+  shows the script can drive the feature at all. Assert on the element that carries the meaning (the
+  total, the saved row, the message), not on every number or word on the page: a discount line shown
+  as `-$5.00` is not a negative total. If the main path really is broken, put that assertion in its own
+  `input` or `state` scenario named for the bug; Rung reports it to a person as a finding.
 - `input`: empty, whitespace-only, very long and unicode/emoji input; case variations (`welcome5`
   against `WELCOME5`) and leading or trailing spaces; boundary values (zero, negative, the maximum,
   exactly at a limit, one past it); invalid formats; injection-looking strings (`<script>alert(1)</script>`,
@@ -139,6 +143,13 @@ Write `result.json` into the evidence directory, and print it as the last line o
 Each scenario has a `name`, a `category` (happy, input, state, auth, fault or robustness), the
 `faults` it injected as plain descriptions, whether it `passed`, and its `assertions`, each with what
 was expected and what was observed.
+
+When the project has an approved feature map (`.rung/verify/features/`), drive its approved features
+with the recipes it gives. Name each scenario after the sub-feature ID it proves (`coupon-apply`), or
+list the IDs it proves under `covers`, and record each artifact's feature and entry point. A
+sub-feature the run cannot reach goes under `unreachable` with the precondition it lacked, e.g.
+`"unreachable": {"pay-card": "the Pay button is disabled: payment is not built yet"}`; it is never
+reported as proven through another path.
 
 ## Evidence
 

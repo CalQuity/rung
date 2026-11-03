@@ -1,10 +1,14 @@
 # Rung
 
-**Know what has actually been verified, and against which code.** Rung is a command-line tool
-for codebases where coding agents write a lot of the code. It runs your tests, security scanners,
-runtime checks, TLA+ model checks and Lean proofs, and records each result in a ledger tied to
-the exact bytes it checked. A result expires the moment those bytes change, and a pull request
-is blocked only on what it introduces.
+**A verification kit for your project, built in one command, and a record of what it has actually
+verified.** Rung is a command-line tool for codebases where coding agents write a lot of the code.
+`rung init` reads the repo and assembles a kit from the best of each kind of check: the linters and
+type checkers you already have, your tests, property tests that must catch planted bugs, scripts
+that drive the running app through scenarios and faults with screenshots and video, security gates,
+and formal models (TLA+, Lean) for the parts where a missed interleaving is expensive. It installs
+skills that make your coding agent use the kit, and records every result in a ledger tied to the
+exact bytes it checked. A result expires the moment those bytes change, and a pull request is
+blocked only on what it introduces.
 
 What a pass means depends on the check: a test suite proves what its tests assert, TLC proves an
 invariant over every state of a model, a Lean proof holds for the model it is about. Rung makes
@@ -43,10 +47,15 @@ a change does what was meant. Rung's answer is three habits.
 ```bash
 uv tool install rung-cli          # or: pipx install rung-cli  (the command is `rung`)
 cd your-repo
-rung init                         # survey the repo, wire up installed scanners, choose a model
+rung init                         # build the kit: checks, agent skills and hook, drafted scenarios and models
 rung check                        # run everything and record verdicts
-rung agents --hooks               # agents cannot finish while their changes are unverified
+rung kit                          # every part of the kit, how it stands, and the next command
 ```
+
+`rung init` asks before each part a model drafts and shows the candidate files it found, so you
+choose what gets modelled. `rung init --yes` drafts every part it can without asking;
+`--no-drafts` sets up the checks and agent skills only. Run it again later to fill the parts still
+missing.
 
 Or let your coding agent do the setup. Rung ships a skill that installs the CLI, records your tests
 and scans, adds the CI gate and installs the agent rules, while leaving the decisions that are yours
@@ -63,12 +72,70 @@ mkdir -p ~/.agents/skills/rung-setup && curl -fsSL \
   | sed 's/^name: setup$/name: rung-setup/' > ~/.agents/skills/rung-setup/SKILL.md
 ```
 
-Then let the model write a verification script for your app, which Rung registers as a check
-only once it has passed against the real app (a failed script is left for you to finish):
+Each drafted part can also be added on its own, for example a script that drives one feature:
 
 ```bash
 rung draft runtime --intent "create, list and delete a todo through the HTTP API"
 ```
+
+## Your project's verification kit
+
+Each part catches what the others miss, and `rung kit` shows them side by side:
+
+| Part | What it catches | Built from |
+|---|---|---|
+| Linters and type checkers | Mistakes a tool sees without running anything | The ones the project already configures, plus `shortcuts`, which blocks new ways of silencing them |
+| Tests | Regressions in the behaviour tests pin down | The project's own suites; `rung prove` shows a bug fix's test catches the bug |
+| Property tests | Inputs nobody wrote a test for | Drafted by a model, kept only if they catch planted bugs |
+| Security gates | Leaked secrets, vulnerable or invented packages, risky CI | gitleaks, osv-scanner, zizmor, semgrep, `deps` |
+| Driving the app | What a user sees, under faults and odd inputs | A drafted script: seeded scenarios in six categories, screenshots, video, traces, an evidence page |
+| Formal models | Interleavings and edge cases tests rarely reach | TLA+ for stateful code, Lean for a pure core; they report when the code drifts from the model |
+| Agent skills and hook | An agent finishing work its checks do not back | Skills, AGENTS.md rules and a Claude Code Stop hook |
+
+On a small demo shop (a checkout page with a coupon box), `rung init --yes` produced this kit. The drafted
+property tests and the Lean model both caught the shop's real bug, a coupon larger than the cart
+giving a negative total, and the property tests were left for a person to judge rather than
+registered:
+
+```console
+$ rung kit
+Verification kit
+
+ATTENTION  Linters and type checkers  catches the mistakes a tool can see without running anything
+           never run  shortcuts
+
+ATTENTION  Tests  catches regressions in the behaviour the tests pin down
+           never run  tests
+
+missing    Property tests  catches inputs nobody thought to write a test for; each must catch planted bugs
+           Property tests for shop/pricing.py, kept only if they catch planted bugs
+           $ rung draft property shop/pricing.py
+
+ATTENTION  Security gates  catches leaked secrets, vulnerable or invented packages, risky CI
+           never run  secrets
+           never run  vulnerable-deps
+           never run  deps
+
+missing    Driving the app  catches what a user sees, under faults and odd inputs, with the evidence to show it
+           Drive the web UI through scenarios and faults, recording screenshots and video
+           $ rung draft runtime
+
+ATTENTION  Formal models  catches interleavings and edge cases tests rarely reach, checked exhaustively
+           never run  pricing-lean
+           never run  pricing-lean-drt
+
+ok         Agent skills and hook  catches an agent finishing work its checks do not back
+           installed  rung skills + AGENTS.md
+           installed  verify-pricing-lean  project-specific verification skill
+           installed  Stop hook  blocks an agent finishing with stale checks
+
+Laws (LAWS.md): 4 proposed
+
+Next: rung check  7 check(s) stale or never run: shortcuts, tests, secrets, vulnerable-deps ...
+```
+
+`rung kit` always ends with the one command to run next: a failing check first, then a formal model
+whose code changed, then stale checks, then the missing parts and the laws waiting for approval.
 
 ## What it checks
 
@@ -104,24 +171,42 @@ A refund never exceeds the original charge, even under concurrent retries.
 `rung laws` shows whether each law currently **holds**: approved, enforced, and every enforcing
 verdict fresh. Agents may propose laws; only people approve them.
 
-## A verification kit for your running app
+## Driving the app
 
-`rung draft runtime --intent "apply a coupon at checkout and see the total update"` gives your
-project the app-verification part of its verification kit, written by the model and registered as a
-check only once it has worked against the real app:
+Driving the app starts with a **feature map** you approve. `rung map` has the model read the code
+(routes, templates, commands, docs) and write `.rung/verify/features/`: an index with how to launch
+the app for verification, the driving conventions and the proof rules, and one file per user-facing
+feature with its sub-features (each with a short ID), every way a user reaches it, the driving
+recipe (preconditions, then each action paired with its observable result) and the gotchas. Rung
+checks every file against that shape and sends a map that breaks it back to the model.
 
-- **`.rung/verify/drive.py`**, a script that starts the app on a free port, drives a feature the way
-  a user does (Playwright for web UIs, HTTP or CLI calls otherwise) and asserts on what a user would
-  see. It never calls internal functions or test-only endpoints. The model is shown the routes the
-  app really serves, found in its code (FastAPI, Starlette and Flask decorators, Express, Hono and
-  Koa handlers, Next.js app and pages routers), and drives only those; when the intent names a
-  feature the app does not have, it says so in its notes instead of guessing URLs.
-- **`.rung/verify/FEATURES.md`**, a feature map: for each user-facing feature, how a user reaches it,
-  how the script drives it, what observable state proves it works, and the gotchas (seed data,
-  logins, flaky spots).
+You then decide feature by feature: approve it, mark it **not built yet** (a disabled button, a
+stubbed route: never driven), or drop it. `rung map` shows the map in the terminal and writes
+`.rung/verify/features/index.html`, one page with a card per feature; once a script has run, each
+sub-feature on it shows its latest result (proven, failed, unreachable and why) and its screenshots.
+
+```console
+$ rung map --approve coupons --not-built pay
+$ rung draft runtime --require .png
+```
+
+`rung draft runtime` then writes a script for the approved features only, registered as a check
+once it has worked against the real app:
+
+- **`.rung/verify/drive.py`**, a script that starts the app on a free port, drives the approved
+  features the way a user does (Playwright for web UIs, HTTP or CLI calls otherwise) and asserts on
+  what a user would see. Each scenario is named after the sub-feature ID it proves, and every approved
+  sub-feature must have one, or be reported as unreachable with the precondition the run lacked. It
+  never calls internal functions or test-only endpoints. The model is shown the routes the app really
+  serves, found in its code (FastAPI, Starlette and Flask decorators, Express, Hono and Koa handlers,
+  Next.js app and pages routers), and drives only those.
+- **A map that cannot drift silently.** Approval pins a digest of each feature's file and the code it
+  comes from. When either changes, `rung kit` and `rung draft runtime` say so, and `rung map
+  --redraft` refreshes the map: unchanged features keep their approval, changed ones wait for yours
+  again, and a "not built yet" or "drop" outlives the refresh.
 - **A project verification skill** (`.claude/skills/verify-<project>/`) that tells the project's
-  coding agents to drive the app after any user-facing change, extend the script and feature map
-  when they add a feature, and treat a failure as a product bug rather than weaken the script.
+  coding agents to drive the app after any user-facing change, refresh the feature map when they add
+  a feature, and treat a failure as a product bug rather than weaken the script.
 - **Scenarios, not just the happy path.** For each feature the script drives named scenarios in six
   categories: `happy`, `input` (empty, very long, unicode, case and spacing variants, boundary values,
   invalid formats, injection-looking strings), `state` (repeats, empty carts, stale state, refresh
@@ -244,7 +329,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: CalQuity/rung@v0.2.0
+      - uses: CalQuity/rung@v0.3.0
 ```
 
 The action runs the checks a pull request touches against its merge base. It keeps a single
@@ -262,7 +347,7 @@ To run the same check before every push, add Rung to `.pre-commit-config.yaml`:
 
 ```yaml
 - repo: https://github.com/CalQuity/rung
-  rev: v0.2.0
+  rev: v0.3.0
   hooks:
     - id: rung-check
 ```
@@ -284,7 +369,9 @@ any OpenAI-compatible endpoint, including local models. Rung never stores creden
 
 | Command | Does |
 |---|---|
-| `rung init` | Survey the repo, add relevant checks, choose a model |
+| `rung init [--yes] [--no-drafts] [--no-agents]` | Build the verification kit: survey the repo, add checks, install agent skills and the Stop hook, draft app scenarios, property tests and formal models with your approval |
+| `rung kit` | Every part of the kit, its checks and their state, and the next command to run |
+| `rung map [--approve F] [--not-built F] [--drop F] [--redraft]` | Draft the feature map, show it (terminal and HTML page), record your decision on each feature |
 | `rung plan` | Recommend checks, cheapest and most useful first |
 | `rung check [ids] [--changed] [--base REF]` | Run checks and record verdicts |
 | `rung check <id> --seed N [--scenario NAME]` | Run one seed (or scenario) of a drive script again, without recording it |

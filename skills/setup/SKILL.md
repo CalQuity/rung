@@ -35,7 +35,10 @@ rung init --provider none
 
 Use `--provider claude-cli` or `--provider codex-cli` instead only if the developer wants Rung to draft
 TLA+ specs, Lean proofs or app-driving scripts with that tool (it reuses their existing login). `init`
-records each detected test suite, the installed scanners and new-dependency vetting in `rung.toml`.
+builds the project's verification kit: it records each detected test suite, linter and type checker,
+the installed scanners and new-dependency vetting in `rung.toml`, and installs the agent skills and the
+Stop hook (step 5; pass `--no-agents` if the developer does not want them). Run without a terminal, it
+drafts nothing; `rung kit` then lists every part of the kit, what is missing, and the command that adds it.
 
 Open `rung.toml` and check it against the repository:
 - Each test check's `run` command works from its `cwd`. Fix it if the project runs tests differently
@@ -47,7 +50,7 @@ Open `rung.toml` and check it against the repository:
 
 ```bash
 rung check
-rung status
+rung kit
 ```
 
 Report the results to the developer. Then:
@@ -75,7 +78,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: CalQuity/rung@v0.2.0
+      - uses: CalQuity/rung@v0.3.0
 ```
 
 Install whatever the checks need (language runtimes, scanners) in steps before `CalQuity/rung`.
@@ -83,6 +86,8 @@ Locally the equivalent is `rung check --changed`, which runs only what a branch 
 what it introduces.
 
 ## 5. Teach the repository's agents
+
+`rung init` already did this unless it was run with `--no-agents`; otherwise:
 
 ```bash
 rung agents --hooks
@@ -94,7 +99,9 @@ its edits are not freshly passing. The hook needs `rung` on the PATH Claude Code
 
 ## 6. Optional: evidence and formal checks
 
-Only where they pay off, and only with a model provider configured:
+Only where they pay off, and only with a model provider configured. `rung kit` names the candidate
+files for each part. With the developer's go-ahead, `rung init --provider claude-cli --yes` drafts every
+part it found a candidate for in one go; or add them one at a time:
 - **A user-facing app:** `rung draft runtime --intent "<one feature a user cares about>"`. Rung registers
   the generated drive script as a check only after it has run and left evidence. Add `--require .webm .zip` for a
   video and a Playwright trace, and set `runs = 3` on the check to run three seeds. Report any finding the draft
