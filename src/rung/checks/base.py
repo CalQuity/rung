@@ -16,6 +16,10 @@ class Context:
     root: Path
     # Commit to compare against for "what did this change introduce" (a merge base), if any.
     base: str | None = None
+    # Run a seeded check (`evidence`) with this one seed only, to reproduce a failure.
+    seed: int | None = None
+    # Run only these named scenarios of a drive script (`RUNG_SCENARIOS`).
+    scenarios: tuple[str, ...] = ()
 
 
 @dataclass
@@ -26,6 +30,7 @@ class Outcome:
     evidence: dict[str, str] = field(default_factory=dict)  # artifact path -> sha256
     findings: list[dict[str, Any]] = field(default_factory=list)
     valid_until: str = ""  # ISO date after which the verdict expires (an accepted waiver ends)
+    details: dict[str, Any] = field(default_factory=dict)  # kind-specific facts for the ledger and --json
 
 
 class Checker:

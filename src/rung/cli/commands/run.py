@@ -9,7 +9,7 @@ from rung.checks import prove, runner
 from rung.cli.commands.common import GATE_FAILED, OK, load_config, resolve_base
 from rung.cli.output import STATE_STYLE, VERDICT_STYLE, Output
 from rung.core import git, ledger
-from rung.core.config import CONFIG_NAME, find_root
+from rung.core.config import CONFIG_NAME, ConfigError, find_root
 
 
 def _print_result(result: runner.Result, out: Output) -> None:
@@ -24,6 +24,10 @@ def cmd_check(args, out: Output) -> int:
     base: str | None = resolve_base(cfg.root, args.base) if args.changed or args.base else None
     changed = git.changed_files(cfg.root, base) if args.changed and base else None
     selected = runner.select(cfg, args.ids, changed)
+    scenarios = tuple(args.scenario or ())
+    partial = args.seed is not None or bool(scenarios)
+    if partial and (len(args.ids) != 1 or args.changed or args.ci):
+        raise ConfigError("--seed and --scenario reproduce one check: name exactly one, without --changed or --ci")
     if args.ci:
         # Reuse a verdict only if it is fresh and was made against the same comparison base.
         view = ledger.View(cfg.root)
@@ -31,16 +35,20 @@ def cmd_check(args, out: Output) -> int:
     if not cfg.checks:
         out.error(f"no checks declared in {CONFIG_NAME}; see `rung plan` or `rung add`")
         return GATE_FAILED
-    results = [runner.run_check(cfg, c, base=base) for c in selected]
+    results = [runner.run_check(cfg, c, base=base, seed=args.seed, scenarios=scenarios) for c in selected]
     out.emit({
         "base": base,
+        "recorded": not partial,
         "results": [{"id": r.check.id, "kind": r.check.kind, "verdict": r.verdict, "summary": r.outcome.summary,
-                     "lines": r.outcome.lines, "findings": r.outcome.findings} for r in results],
+                     "lines": r.outcome.lines, "findings": r.outcome.findings, **r.outcome.details}
+                    for r in results],
     })  # fmt: skip
     if not results:
         out.line("Nothing to run: every selected check is fresh or untouched by this change.")
     for r in results:
         _print_result(r, out)
+    if partial:
+        out.line(f"Reproduction run: not recorded in the ledger. `rung check {args.ids[0]}` records a verdict.")
     return GATE_FAILED if any(r.verdict != "pass" for r in results) else OK
 
 
@@ -67,12 +75,23 @@ def cmd_status(args, out: Output) -> int:
 
 def cmd_report(args, out: Output) -> int:
     cfg = load_config(args)
-    data = report.build(cfg)
+    data = report.build(cfg, evidence_url=args.evidence_url or "")
     if out.json_mode or args.format == "json":
         out.json_mode = True
         out.emit(data)
     else:
         print(report.markdown(data))
+    return OK
+
+
+def cmd_evidence(args, out: Output) -> int:
+    """Write the HTML page for an evidence check's latest run: results, scenarios, screenshots, video, trace."""
+    cfg = load_config(args)
+    check = cfg.check(args.check)
+    page = report.evidence_page(cfg, check, seed=args.seed, out=Path(args.out) if args.out else None)
+    out.emit({"check": check.id, "page": str(page)})
+    out.line(f"wrote {page}")
+    out.detail("open it in a browser: results, scenarios, screenshots, video, and links to the trace and HAR", indent=2)
     return OK
 
 

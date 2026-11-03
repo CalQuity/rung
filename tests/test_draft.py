@@ -160,16 +160,39 @@ def test_lean_draft_sends_adapter_errors_back(tmp_path: Path, monkeypatch, pinne
 
 # --- runtime ------------------------------------------------------------------------------------
 
-DRIVE_OK = {
-    "files": _files(**{
-        "drive.py": 'import os, pathlib\nout = pathlib.Path(os.environ["RUNG_EVIDENCE_DIR"])\n'
-                    '(out / "transcript.txt").write_text("$ app --version\\napp 1.0\\n")',
-        "FEATURES.md": "# Features\n## version\n- How a user reaches it: `app --version`",
-    }),
-    "sources": ["src/**/*.py"],
-    "requirements": [],
-    "notes": "",
-}  # fmt: skip
+# A drive script that meets the contract: seeded, one scenario per category, and a result.json. `FAIL`
+# names scenarios that fail (an app bug), `FLAKY` makes one assertion's outcome depend on the clock.
+DRIVE_SOURCE = """import json, os, pathlib, sys, time
+out = pathlib.Path(os.environ["RUNG_EVIDENCE_DIR"])
+seed = int(os.environ["RUNG_SEED"])
+faults, only = os.environ.get("RUNG_FAULTS"), os.environ.get("RUNG_SCENARIOS")
+FAIL, FLAKY, CATS = {fail}, {flaky}, {cats}
+(out / "transcript.txt").write_text("$ app --version\\napp 1.0\\n")
+scenarios = []
+for cat in CATS:
+    ok = cat not in FAIL and not (FLAKY and cat == "input" and time.time_ns() % 2)
+    scenarios.append({{"name": cat, "category": cat, "faults": [], "passed": ok,
+                      "assertions": [{{"name": cat + " holds", "passed": ok}}]}})
+result = {{"seed": seed, "passed": all(s["passed"] for s in scenarios), "scenarios": scenarios,
+          "not_applicable": {{"auth": "the app has no sign-in"}}}}
+(out / "result.json").write_text(json.dumps(result))
+sys.exit(0 if result["passed"] else 1)
+"""
+ALL_CATEGORIES = ["happy", "input", "state", "fault", "robustness"]
+
+
+def _drive(fail: tuple[str, ...] = (), flaky: bool = False, cats: list[str] = ALL_CATEGORIES) -> dict[str, Any]:
+    source = DRIVE_SOURCE.format(fail=repr(set(fail)), flaky=flaky, cats=repr(cats))
+    return {
+        "files": _files(**{"drive.py": source,
+                           "FEATURES.md": "# Features\n## version\n- How a user reaches it: `app --version`"}),
+        "sources": ["src/**/*.py"],
+        "requirements": [],
+        "notes": "",
+    }  # fmt: skip
+
+
+DRIVE_OK = _drive()
 DRIVE_NO_EVIDENCE = {**DRIVE_OK, "files": _files(**{"drive.py": "pass", "FEATURES.md": "# Features"})}
 
 
@@ -242,3 +265,24 @@ def test_sec2_runtime_requirements_are_vetted_before_anything_is_installed(tmp_p
     provider = ScriptedProvider([bad, DRIVE_OK])
     result = runtime.draft_runtime(provider, tmp_path, survey.survey(tmp_path), focus=[], max_rounds=2)
     assert result.ok and result.rounds == 2 and "will not install" in provider.prompts[1]
+
+
+def test_claude_cli_drafts_without_tools_or_mcp_servers(monkeypatch) -> None:
+    import json
+    import subprocess
+
+    from rung.drafting import providers
+
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        seen.append(cmd)
+        envelope = {"is_error": False, "structured_output": {"notes": "x"}, "result": "", "modelUsage": {}}
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(envelope), "")
+
+    monkeypatch.setattr(providers.ClaudeCLI, "available", lambda self: True)
+    monkeypatch.setattr(providers.subprocess, "run", fake_run)
+    provider = providers.ClaudeCLI(LLMConfig(provider="claude-cli"))
+    assert provider.complete_json("hi", schema={"type": "object", "properties": {}, "required": []}) == {"notes": "x"}
+    (cmd,) = seen
+    assert cmd[cmd.index("--tools") + 1] == "" and "--strict-mcp-config" in cmd and "--mcp-config" not in cmd

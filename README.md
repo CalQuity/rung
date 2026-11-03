@@ -107,8 +107,8 @@ verdict fresh. Agents may propose laws; only people approve them.
 ## A verification kit for your running app
 
 `rung draft runtime --intent "apply a coupon at checkout and see the total update"` gives your
-project a verification kit, written by the model and registered as a check only once it has worked
-against the real app:
+project the app-verification part of its verification kit, written by the model and registered as a
+check only once it has worked against the real app:
 
 - **`.rung/verify/drive.py`**, a script that starts the app on a free port, drives a feature the way
   a user does (Playwright for web UIs, HTTP or CLI calls otherwise) and asserts on what a user would
@@ -122,10 +122,32 @@ against the real app:
 - **A project verification skill** (`.claude/skills/verify-<project>/`) that tells the project's
   coding agents to drive the app after any user-facing change, extend the script and feature map
   when they add a feature, and treat a failure as a product bug rather than weaken the script.
-- **Recordings.** Every run writes its evidence to a fresh directory: a video of the browser session
-  (`--require .webm` demands one), screenshots, request and response logs, a transcript and a
-  structured `result.json`. Their hashes go into the verdict, which stays valid only while the code
-  it covers is unchanged.
+- **Scenarios, not just the happy path.** For each feature the script drives named scenarios in six
+  categories: `happy`, `input` (empty, very long, unicode, case and spacing variants, boundary values,
+  invalid formats, injection-looking strings), `state` (repeats, empty carts, stale state, refresh
+  after success, deep links), `auth` (signed out, wrong user, bad token), `fault` and `robustness`
+  (keyboard only, no console errors or uncaught exceptions, no 5xx). A category that does not apply
+  needs a stated reason, and Rung rejects a script that drives only the happy path. A scenario the
+  real app fails while drafting is a finding for you, never sent back to the model to make it pass.
+- **Seeds that reproduce a failure exactly.** Rung passes `RUNG_SEED` and the script derives every
+  choice from it: which inputs to try, which backend call to delay and for how long, when to reload.
+  `runs = 3` runs seeds `seed`, `seed+1`, `seed+2`, each in its own directory; a failure names its
+  seed and prints `rung check runtime --seed N`, which runs that seed again. While drafting, Rung runs
+  the same seed twice and sends the script back if the outcomes differ.
+- **Fault scenarios.** `RUNG_FAULTS` names the adverse conditions to drive: slow or failing backend
+  calls and going offline (Playwright `context.route`, `set_offline`), double submits, reload or back
+  mid-flow, killing and restarting the app on the same data, a fake clock for expiry, a dependency on
+  a dead port. Under each, the script asserts that nothing happened twice, no state was lost, and the
+  user saw an error message rather than a stack trace.
+- **Recordings you can replay and share.** Every run writes its evidence to a fresh directory: a
+  video (`--require .webm`), a Playwright trace (`--require .zip`; open it with
+  `npx playwright show-trace trace.zip` or at trace.playwright.dev), a HAR network log (`.har`),
+  screenshots named after the step they prove, a transcript and a structured `result.json`. Their
+  hashes go into the verdict, which stays valid only while the code it covers is unchanged. Each run
+  also gets an `index.html` evidence page (`rung evidence runtime` rewrites it): the result, each
+  scenario's faults and assertions (expected against observed), its screenshots in step order, the
+  video, links to the trace and HAR, and the command that reproduces a failure. It is one file with
+  relative links and no network access, so it opens from a laptop or a CI artifact download alike.
 
 Where a script cannot reach a feature (a login flow, a native app), an agent can drive it with its
 own browser or computer-use tool and record it with `rung attest <check> <files> --by <tool>`. Such
@@ -196,7 +218,10 @@ report comment up to date and fails only on what the pull request introduced. Th
 own `rung.toml`, `LAWS.md`, waivers, baselines and scanner configs decide what it is checked
 against, so the action lists any edits to them in the report and as annotations (add other policy
 files, such as a semgrep rules file, with `policy-paths`); set
-`policy-changes: fail` to fail the gate on them until a reviewer accepts. Without the action, use
+`policy-changes: fail` to fail the gate on them until a reviewer accepts. It uploads `.rung/evidence/`
+(screenshots, videos, traces, HARs and each run's `index.html`) as the `rung-evidence` workflow
+artifact and links it from the report comment and the step summary, so a reviewer can watch what the
+drive script did; set `upload-evidence: false` to skip it. Without the action, use
 `rung check --changed` and `rung report`.
 
 To run the same check before every push, add Rung to `.pre-commit-config.yaml`:
@@ -228,6 +253,8 @@ any OpenAI-compatible endpoint, including local models. Rung never stores creden
 | `rung init` | Survey the repo, add relevant checks, choose a model |
 | `rung plan` | Recommend checks, cheapest and most useful first |
 | `rung check [ids] [--changed] [--base REF]` | Run checks and record verdicts |
+| `rung check <id> --seed N [--scenario NAME]` | Run one seed (or scenario) of a drive script again, without recording it |
+| `rung evidence <check> [--seed N] [--out DIR]` | Write the HTML evidence page of a drive script's newest run |
 | `rung status [--ci]` | Fresh, stale, failing; `--ci` exits 1 unless all fresh |
 | `rung report [--format md\|json]` | Checks, laws, new findings and fix proofs |
 | `rung prove 'pytest tests/test_x.py'` | Show a new test fails without the fix and passes with it; under pytest, each new or changed test on its own |

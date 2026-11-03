@@ -128,8 +128,10 @@ class ClaudeCLI(Provider):
     ) -> dict[str, Any]:
         if not self.available():
             raise ToolMissing("`claude` is not installed")
-        # Drafting only: with no tools the model reads nothing and runs nothing on its own.
-        cmd = ["claude", "-p", "--tools", "", "--output-format", "json", "--json-schema", json.dumps(schema)]
+        # Drafting only: with no tools the model reads nothing and runs nothing on its own. `--tools ""`
+        # covers built-in tools; `--strict-mcp-config` with no `--mcp-config` also drops the user's MCP servers.
+        cmd = ["claude", "-p", "--tools", "", "--strict-mcp-config", "--output-format", "json",
+               "--json-schema", json.dumps(schema)]  # fmt: skip
         if self.config.model:
             cmd += ["--model", self.config.model]
         if system:

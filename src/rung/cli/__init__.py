@@ -76,10 +76,18 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--changed", action="store_true", help="only checks touched by this branch's changes")
     s.add_argument("--base", help="branch to compare with (default: the repository's default branch)")
     s.add_argument("--ci", action="store_true", help="skip checks that are already fresh")
+    s.add_argument("--seed", type=int, help="(evidence) run one seed only, to reproduce a failure; not recorded")
+    s.add_argument("--scenario", action="append", metavar="NAME",
+                   help="(evidence) run only this scenario of the drive script (repeatable); not recorded")  # fmt: skip
     s = add("status", c.cmd_status, "show which verdicts are fresh, stale or failing")
     s.add_argument("--ci", action="store_true", help="exit 1 unless every verdict is fresh")
     s = add("report", c.cmd_report, "summarize checks, laws, new findings and fix proofs")
     s.add_argument("--format", choices=["md", "json"], default="md")
+    s.add_argument("--evidence-url", help="where the evidence files can be downloaded (e.g. a CI artifact)")
+    s = add("evidence", c.cmd_evidence, "write the HTML page of an evidence check's latest run")
+    s.add_argument("check")
+    s.add_argument("--seed", type=int, help="only this seed's run")
+    s.add_argument("--out", help="directory to write index.html to (default: next to the run's files)")
     s = add("prove", c.cmd_prove, "show a new test fails without the fix and passes with it")
     s.add_argument("test_command", metavar="command", help="test command, e.g. 'pytest tests/test_refunds.py'")
     s.add_argument("--base", help="branch without the fix (default: the repository's default branch)")
