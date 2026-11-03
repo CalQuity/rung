@@ -76,7 +76,7 @@ def test_a_fresh_part_is_ok_and_empty_parts_say_how_to_fill_them(project: Path, 
     assert run(project, "kit", "--json") == 0
     parts = {p["part"]: p for p in json.loads(capsys.readouterr().out)["parts"]}
     assert parts["tests"]["state"] == "ok"
-    assert parts["app"]["state"] == "missing" and parts["app"]["suggest"] == "rung draft runtime"
+    assert parts["app"]["state"] == "missing" and parts["app"]["suggest"] == "rung map"
     assert parts["properties"]["suggest"] == "rung draft property src/core.py"
     assert parts["agents"]["suggest"] == "rung agents --hooks"
 
@@ -134,6 +134,7 @@ def test_init_yes_drafts_each_missing_part_with_its_top_candidate(tmp_path: Path
         return 0
 
     monkeypatch.setattr("rung.cli.commands.draft.cmd_draft", fake_draft)
+    monkeypatch.setattr(setup, "_map_first", lambda args, root, out: "")  # the map is approved: draft the script
     monkeypatch.setattr(setup, "_has", lambda probe: False)  # no Java or Lean here: no formal offers
     done = setup._draft_kit(_args(yes=True), root, survey.survey(root), load(root), True, Output())
     assert [(c.kind, c.files) for c in calls] == [("runtime", []), ("property", ["pricing.py"])]

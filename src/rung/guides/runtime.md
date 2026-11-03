@@ -144,6 +144,13 @@ Each scenario has a `name`, a `category` (happy, input, state, auth, fault or ro
 `faults` it injected as plain descriptions, whether it `passed`, and its `assertions`, each with what
 was expected and what was observed.
 
+When the project has an approved feature map (`.rung/verify/features/`), drive its approved features
+with the recipes it gives. Name each scenario after the sub-feature ID it proves (`coupon-apply`), or
+list the IDs it proves under `covers`, and record each artifact's feature and entry point. A
+sub-feature the run cannot reach goes under `unreachable` with the precondition it lacked, e.g.
+`"unreachable": {"pay-card": "the Pay button is disabled: payment is not built yet"}`; it is never
+reported as proven through another path.
+
 ## Evidence
 
 Write everything into `Path(os.environ["RUNG_EVIDENCE_DIR"])`. Evidence must survive cleanup.

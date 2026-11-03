@@ -16,6 +16,7 @@ verdict goes stale and the script must be re-proven.
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import shutil
 from dataclasses import dataclass, field
@@ -39,7 +40,7 @@ from rung.checks.command import (
 from rung.core import git
 from rung.core.config import Check
 from rung.core.errors import ToolMissing
-from rung.drafting import routes
+from rung.drafting import feature_map, routes
 from rung.drafting.common import FILES, STRINGS, files_of, machine_path_problem, safe_write, schema
 from rung.drafting.providers import Provider
 
@@ -58,6 +59,11 @@ feature depends on, `requirements` with the Python packages the script imports b
 library (e.g. `playwright`; empty if none), and `notes` with anything the developer should know.
 `drive.py` reads `RUNG_SEED`, `RUNG_FAULTS` and `RUNG_SCENARIOS` and writes `result.json` with one
 scenario per category (or a reason in `not_applicable`), as the guide describes."""
+
+# With an approved feature map, the map is the feature document: the model returns the script only.
+FORMAT_MAPPED = FORMAT.replace(
+    "Return `files` with `drive.py` and `FEATURES.md`,", "Return `files` with `drive.py` only,"
+)
 
 # What each `--require` suffix asks the script to record, so the model knows what to produce.
 SUFFIX_MEANING = {
@@ -227,6 +233,33 @@ def _context_files(root: Path, info: Inspection, focus: list[str], files: list[s
     return list(dict.fromkeys(chosen))
 
 
+def app_focus(root: Path, info: Inspection, files: list[str] | None = None) -> list[str]:
+    """The files a user-facing feature lives in, when none were named: those that serve requests and those
+    that declare routes, so the model reads the real page, form fields and handlers instead of the README."""
+    listed = files if files is not None else git.list_files(root)
+    route_files = [r.file for r in routes.scan(root, listed)]
+    app = list(dict.fromkeys([*info.app_files, *route_files]))
+    return list(dict.fromkeys([*app, *_local_imports(root, app, set(listed))]))[:12]
+
+
+_PY_IMPORT = re.compile(r"^\s*(?:from\s+([\w.]+)\s+import|import\s+([\w.]+))", re.M)
+
+
+def _local_imports(root: Path, sources: list[str], listed: set[str]) -> list[str]:
+    """The repository's own Python modules that `sources` import (`from shop.pricing import ...`)."""
+    found: list[str] = []
+    for rel in sources:
+        if not rel.endswith(".py"):
+            continue
+        text = (root / rel).read_text(errors="ignore")
+        for m in _PY_IMPORT.finditer(text):
+            module = (m.group(1) or m.group(2)).replace(".", "/")
+            for candidate in (f"{module}.py", f"{module}/__init__.py", f"src/{module}.py"):
+                if candidate in listed and candidate not in sources:
+                    found.append(candidate)
+    return found
+
+
 def gather_context(root: Path, info: Inspection, focus: list[str]) -> str:
     """What the model sees: the survey, the routes the app serves, a file list, and the project's docs.
 
@@ -264,27 +297,36 @@ def draft_runtime(
 ) -> RuntimeDraft:  # fmt: skip
     out_dir = root / VERIFY_DIR
     wants = ", ".join(f"{r} ({SUFFIX_MEANING[r.lower()]})" if r.lower() in SUFFIX_MEANING else r for r in require)
+    # With an approved feature map, the map is the plan: the script drives exactly its approved features.
+    mapped, map_ids, map_sources = feature_map.approved_block(root)
+    needed = ("drive.py",) if mapped else ("drive.py", "FEATURES.md")
     prompt = (
-        "Write the verification script and feature map for this project.\n"
+        ("Write the verification script for the approved features of this project.\n" if mapped
+         else "Write the verification script and feature map for this project.\n")
         + (f"Drive this feature: {intent}\n" if intent else "")
         + (f"The evidence must include: {wants}.\n" if require else "")
         + "\n"
-        + gather_context(root, info, focus)
-    )
+        + gather_context(root, info, focus or app_focus(root, info))
+        + (f"\n\n{mapped}\n\nReturn only `drive.py` in `files`; the map above is the feature map." if mapped else "")
+    )  # fmt: skip
     files: list[Path] = []
     checker = EvidenceChecker()
     last_failure = ""
     for round_no in range(1, max_rounds + 1):
-        reply = provider.complete_json(prompt, schema=SCHEMA, system=guides.load("runtime") + FORMAT, cwd=root)
+        system = guides.load("runtime") + (FORMAT_MAPPED if mapped else FORMAT)
+        reply = provider.complete_json(prompt, schema=SCHEMA, system=system, cwd=root)
         produced = files_of(reply)
-        if "drive.py" not in produced or "FEATURES.md" not in produced:
-            prompt += "\n\nYour reply must contain both `drive.py` and `FEATURES.md` in `files`."
+        produced = {k: v for k, v in produced.items() if k in needed}
+        if any(n not in produced for n in needed):
+            prompt += f"\n\nYour reply must contain {' and '.join(f'`{n}`' for n in needed)} in `files`."
             continue
         if problem := machine_path_problem(produced):
             prompt += problem
             continue
         files = safe_write(out_dir, produced)
         covers = [g.strip() for g in reply["sources"] if g.strip()]
+        if mapped:  # the approved map and its features' code stale the verdict too
+            covers = list(dict.fromkeys([*covers, *map_sources, f"{feature_map.MAP_DIR.as_posix()}/*.md"]))
         requirements = [p.strip() for p in reply["requirements"] if p.strip()]
         if problems := vet_requirements(requirements):
             prompt += (
@@ -308,11 +350,22 @@ def draft_runtime(
                 + "\nFix the script. Do not weaken what it checks. Return the same fields."
             )
             continue
-        if problems := contract_problems(produced["drive.py"], result):
+        problems = contract_problems(produced["drive.py"], result)
+        if missing := feature_map.uncovered(map_ids, result):
+            problems.append(
+                "these approved sub-features have no scenario: " + ", ".join(missing) + ". Name a scenario after "
+                "each ID (or list it under the scenario's `covers`), or report it in `result.json` under "
+                "`unreachable` with the precondition the run lacked"
+            )
+        if problems:
             prompt += (
                 "\n\nThe script ran, but it does not meet the contract:\n- "
                 + "\n- ".join(problems)
-                + "\nFix the script and FEATURES.md. Return the same fields."
+                + (
+                    "\nFix the script. Return the same fields."
+                    if mapped
+                    else "\nFix the script and FEATURES.md. Return the same fields."
+                )
             )
             continue
         # The same seed must give the same outcome, or a failure could never be reproduced.

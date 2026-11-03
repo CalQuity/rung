@@ -75,7 +75,7 @@ class Part:
     def state(self) -> str:
         """`ok`, `attention` (a check is failing, stale, drifted or never ran), `missing`, or `n/a`."""
         if self.entries:
-            return "ok" if all(e.state in ("fresh", "installed") for e in self.entries) else "attention"
+            return "ok" if all(e.state in ("fresh", "installed", "approved") for e in self.entries) else "attention"
         return "missing" if self.suggest else "n/a"
 
 
@@ -109,6 +109,21 @@ def agent_entries(root: Path) -> list[Entry]:
     return entries
 
 
+def map_entry(root: Path) -> Entry | None:
+    """The feature map, as one entry of the app part: approved, waiting for approval, or changed since."""
+    from rung.drafting import feature_map  # drafting pulls in the providers; only load it when there is a map
+
+    state = feature_map.load_state(root)
+    if state is None:
+        return None
+    approved, proposed = state.with_status("approved"), state.with_status("proposed")
+    if drift := feature_map.drifted(root, state):
+        return Entry("feature map", "map", "drifted", f"changed since approval: {', '.join(drift)}")
+    if proposed or not approved:
+        return Entry("feature map", "map", "proposed", f"{len(proposed)} feature(s) wait for a person's decision")
+    return Entry("feature map", "map", "approved", f"{len(approved)} feature(s) approved")
+
+
 def _suggestions(info: Inspection, existing: set[str]) -> dict[str, tuple[str, str]]:
     """For each part, the first recommendation that fills it: (command, why)."""
     found: dict[str, tuple[str, str]] = {}
@@ -123,7 +138,8 @@ def _suggestions(info: Inspection, existing: set[str]) -> dict[str, tuple[str, s
     if info.surfaces and info.surfaces != ["library"]:
         surface = info.surfaces[0]
         seen = "screenshots and video" if surface in ("web UI", "desktop app") else "transcripts"
-        found["app"] = ("rung draft runtime", f"Drive the {surface} through scenarios and faults, recording {seen}")
+        found["app"] = ("rung map", f"Map the {surface}'s features, approve them, then drive them through scenarios "
+                        f"and faults, recording {seen}")  # fmt: skip
     return found
 
 
@@ -140,6 +156,8 @@ def build(config: Config, info: Inspection) -> Kit:
         detail = s.changed[0] if s.state == "drifted" and s.changed else ""
         by_key[part_of(check)].entries.append(Entry(check.id, check.kind, s.state, detail))
     by_key["agents"].entries = agent_entries(config.root)
+    if (entry := map_entry(config.root)) is not None:
+        by_key["app"].entries.insert(0, entry)
     for part in parts:
         if part.entries:
             continue
@@ -165,7 +183,14 @@ def _next_steps(parts: list[Part], law_states: dict[str, int]) -> list[tuple[str
     steps: list[tuple[int, str, str]] = []
     for part in parts:
         for e in part.entries:
-            if e.state == "failing":
+            if e.kind == "map":
+                if e.state == "drifted":
+                    steps.append((1, "rung map --redraft", f"the feature map is out of date: {e.detail}"))
+                elif e.state == "proposed":
+                    steps.append((3, "rung map", f"feature map: {e.detail}"))
+                elif not any(x.kind == "evidence" for x in part.entries):
+                    steps.append((3, "rung draft runtime", "write the drive script for the approved features"))
+            elif e.state == "failing":
                 steps.append((0, f"rung check {e.check_id}", f"{e.check_id} is failing: fix the code, not the check"))
             elif e.state == "drifted":
                 steps.append(

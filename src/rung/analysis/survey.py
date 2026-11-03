@@ -84,6 +84,7 @@ class Inspection:
     protocol_candidates: list[Candidate] = field(default_factory=list)
     model_candidates: list[Candidate] = field(default_factory=list)
     agent_docs: list[str] = field(default_factory=list)
+    app_files: list[str] = field(default_factory=list)  # files that serve the app itself (a request handler)
     projects: list[Project] = field(default_factory=list)
 
     @property
@@ -310,6 +311,8 @@ def survey(root: Path) -> Inspection:
             protocol.append(Candidate(posix, hits, f"{hits} state/retry/lease terms in {lines} lines"))
         serves = _served_surfaces(text)
         served += [s for s in serves if s not in served]
+        if serves:
+            result.app_files.append(posix)
         effects = len(SIDE_EFFECTS.findall(code))
         functions = len(re.findall(r"^\s*(?:def|function|fn|func)\s", code, re.M))
         if functions >= 1 and effects == 0 and not serves and lines <= 600:

@@ -173,22 +173,40 @@ verdict fresh. Agents may propose laws; only people approve them.
 
 ## Driving the app
 
-`rung draft runtime --intent "apply a coupon at checkout and see the total update"` gives your
-project the app-driving part of its kit, written by the model and registered as a
-check only once it has worked against the real app:
+Driving the app starts with a **feature map** you approve. `rung map` has the model read the code
+(routes, templates, commands, docs) and write `.rung/verify/features/`: an index with how to launch
+the app for verification, the driving conventions and the proof rules, and one file per user-facing
+feature with its sub-features (each with a short ID), every way a user reaches it, the driving
+recipe (preconditions, then each action paired with its observable result) and the gotchas. Rung
+checks every file against that shape and sends a map that breaks it back to the model.
 
-- **`.rung/verify/drive.py`**, a script that starts the app on a free port, drives a feature the way
-  a user does (Playwright for web UIs, HTTP or CLI calls otherwise) and asserts on what a user would
-  see. It never calls internal functions or test-only endpoints. The model is shown the routes the
-  app really serves, found in its code (FastAPI, Starlette and Flask decorators, Express, Hono and
-  Koa handlers, Next.js app and pages routers), and drives only those; when the intent names a
-  feature the app does not have, it says so in its notes instead of guessing URLs.
-- **`.rung/verify/FEATURES.md`**, a feature map: for each user-facing feature, how a user reaches it,
-  how the script drives it, what observable state proves it works, and the gotchas (seed data,
-  logins, flaky spots).
+You then decide feature by feature: approve it, mark it **not built yet** (a disabled button, a
+stubbed route: never driven), or drop it. `rung map` shows the map in the terminal and writes
+`.rung/verify/features/index.html`, one page with a card per feature; once a script has run, each
+sub-feature on it shows its latest result (proven, failed, unreachable and why) and its screenshots.
+
+```console
+$ rung map --approve coupons --not-built pay
+$ rung draft runtime --require .png
+```
+
+`rung draft runtime` then writes a script for the approved features only, registered as a check
+once it has worked against the real app:
+
+- **`.rung/verify/drive.py`**, a script that starts the app on a free port, drives the approved
+  features the way a user does (Playwright for web UIs, HTTP or CLI calls otherwise) and asserts on
+  what a user would see. Each scenario is named after the sub-feature ID it proves, and every approved
+  sub-feature must have one, or be reported as unreachable with the precondition the run lacked. It
+  never calls internal functions or test-only endpoints. The model is shown the routes the app really
+  serves, found in its code (FastAPI, Starlette and Flask decorators, Express, Hono and Koa handlers,
+  Next.js app and pages routers), and drives only those.
+- **A map that cannot drift silently.** Approval pins a digest of each feature's file and the code it
+  comes from. When either changes, `rung kit` and `rung draft runtime` say so, and `rung map
+  --redraft` refreshes the map: unchanged features keep their approval, changed ones wait for yours
+  again, and a "not built yet" or "drop" outlives the refresh.
 - **A project verification skill** (`.claude/skills/verify-<project>/`) that tells the project's
-  coding agents to drive the app after any user-facing change, extend the script and feature map
-  when they add a feature, and treat a failure as a product bug rather than weaken the script.
+  coding agents to drive the app after any user-facing change, refresh the feature map when they add
+  a feature, and treat a failure as a product bug rather than weaken the script.
 - **Scenarios, not just the happy path.** For each feature the script drives named scenarios in six
   categories: `happy`, `input` (empty, very long, unicode, case and spacing variants, boundary values,
   invalid formats, injection-looking strings), `state` (repeats, empty carts, stale state, refresh
@@ -353,6 +371,7 @@ any OpenAI-compatible endpoint, including local models. Rung never stores creden
 |---|---|
 | `rung init [--yes] [--no-drafts] [--no-agents]` | Build the verification kit: survey the repo, add checks, install agent skills and the Stop hook, draft app scenarios, property tests and formal models with your approval |
 | `rung kit` | Every part of the kit, its checks and their state, and the next command to run |
+| `rung map [--approve F] [--not-built F] [--drop F] [--redraft]` | Draft the feature map, show it (terminal and HTML page), record your decision on each feature |
 | `rung plan` | Recommend checks, cheapest and most useful first |
 | `rung check [ids] [--changed] [--base REF]` | Run checks and record verdicts |
 | `rung check <id> --seed N [--scenario NAME]` | Run one seed (or scenario) of a drive script again, without recording it |
