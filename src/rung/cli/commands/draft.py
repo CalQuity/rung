@@ -65,9 +65,15 @@ def _draft_runtime(args, cfg: Config, out: Output) -> int:
         require=tuple(args.require or ()),
     )
     out.emit({"ok": result.ok, "message": result.message, "rounds": result.rounds, "covers": result.covers,
-              "files": [str(f.relative_to(cfg.root)) for f in result.files], "evidence": result.evidence})  # fmt: skip
+              "files": [str(f.relative_to(cfg.root)) for f in result.files], "evidence": result.evidence,
+              "seed": result.seed, "scenarios": result.scenarios, "findings": result.findings,
+              "report": result.report})  # fmt: skip
     out.line(f"{'OK' if result.ok else 'FAILED'} after {result.rounds} round(s): {result.message}")
     out.detail(f"drafted by {drafted_by(cfg, provider)}", indent=2)
+    if result.seed is not None:
+        out.detail(f"seed {result.seed} ran twice with the same outcomes", indent=2)
+    for sc in result.scenarios:
+        out.detail(f"scenario {sc.get('name')} ({sc.get('category')}): {'pass' if sc.get('passed') else 'FAIL'}", 2)
     if result.notes:
         out.line("Notes from the model:")
         out.detail(result.notes, indent=2)
@@ -95,6 +101,17 @@ def _draft_runtime(args, cfg: Config, out: Output) -> int:
     )
     skill = agents.install_verify_skill(cfg.root, cfg.name, check_id)
     out.line(f"wrote {skill.relative_to(cfg.root)} so agents verify user-facing changes with `rung check {check_id}`.")
+    if result.report:
+        out.line(f"Evidence page: {result.report}")
+    if result.findings:
+        out.line(out.style(f"\nThe app failed {len(result.findings)} assertion(s) the script makes:", "red"))
+        for f in result.findings:
+            out.detail(f, indent=2)
+        out.line(
+            f"\nThese are findings, not script errors: Rung did not ask the model to make them pass. If one is a real "
+            f"bug, fix the app and run `rung check {check_id}`. If the script is wrong, edit it yourself."
+        )
+        return GATE_FAILED
     return OK
 
 

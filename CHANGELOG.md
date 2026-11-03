@@ -6,6 +6,37 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 ## Unreleased
 
 ### Added
+- **Seeded runs.** Evidence checks pass `RUNG_SEED` to the drive script. New options: `runs` (default
+  1) runs the script once per seed, `seed` sets the first seed (default: derived from the check id, so
+  runs are reproducible). Each run writes to its own `seed-<N>/` directory; the check passes only if
+  every run passes. A failure names the seed and prints the command that reproduces it,
+  `rung check <id> --seed N`, which runs only that seed and does not record a verdict. The verdict's
+  details and `rung check --json` gain `runs` (seed, verdict, scenarios, failed assertions),
+  `failing_seed`, `failing_scenario`, `reproduce` and `report`.
+- **Scenarios and faults.** New evidence options `faults` and `scenarios`, passed to the script as
+  `RUNG_FAULTS` and `RUNG_SCENARIOS`; `rung check <id> --scenario NAME` runs one scenario. When the
+  script writes `result.json`, a run fails if it records a failed scenario, reports a different seed,
+  or has no scenario for a requested name. The runtime guide now asks for named scenarios per feature
+  in six categories (happy, input, state, auth, fault, robustness) with fault injection through
+  Playwright (`context.route`, `set_offline`, `page.clock`), double submits, reloads, server restarts
+  and a dependency on a dead port.
+- **Drafting checks.** `rung draft runtime` rejects a script that does not read `RUNG_SEED`,
+  `RUNG_FAULTS` and `RUNG_SCENARIOS`, writes no `result.json`, drives only the happy path, or leaves
+  a category without a scenario or a stated reason. It runs the accepted seed a second time and sends
+  the script back if any assertion's outcome changed. A scenario the app fails while the happy path
+  passes is reported as a finding: the check is registered, the command exits 1, and the model is not
+  asked to make it pass. `--require .zip` and `.har` are explained to the model as a Playwright trace
+  and a HAR.
+- **Evidence page.** Every scripted evidence run writes a self-contained `index.html` (inline CSS,
+  relative links, no network): each seed's result, scenarios, faults and assertions with expected and
+  observed values, screenshots grouped by scenario in step order, the video, links to the trace and
+  HAR, and the reproduce command. `rung evidence <check> [--seed N] [--out DIR]` writes it again.
+  `rung check` prints its path.
+- `rung report` (Markdown and the PR comment) lists each evidence check's seeds and outcomes, the
+  failing seed and scenario, the reproduce command, categories marked not applicable and the evidence
+  page. `--evidence-url` adds a link to the recordings.
+- The GitHub Action uploads `.rung/evidence/` as the `rung-evidence` workflow artifact and links it
+  from the report comment and step summary. New input `upload-evidence` (default `"true"`).
 - Formal models that cannot silently go stale. Each `tla` and `lean` check records, in a committed
   `.rung/formal/<check>.json`, the commit and a digest of the code its model was last confirmed to
   describe. When that code changes, `rung check` no longer reruns TLC on the unchanged spec and calls
@@ -41,8 +72,19 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
   and `rung confirm` keep it current.
 
 ### Changed
+- Scripted evidence runs write into `.rung/evidence/<check>/<time>/seed-<N>/` instead of
+  `.rung/evidence/<check>/<time>/`. Nothing to do after upgrading; scripts still read
+  `RUNG_EVIDENCE_DIR`.
+- A drive script that times out is an `error` for that seed, with the other seeds still run and
+  reported.
 - An accepted TLA+ draft is checked once more through `rung check`, so it leaves a verdict and the
   readable counterexample or state graph.
+
+### Fixed
+- Drafting with Claude Code also passes `--strict-mcp-config`. `--tools ""` turns off the built-in
+  tools only, so MCP servers from the user's own configuration stayed available to the drafting model
+  (a draft reported calling a Google Drive search). The model now sees only what Rung sends, as the
+  design says.
 
 ## 0.1.4 (2026-11-01)
 

@@ -42,7 +42,7 @@ exact code it covers, and it should expire on its own.**
 | Laws on real code | `command` from `rung draft property` | Hypothesis or fast-check properties that pass on the code and fail on deliberate one-token bugs in it |
 | Security | `scan` (any SARIF analyzer), `deps` | New findings relative to the merge base or a baseline; registry facts for new packages |
 | Architecture | `command` running the project's type checker, linter or import-boundary tool | Exit status |
-| Runtime | `evidence` running a script that drives the real app, or attested with `rung attest` | Hashed artifacts: transcripts, request/response pairs, screenshots, video; attested ones also record who recorded them |
+| Runtime | `evidence` running a script that drives the real app through seeded scenarios and faults, or attested with `rung attest` | Hashed artifacts per seed: transcripts, request/response pairs, screenshots, video, Playwright traces, HARs; attested ones also record who recorded them |
 | Protocol | `tla` | TLC result over every reachable state; counterexample trace |
 | Model | `lean` + `drt` | Kernel-checked theorems with audited axioms; agreement with the code on random inputs |
 | Ledger | always | One verdict file per check, bound to its inputs |
@@ -86,6 +86,36 @@ sides. Other runners are judged by the whole run.
 as an `evidence` check and feeds failures back until it passes and records evidence; only then
 is it registered. This is the rule from Lauren Tan's pstack, that a verification skill never
 executed is only a draft, enforced by the checker rather than stated in a prompt.
+
+A script that passes only on the happy path proves little, so the drafter also holds it to a
+contract it can check from the script's `result.json`: named scenarios in each category (happy,
+input, state, auth, fault, robustness), or a stated reason a category does not apply. The same rule
+as for property tests decides what goes back to the model. A broken script (no evidence, a failing
+happy path, a missing category) is the model's to fix. A happy path that passes while an edge case
+or fault scenario fails is the app's problem, so it is shown to a person and the script is registered
+as it is; the model is never asked to make it pass.
+
+### Seeds, faults and replay
+
+A runtime failure that cannot be reproduced cannot be fixed or trusted. Rung gives each run a seed
+(`RUNG_SEED`), and the script derives every choice from it: which inputs it tries, which backend call
+it delays and for how long, when it reloads or kills the server. A check can run several seeds, each
+in its own directory; a failure names its seed and the command that runs it again. While drafting,
+Rung runs the accepted seed a second time and rejects the script if any assertion's outcome changed,
+because a flaky script turns every failure into noise.
+
+Fault scenarios (`RUNG_FAULTS`) are what the script can do from outside the app: delay or abort
+network calls in the browser, go offline, submit twice, reload or go back mid-flow, kill and restart
+the app's process on the same data, move the browser's clock, point a dependency at a dead port.
+They cover the browser, the network calls the browser makes and the app's process, not anything
+inside the app's runtime. The same seed reproduces the same injected faults and inputs; it does not
+fix the order in which the app's own threads, timers or the operating system run, so a race inside
+the app can still pass on one run of a seed and fail on another.
+
+Each run's evidence is meant to be replayed by a person: a Playwright trace (DOM snapshots, network
+and console at every action), a HAR, a video, and screenshots named after the step they prove. Rung
+writes one `index.html` per run that ties them to the scenarios and assertions, with relative links
+only, and the GitHub Action uploads them as a workflow artifact linked from the report.
 
 ### Agents
 
@@ -181,8 +211,8 @@ Lean theorem plus a differential test, and a test suite, all at once. Agents may
 
 - Rung never stores credentials. CLI providers reuse the tool's own login; HTTP
   providers read a key from an environment variable named in `rung.toml`.
-- Drafting with Claude Code runs with all tools disabled (`--tools ""`), so the model sees only
-  what Rung sends; Codex runs in a read-only sandbox and may read the repository.
+- Drafting with Claude Code runs with all tools disabled (`--tools ""`) and no MCP servers
+  (`--strict-mcp-config`), so the model sees only what Rung sends; Codex runs in a read-only sandbox and may read the repository.
 - Model replies are written only inside the chosen output directory. What Rung then *runs* is
   model-written code: drive scripts and Lean builds run in the project, property tests in a
   disposable copy with credential-looking variables removed. None of that is a security sandbox;
@@ -191,6 +221,13 @@ Lean theorem plus a differential test, and a test suite, all at once. Agents may
   names to PyPI and npm; the scanners make whatever network calls they make themselves
   (zizmor runs with `--offline`).
 - Gitleaks always runs with `--redact`.
+- Drive scripts are model-written code that Rung runs with the developer's permissions; fault
+  scenarios kill and restart processes the script itself started. Evidence is not redacted: a HAR or
+  a trace records request headers and bodies, cookies and tokens included, and the GitHub Action
+  uploads `.rung/evidence/` for anyone who can read the repository's workflow artifacts. Drive with
+  test accounts, or set `upload-evidence: false`. Only the excerpts kept in verdict files are redacted.
+- The evidence page escapes everything it shows and loads nothing from the network; it does not
+  sandbox the files it links to.
 
 ## What Rung is not
 

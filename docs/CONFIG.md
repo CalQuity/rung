@@ -70,10 +70,41 @@ that check. `timeout` (seconds) is accepted by every kind.
 
 | Field | Default | |
 |---|---|---|
-| `run` | | Script that drives the app; it gets `RUNG_EVIDENCE_DIR`. Omit it for an attested check |
-| `require` | `[]` | Artifact suffixes that must be present, e.g. `[".webm"]` |
+| `run` | | Script that drives the app; it gets `RUNG_EVIDENCE_DIR` and `RUNG_SEED`. Omit it for an attested check |
+| `require` | `[]` | Artifact suffixes that must be present in every run, e.g. `[".webm", ".zip", ".har"]` |
+| `runs` | `1` | How many times to run the script, once per seed |
+| `seed` | derived from the check id | The first seed; runs use `seed`, `seed + 1`, ... |
+| `faults` | the script's own list | Fault scenario names, passed as `RUNG_FAULTS` (comma-separated); `[]` drives none |
+| `scenarios` | all | Scenario names to drive, passed as `RUNG_SCENARIOS` (comma-separated) |
 
-With `run`, passes only if the script exits 0 **and** wrote at least one non-empty artifact.
+With `run`, each run passes only if the script exits 0 **and** wrote at least one non-empty artifact
+into its own directory (`.rung/evidence/<check>/<time>/seed-<N>/`), with every `require` suffix. If the
+script writes `result.json`, Rung also fails the run when it records a failed scenario, reports a seed
+other than the one Rung passed, or has no scenario for a name in `faults` or `scenarios`. The check
+passes only if every run passes. The verdict's `details.runs` (also in `rung check --json`) lists each
+seed with its verdict, scenarios and failed assertions; a failure adds `failing_seed`,
+`failing_scenario` and `reproduce`, the command that runs that seed again:
+`rung check <id> --seed N`, optionally with `--scenario NAME`. Such a run is not recorded, because it
+does not stand for the check as declared.
+
+Every run also writes `index.html` next to its seed directories (the verdict's `details.report`): a
+self-contained page with each seed's result, its scenarios, faults and assertions, screenshots in step
+order, the video, and links to `trace.zip` and the HAR. `rung evidence <id> [--seed N] [--out DIR]`
+writes it again for the newest run.
+
+`result.json`, as the drafting guide asks for it:
+
+```json
+{"feature": "apply a coupon", "seed": 4242, "passed": true,
+ "not_applicable": {"auth": "the checkout page has no sign-in"},
+ "scenarios": [{"name": "reload", "category": "fault", "faults": ["reload after applying WELCOME5"],
+                "passed": true,
+                "assertions": [{"name": "coupon applied once", "expected": "$32.00", "observed": "$32.00",
+                                "passed": true}]}]}
+```
+
+Categories are `happy`, `input`, `state`, `auth`, `fault` and `robustness`. Files in a subdirectory
+named after a scenario appear under that scenario on the evidence page.
 
 Without `run`, the check is **attested**: an agent drives the feature with its own browser or
 computer-use tool (Claude in Chrome, Codex, computer use) or a person does it by hand, and records the
