@@ -3,7 +3,7 @@
 All notable changes to Rung. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 
-## Unreleased
+## 0.2.0 (2026-11-03)
 
 ### Added
 - **Seeded runs.** Evidence checks pass `RUNG_SEED` to the drive script. New options: `runs` (default
