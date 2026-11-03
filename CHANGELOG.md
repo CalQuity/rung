@@ -3,7 +3,7 @@
 All notable changes to Rung. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 
-## Unreleased
+## 0.3.0 (2026-11-04)
 
 ### Added
 - **`rung kit`** shows the project's verification kit part by part: linters and type checkers, tests,
@@ -40,6 +40,13 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
   single pure function as a candidate for property tests or a model. A module that serves requests
   is no longer counted as a pure core.
 - `rung init` ends with the kit instead of the recommendation list; `rung plan` still prints that.
+- `rung init` installs the agent skills, AGENTS.md rules and the Claude Code Stop hook by default.
+  To keep the 0.2 behaviour, pass `--no-agents` (and run `rung agents` when you want them).
+- Once a project has a feature map, `rung draft runtime` drives only its approved features and stops
+  with an error while none is approved or an approved feature changed since approval. Projects without
+  a map (an existing `.rung/verify/FEATURES.md`) draft as before. When the model returns a drive
+  script, a failed draft now says why the last run failed, and the model sees each failed assertion
+  of a failing happy path with what it expected and observed.
 
 ## 0.2.0 (2026-11-03)
 

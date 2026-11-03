@@ -1,6 +1,6 @@
 [project]
 name = "rung-cli"
-version = "0.2.0"
+version = "0.3.0"
 description = "An opinionated verification ladder for software written with coding agents: architecture rules, runtime evidence, properties, TLA+ and Lean, and an evidence ledger that expires when code changes."
 readme = "README.md"
 license = "Apache-2.0"

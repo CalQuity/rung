@@ -78,7 +78,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: CalQuity/rung@v0.2.0
+      - uses: CalQuity/rung@v0.3.0
 ```
 
 Install whatever the checks need (language runtimes, scanners) in steps before `CalQuity/rung`.
