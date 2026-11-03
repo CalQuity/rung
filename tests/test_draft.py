@@ -266,3 +266,23 @@ def test_sec2_runtime_requirements_are_vetted_before_anything_is_installed(tmp_p
     result = runtime.draft_runtime(provider, tmp_path, survey.survey(tmp_path), focus=[], max_rounds=2)
     assert result.ok and result.rounds == 2 and "will not install" in provider.prompts[1]
 
+
+def test_claude_cli_drafts_without_tools_or_mcp_servers(monkeypatch) -> None:
+    import json
+    import subprocess
+
+    from rung.drafting import providers
+
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        seen.append(cmd)
+        envelope = {"is_error": False, "structured_output": {"notes": "x"}, "result": "", "modelUsage": {}}
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(envelope), "")
+
+    monkeypatch.setattr(providers.ClaudeCLI, "available", lambda self: True)
+    monkeypatch.setattr(providers.subprocess, "run", fake_run)
+    provider = providers.ClaudeCLI(LLMConfig(provider="claude-cli"))
+    assert provider.complete_json("hi", schema={"type": "object", "properties": {}, "required": []}) == {"notes": "x"}
+    (cmd,) = seen
+    assert cmd[cmd.index("--tools") + 1] == "" and "--strict-mcp-config" in cmd and "--mcp-config" not in cmd
