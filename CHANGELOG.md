@@ -3,6 +3,47 @@
 All notable changes to Rung. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 
+## Unreleased
+
+### Added
+- Formal models that cannot silently go stale. Each `tla` and `lean` check records, in a committed
+  `.rung/formal/<check>.json`, the commit and a digest of the code its model was last confirmed to
+  describe. When that code changes, `rung check` no longer reruns TLC on the unchanged spec and calls
+  it a pass: the check is an error ("the code changed since the model was confirmed at <commit>; the
+  model may no longer describe it") naming the changed files and ending with the command to run,
+  `rung status` shows it as `drifted`, and laws it enforces are `unproven` with the reason.
+- `rung maintain <check>` gives the drafting model the spec or model files, the diff of the covered
+  files (and SQL definitions) since the confirmed commit and the commit messages, has it classify
+  each change (no effect, the model must change, the promise changed on purpose with quoted
+  evidence, the promise may be broken), and updates the model from the code. A reply that removes or
+  rewrites an invariant, property or theorem, or adds a state constraint, without such evidence is
+  sent back. Rung then reruns the checker and, for TLA+, the fail-ability check, and reports one
+  outcome: in sync, updated, bug or blocked. The confirmed commit moves forward for in sync, updated,
+  and a bug found on an updated model; a blocked attempt is kept in `.rung/cache/maintain/<check>/`
+  and the model files are left as they were.
+- `rung confirm <check> --by NAME --reason TEXT` records that a person reviewed a TLA+ or Lean model
+  against the current code, then reruns the check.
+- Fail-ability for TLA+: after a draft passes, and on `rung maintain`, Rung removes one action guard
+  at a time and runs TLC on each mutant. If no invariant other than `TypeOK` notices any guard
+  missing, the spec goes back to the model as too weak. The score ("4/5 guard mutants caught by an
+  invariant") is recorded and shown by `rung check` and `rung report`.
+- Readable counterexamples: TLA+ drafts return a plain-language label for each action and a
+  statement and harm for each invariant. A counterexample is printed as numbered steps in those
+  words with only the variables each step changed, next to the raw trace, and saved as a Mermaid
+  `stateDiagram-v2` (`counterexample.mmd`) in the check's evidence; a pass under 200 states also
+  writes `state-graph.mmd` from TLC's DOT dump.
+- TLA+ and Lean drafts return a `scope` (bounds, assumptions, what is not covered) and the functions
+  they mirror, shown by `rung check`, `rung laws` and `rung report` and stored in the verdict.
+- Laws gain an optional `harm:` line, proposed by every draft and shown by `rung laws` and the report.
+- An accepted TLA+ or Lean draft writes `.claude/skills/verify-<check>/SKILL.md`: what it promises,
+  the covered files and functions, bounds and assumptions, `rung check <check>`, how to tell a real
+  bug from a modeling error, when to run `rung maintain`, and the confirmed commit. `rung maintain`
+  and `rung confirm` keep it current.
+
+### Changed
+- An accepted TLA+ draft is checked once more through `rung check`, so it leaves a verdict and the
+  readable counterexample or state graph.
+
 ## 0.1.4 (2026-11-01)
 
 ### Changed
