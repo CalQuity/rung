@@ -36,7 +36,9 @@ rung prove "pytest tests/test_refunds.py" --expect "refund exceeded charge"
 
 - **Runtime evidence with video.** Ask `rung draft runtime` for a Playwright script, or write
   one. Save a recording into `$RUNG_EVIDENCE_DIR` and require it:
-  `rung add evidence ui-flow --run "python3 e2e/checkout.py" --require .webm`.
+  `rung add evidence ui-flow --run "python3 e2e/checkout.py" --require .webm`. Add `.zip` and
+  `.har` to require a Playwright trace and a network log, and `runs = 3` in `rung.toml` to run three
+  seeds; read `RUNG_SEED` in the script so a failing seed reproduces.
 - **Framework-specific static checks** run as commands, for example
   `rung add command react --run "npx -y react-doctor@latest --blocking error"`.
 - **Accessibility** checks (axe through Playwright) are commands or part of the evidence script.
