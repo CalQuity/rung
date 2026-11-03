@@ -27,18 +27,41 @@ FILES = {
     },
 }
 STRINGS = {"type": "array", "items": {"type": "string"}}
-LAWS = {
-    "type": "array",
-    "items": {
-        "type": "object",
-        "properties": {"id": {"type": "string"}, "text": {"type": "string"}},
-        "required": ["id", "text"],
-        "additionalProperties": False,
-    },
-}
+
+
+def _objects(**fields: dict[str, Any]) -> dict[str, Any]:
+    """An array of strict objects with these fields."""
+    return {
+        "type": "array",
+        "items": {"type": "object", "properties": fields, "required": list(fields), "additionalProperties": False},
+    }
+
+
+_STR = {"type": "string"}
+LAWS = _objects(id=_STR, text=_STR, harm=_STR)
 LAWS_FORMAT = """
 - `laws`: each guarantee the spec or proofs check, as one plain sentence a non-specialist can approve,
-  with a short kebab-case `id`. These are added to LAWS.md as proposals; a person approves them."""
+  with a short kebab-case `id` and `harm`: one sentence on what goes wrong for a person if it breaks.
+  These are added to LAWS.md as proposals; a person approves them."""
+# What a formal model covers, for people and for the per-check verify skill.
+SCOPE = {
+    "type": "object",
+    "properties": {"bounds": STRINGS, "assumptions": STRINGS, "not_covered": STRINGS},
+    "required": ["bounds", "assumptions", "not_covered"],
+    "additionalProperties": False,
+}
+SCOPE_FORMAT = """
+- `scope`: `bounds` (each constant or limit and its value, e.g. "Clicks = {c1, c2}: two clicks of Pay"),
+  `assumptions` (what the model takes as given, e.g. "each database call is atomic") and `not_covered`
+  (behaviour of the code the model leaves out). Plain sentences.
+- `functions`: each function the model mirrors, as `path:line name`."""
+ACTIONS = _objects(name=_STR, label=_STR)
+INVARIANTS = _objects(name=_STR, statement=_STR, harm=_STR)
+LABELS_FORMAT = """
+- `actions`: every action `Next` can take, with `name` exactly as in the spec and `label`: what happens,
+  in plain words a non-specialist understands ("a customer clicks Pay", "the gateway charges the card").
+- `invariants`: every invariant and property the .cfg lists, with `name` as in the spec, `statement`
+  (one plain sentence) and `harm` (one sentence: what goes wrong for a person if it breaks)."""
 
 
 def schema(**properties: dict[str, Any]) -> dict[str, Any]:
@@ -58,6 +81,8 @@ class DraftResult:
     notes: str = ""  # what the model wants the developer to know
     laws: list[dict[str, str]] = field(default_factory=list)  # proposed laws, for a person to approve
     context: list[str] = field(default_factory=list)  # files Rung added to the prompt, e.g. SQL definitions
+    described: dict[str, Any] = field(default_factory=dict)  # scope, functions, action labels, invariants
+    failability: dict[str, Any] = field(default_factory=dict)  # guard mutants caught, for a passing TLA+ spec
 
 
 def files_of(reply: dict[str, Any]) -> dict[str, str]:

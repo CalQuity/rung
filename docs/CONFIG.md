@@ -11,6 +11,8 @@
 | `.rung/baselines/<check>.json` | yes | Accepted existing findings for a scan check |
 | `.rung/waivers.toml` | yes | Accepted individual findings, with reasons and expiry dates |
 | `.rung/verify/` | yes | Generated drive script and feature map (`rung draft runtime`) |
+| `.rung/formal/<check>.json` | yes | For a `tla` or `lean` check: the code its model was last confirmed to describe, and what the model says (scope, labels, fail-ability) |
+| `.claude/skills/verify-<check>/SKILL.md` | yes | How an agent runs, reads and maintains one `tla` or `lean` check |
 | `.rung/evidence/` | no | Evidence artifacts; the ledger keeps their hashes. Upload them from CI. |
 
 ## `rung.toml`
@@ -167,6 +169,32 @@ merge base, or all declared packages without a base, are looked up on PyPI or np
 
 Needs Java 11+ and `tla2tools.jar` (`RUNG_TLA2TOOLS` or `~/.cache/rung/tla2tools.jar`).
 
+A counterexample is printed as plain-language steps (when the check has a model record) next to the
+raw trace, and drawn as `.rung/evidence/<check>/<run>/counterexample.mmd`. A pass under 200 distinct
+states also writes `state-graph.mmd` there. Both are Mermaid `stateDiagram-v2` files, hashed into
+the verdict like any evidence.
+
+### Model records (`tla` and `lean`)
+
+A drafted `tla` or `lean` check has a record in `.rung/formal/<check>.json`, written by Rung:
+
+| Field | |
+|---|---|
+| `sources` | The covered source files (globs) the model describes; a `tla` check's `covers` |
+| `confirmed` | `commit`, `digest` and per-file digests of `sources` when the model was last confirmed, with `by`, `reason` and `at` |
+| `scope` | `bounds`, `assumptions` and `not_covered`, in plain sentences |
+| `functions` | The functions the model mirrors, as `path:line name` |
+| `actions`, `invariants` | (`tla`) Each action's plain-language label; each invariant's statement and harm |
+| `failability` | (`tla`) Guard mutants caught by an invariant, for one spec digest |
+| `history` | The last 20 confirmations, each with its outcome |
+
+When the digest of `sources` differs from `confirmed.digest`, the check is an error ("the code
+changed since the model was confirmed at <commit>") and `rung status` shows it as `drifted`. Resolve
+it with `rung maintain <check>` (the drafting model updates the model from the diff and Rung rechecks
+it) or, after reviewing the model yourself, `rung confirm <check> --by NAME --reason TEXT`. A check
+with no record behaves as before; `rung confirm` creates one from its `covers` (for `lean`, from its
+`<check>-drt` check's `covers`).
+
 ### `lean`
 
 | Field | Default | |
@@ -192,9 +220,12 @@ Both sides read one input per line on stdin and print one output line per input.
 ```markdown
 ## law-id
 One plain sentence a person can approve.
+- harm: one sentence on what goes wrong for a person if it breaks (optional)
 - enforced by: check-a, check-b
 - status: proposed | approved
 ```
+
+A law enforced by a check whose model has drifted is `unproven`, with the changed files as the reason.
 
 ## Waivers (`.rung/waivers.toml`)
 

@@ -2,6 +2,9 @@
   "The build passed" is not evidence; a fresh verdict in the ledger is.
 - A TLC counterexample is either a bug in the code or a wrong spec. Fix the code.
   Only change a spec or an invariant when a person has agreed the spec was wrong.
+- "The code changed since the model was confirmed" means a TLA+ or Lean model may no longer
+  describe the code: run `rung maintain <check>`. Use `rung confirm` only after you compared the
+  model with the code yourself, and say what you compared in `--reason`.
 - Never weaken a law, an invariant, a theorem, a property or a test to make it pass.
   Laws in LAWS.md that are `approved` are not yours to edit. Never add a waiver.
 - Never use `sorry`, `admit`, `axiom`, `native_decide`, `unsafe`, `implemented_by`

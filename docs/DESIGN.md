@@ -150,11 +150,57 @@ Proving them of a ten-times-smaller model, then demanding identical outputs from
 real code on thousands of random inputs, is cheap and works for any language that can
 read stdin. Divergences are shrunk to a minimal input before they are reported.
 
+### Models that cannot silently go stale
+
+These checks are the formal-methods part of a project's verification kit, and a model is only
+worth its verdict while it describes the code. When covered code changes, the verdict goes stale and
+`rung check` reruns TLC, but on the *unchanged* spec, which usually passes again. That pass looks
+like proof and is about code that no longer exists. So each `tla` and `lean` check keeps a small
+committed record, `.rung/formal/<check>.json`: the commit and a digest of the covered sources when
+the model was last confirmed to describe them, with who confirmed it and why.
+
+- **Drift is an error, not a rerun.** When the covered sources' digest differs from the confirmed
+  one, the check is an error naming the changed files, and the laws it enforces are UNPROVEN until
+  someone acts. A draft that is accepted sets the record; so do the two ways out of drift.
+- **`rung maintain <check>`** gives the model the spec, the diff of the covered files (and any SQL
+  definitions) since the confirmed commit, and the commit messages, and makes it classify each
+  change: no effect, the model must change, the promise changed on purpose (with quoted evidence),
+  or the promise may be broken. It updates the model from the code and never sees a checker
+  result. Rung rejects a reply that removes or rewrites an invariant, property or theorem, or adds
+  a state constraint, unless a change is classified as an intended promise change with evidence.
+  The outcome is in sync, updated, bug (a counterexample on a model that describes the current
+  code) or blocked; the confirmed commit moves only when the model now describes the code.
+- **`rung confirm <check> --by NAME --reason TEXT`** records that a person compared the model with
+  the code and it still holds, for changes no model needs to see.
+
+### Able to fail
+
+A TLA+ pass proves invariants over every reachable state, but an invariant that holds whatever the
+actions do proves nothing. After a TLA+ draft passes, and on every `rung maintain`, Rung removes one
+guard at a time from the actions (a conjunct with no primed variable) and runs TLC on each mutant
+with a short timeout. At least one mutant must break an invariant other than `TypeOK`; if none does,
+the spec goes back to the model as too weak to catch anything. The score is kept with the record
+and shown with each check. Swapping conjuncts is not tried: conjunction is commutative, so it would
+change nothing. Lean has the differential test against the real code instead.
+
+### Readable by people
+
+The TLA+ draft also returns a plain-language label for each action, a one-sentence statement and
+harm for each invariant, and a `scope`: the bounds, the assumptions and what is not covered (Lean
+drafts return the scope too). A counterexample is printed as numbered steps in those words, with
+only the variables each step changed, next to the raw trace, and drawn as a Mermaid
+`stateDiagram-v2`; a passing spec under 200 states also gets a diagram of the explored graph from
+TLC's DOT dump. Each accepted model gets a project skill, `.claude/skills/verify-<check>/SKILL.md`,
+saying what it promises, covers and assumes, how to run it, how to tell a real bug from a modeling
+error, and when to maintain it.
+
 ## Laws
 
 `LAWS.md` holds the rules the software must never break, one sentence each, in words
-a non-specialist can approve. Each law names the checks that enforce it. A law is
-**held** only when a person has approved it and every enforcing check has a fresh pass.
+a non-specialist can approve, with an optional `harm:` line saying what goes wrong for a person
+if it breaks. Each law names the checks that enforce it. A law is **held** only when a person has
+approved it and every enforcing check has a fresh pass; a law enforced by a model whose code has
+drifted is unproven.
 
 This generalises Bend 2's `LAWS.bend`. Bend proves laws about programs written in Bend;
 Rung lets a law about a Python or TypeScript service be enforced by a TLA+ invariant, a

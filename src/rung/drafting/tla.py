@@ -8,9 +8,15 @@ from pathlib import Path
 from rung import guides
 from rung.drafting import sql_context
 from rung.drafting.common import (
+    ACTIONS,
     FILES,
+    INVARIANTS,
+    LABELS_FORMAT,
     LAWS,
     LAWS_FORMAT,
+    SCOPE,
+    SCOPE_FORMAT,
+    STRINGS,
     DraftResult,
     files_of,
     machine_path_problem,
@@ -19,16 +25,22 @@ from rung.drafting.common import (
     source_block,
 )
 from rung.drafting.providers import Provider
-from rung.engines import tla
+from rung.engines import tla, tla_mutate
 
 FORMAT = (
     """
 
 Return `files` with exactly two entries: `<Module>.tla` (starting `---- MODULE <Module> ----` and ending
 `====`) and `<Module>.cfg`. Put anything you want the developer to know in `notes`."""
+    + LABELS_FORMAT
+    + SCOPE_FORMAT
     + LAWS_FORMAT
 )
-SCHEMA = schema(files=FILES, laws=LAWS, notes={"type": "string"})
+SCHEMA = schema(
+    files=FILES, actions=ACTIONS, invariants=INVARIANTS, scope=SCOPE, functions=STRINGS, laws=LAWS,
+    notes={"type": "string"},
+)  # fmt: skip
+DESCRIBED = ("actions", "invariants", "scope", "functions")
 
 # Slips language models make in TLA+ that are safe to correct mechanically before SANY sees the spec.
 UNICODE_OPERATORS = {
@@ -79,7 +91,9 @@ def draft(
         + (f"\n\n{block}" if (block := sql.block(root)) else "")
     )
     files: list[Path] = []
+    weak: list[str] = []  # guards no invariant noticed missing, in the last spec that passed
     for round_no in range(1, max_rounds + 1):
+        weak = []
         reply = provider.complete_json(prompt, schema=SCHEMA, system=system, cwd=root)
         produced, notes, laws = files_of(reply), reply["notes"].strip(), reply["laws"]
         spec_name = next((n for n in produced if n.endswith(".tla")), None)
@@ -92,6 +106,7 @@ def draft(
             prompt += problem
             continue
         files = safe_write(out_dir, produced)
+        described = {k: reply[k] for k in DESCRIBED}
         result = tla.run(out_dir / spec_name, out_dir / cfg_name)
         if result.verdict == "fail":
             return DraftResult(
@@ -104,16 +119,27 @@ def draft(
                 laws=laws,
                 warnings=sql.warnings,
                 context=sql.files,
+                described=described,
             )
         if result.verdict == "pass" and result.distinct_states > 1:
+            # A pass counts only if the invariants can fail: removing a guard must break one of them.
+            failability = tla_mutate.run(out_dir / spec_name, out_dir / cfg_name)
+            if not failability.ok:
+                weak = failability.survivors()
+                prompt += tla_mutate.repair_request(failability)
+                continue
             return DraftResult(True, f"model-checked {result.distinct_states} distinct states, no violation",
                                files, round_no, notes=notes, laws=laws, warnings=sql.warnings,
-                               context=sql.files)  # fmt: skip
+                               context=sql.files, described=described,
+                               failability=failability.as_dict())  # fmt: skip
         problem = (
             (result.reason + "\n" + result.output[-2000:])
             if result.verdict == "error"
             else "TLC explored at most one state, so the invariants are vacuous. Make Init and Next reachable."
         )
         prompt += f"\n\nTLC rejected your previous spec:\n{problem}\nFix the spec (not the invariants)."
+    if weak:
+        message = f"after {max_rounds} rounds the invariants still notice no removed guard: {'; '.join(weak)}"
+        return DraftResult(False, message, files, max_rounds, warnings=sql.warnings, context=sql.files)
     return DraftResult(False, f"no checkable spec after {max_rounds} rounds", files, max_rounds,
                        warnings=sql.warnings, context=sql.files)  # fmt: skip

@@ -20,3 +20,5 @@ to drive it, and what observable state proves it works.
   has each scenario's assertions, screenshots and video. Open a Playwright trace with
   `npx playwright show-trace <path>/trace.zip` (or drop it on trace.playwright.dev) to step through the
   run with the DOM, network and console at every action; the `.har` file opens in browser dev tools.
+- TLA+ and Lean checks, the formal-methods part of this kit, each have their own `verify-<check>`
+  skill; when one reports that the code changed since its model was confirmed, run `rung maintain <check>`.

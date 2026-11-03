@@ -48,6 +48,14 @@ Rung compare the model with the real code on random inputs.
 - When the induction step fails, check whether the leftover state is reachable. If it is, you found
   a bug in the model or the code; if not, strengthen the invariant.
 
+## Scope
+
+- State the scope: each bound, each assumption ("amounts fit in 64 bits") and what the model leaves
+  out. A proof holds only inside it.
+- When the covered code changes, the check is an error until `rung maintain <check>` updates the
+  model (or a person confirms it with `rung confirm`). Never weaken a theorem unless the promise
+  changed on purpose and you can quote where.
+
 ## Trust gate (Rung enforces it)
 
 - Never `sorry`, `admit`, `axiom`, `native_decide`, `apply?` or `#eval` left in a proof.

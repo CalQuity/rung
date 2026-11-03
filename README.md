@@ -188,6 +188,40 @@ needs them, and the model drafts the first version.
   Lean checks pass only when `#print axioms` shows no `sorry`, no `native_decide` and no
   invented axioms. It is shown the same SQL definitions.
 
+These are the formal-methods part of the project's verification kit, and Rung keeps them honest
+after the draft:
+
+- **Models cannot silently go stale.** Each `tla` and `lean` check records the commit and a digest
+  of the code its model was last confirmed to describe (`.rung/formal/<check>.json`). When that code
+  changes, `rung check` does not rerun TLC on the old spec and call it a pass: it reports that the
+  code changed since the model was confirmed, names the files, and the laws it enforces show as
+  UNPROVEN. `rung maintain <check>` shows the model the diff and commit messages, has it classify
+  each change (no effect, the model must change, the promise changed on purpose with cited
+  evidence, or the promise may be broken), updates the model from the code, and rechecks it:
+  **in sync**, **updated**, **bug** or **blocked**. An invariant or theorem is never weakened
+  without cited evidence. `rung confirm <check> --by NAME --reason TEXT` records a person's review.
+- **Shown able to fail.** After a TLA+ spec passes, Rung removes one action guard at a time and
+  runs TLC on each mutant; at least one must break an invariant, or the invariants are too weak to
+  catch anything and the spec goes back to the model. The score is shown with every check.
+- **Readable.** A counterexample reads as numbered steps in plain words ("a customer clicks
+  Pay"), with the invariant it breaks and the harm, next to the raw trace, and is drawn as a
+  Mermaid state diagram. Each check shows its scope: the bounds, the assumptions and what it does
+  not cover. Laws carry a `harm:` line.
+- **A skill per model.** `.claude/skills/verify-<check>/SKILL.md` tells an agent what the model
+  promises, the files and functions it covers, its bounds, how to replay a counterexample against
+  the code, when to run `rung maintain`, and the confirmed commit.
+
+```console
+$ rung check payments-tla
+ERROR payments-tla (tla): the code changed since the model was confirmed at 29b079f; the model may no longer describe it
+      changed: shop/payments.py
+      next: rung maintain payments-tla
+$ rung maintain payments-tla
+UPDATED payments-tla: the model was updated to describe the code (spec/tla/payments/Checkout.tla) and it checks
+  [model-must-change] shop/payments.py:12-16 checkout now holds a per-order lock across the check, charge and mark paid
+  fail-ability: 4/5 guard mutants caught by an invariant
+```
+
 Every drafted file (spec, adapter, drive script, property test) is sent back to the model if it
 hard-codes a home or temporary directory path (`/Users/<name>/`, `/home/<name>/`, `C:\Users\`,
 `/tmp`), because it would run on one machine only.
@@ -264,6 +298,8 @@ any OpenAI-compatible endpoint, including local models. Rung never stores creden
 | `rung baseline <check>` | Accept a scan's existing findings |
 | `rung waive <check> <fingerprint> --reason ...` | Accept one finding until an expiry date |
 | `rung draft tla\|lean\|property\|runtime` | Model-drafted spec, proof, property tests or drive script; a checker decides |
+| `rung maintain <check>` | Bring a TLA+ or Lean model back in line with code that changed since it was confirmed |
+| `rung confirm <check> --by NAME --reason TEXT` | Record that a person checked a TLA+ or Lean model still describes the code |
 | `rung agents [--hooks]` | Agent skill, AGENTS.md rules, enforcement hook |
 | `rung doctor` | Which tools and model CLIs are available |
 | `rung ledger [--prune]` | Check the verdict files for corruption |
@@ -276,7 +312,9 @@ Configuration lives in `rung.toml`; see [docs/CONFIG.md](https://github.com/CalQ
 ## How Rung stays honest
 
 - A checker never reports `pass` unless its tool confirmed the result. Missing tools and
-  malformed output are errors, and so is a TLA+ spec that reaches only one state.
+  malformed output are errors, and so is a TLA+ spec that reaches only one state, or one whose
+  invariants notice no action guard being removed.
+- A TLA+ or Lean model whose code changed since it was confirmed is an error, not a rerun.
 - A file that changes while a check runs voids the verdict.
 - The ways an agent can get to green without fixing anything (silencing the type checker or linter,
   skipping or deleting tests, lowering coverage thresholds) block in the `shortcuts` check.

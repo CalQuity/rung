@@ -11,8 +11,11 @@ Format:
 
     ## lease-result-from-holder
     A job's result is always written by the worker that holds a valid lease.
+    - harm: a worker whose lease expired overwrites another worker's result.
     - enforced by: lease-protocol, lease-model-proofs, impl-matches-model
     - status: approved
+
+`harm` (optional) says, in one sentence, what goes wrong for a person if the law breaks.
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ from rung.core.ledger import Status
 
 LAWS_FILE = "LAWS.md"
 _HEADING = re.compile(r"^##\s+(\S+)\s*$")
-_FIELD = re.compile(r"^-\s*(enforced by|status):\s*(.*)$", re.I)
+_FIELD = re.compile(r"^-\s*(enforced by|status|harm):\s*(.*)$", re.I)
 
 TEMPLATE = """# Laws
 
@@ -41,6 +44,7 @@ class Law:
     text: str
     enforced_by: list[str] = field(default_factory=list)
     status: str = "proposed"
+    harm: str = ""  # what goes wrong for a person if it breaks
 
 
 def parse(source: str) -> list[Law]:
@@ -57,6 +61,8 @@ def parse(source: str) -> list[Law]:
             key, value = m.group(1).lower(), m.group(2).strip()
             if key == "enforced by":
                 current.enforced_by = [v.strip() for v in value.split(",") if v.strip()]
+            elif key == "harm":
+                current.harm = value
             else:
                 current.status = value.lower() or "proposed"
         elif line.strip() and not line.startswith("#"):
@@ -78,11 +84,14 @@ def propose(root: Path, proposals: list[dict[str, str]], enforced_by: list[str])
     for item in proposals:
         law_id = re.sub(r"[^a-z0-9-]+", "-", item.get("id", "").lower()).strip("-")
         sentence = " ".join(item.get("text", "").split())
+        harm = " ".join(item.get("harm", "").split())
         if not law_id or not sentence or law_id in existing:
             continue
         text = (
             text.rstrip()
-            + f"\n\n## {law_id}\n{sentence}\n- enforced by: {', '.join(enforced_by)}\n- status: proposed\n"
+            + f"\n\n## {law_id}\n{sentence}\n"
+            + (f"- harm: {harm}\n" if harm else "")
+            + f"- enforced by: {', '.join(enforced_by)}\n- status: proposed\n"
         )
         existing.add(law_id)
         added.append(law_id)
@@ -118,6 +127,10 @@ def state(law: Law, statuses: dict[str, Status]) -> tuple[str, str]:
     failing = [c for c in law.enforced_by if statuses[c].state == "failing"]
     if failing:
         return "broken", f"failing: {', '.join(failing)}"
+    drifted = [statuses[c] for c in law.enforced_by if statuses[c].state == "drifted"]
+    if drifted:
+        why = "; ".join(f"{s.check_id}: {s.changed[0]}" if s.changed else s.check_id for s in drifted)
+        return "unproven", f"model drift ({why}); run `rung maintain {drifted[0].check_id}`"
     pending = [c for c in law.enforced_by if statuses[c].state != "fresh"]
     if pending:
         return "unproven", f"stale or never run: {', '.join(pending)}"

@@ -55,8 +55,26 @@ wrong. A spec that passes because it says too little is worse than no spec.
 - Liveness (`<>`, `~>`) fails without fairness; add `WF_vars(A)` only for what the real scheduler
   guarantees.
 
+## Plain words and scope
+
+- Give every action a label a non-specialist understands ("a customer clicks Pay"), and every
+  invariant a one-sentence statement and the harm if it breaks. Rung prints counterexamples in
+  those words.
+- State the scope: each bound (`Clicks = {c1, c2}`), each assumption ("each database call is
+  atomic"), and what the spec leaves out. A pass holds only inside it.
+
 ## A pass must mean something
 
 - A spec that reaches one or two states checks nothing. Rung fails a spec that explores at most one.
+- Rung removes each action guard (a conjunct with no primed variable) in turn and reruns TLC. If no
+  invariant notices any guard missing, the invariants are too weak: add the guarantee each guard
+  exists for as an invariant. Never delete a guard to get past this.
 - A counterexample is a finding. Report it; do not weaken the invariant, add a guard, or remove an
   action to make it go away. Only a person decides whether the code or the spec is wrong.
+
+## When the code changes
+
+- Rung records the commit the spec was confirmed against. When the covered code changes, the check
+  is an error until `rung maintain <check>` updates the spec from the diff (or a person runs
+  `rung confirm <check> --by NAME --reason TEXT`). Update the actions from the code; never touch an
+  invariant unless the promise changed on purpose and you can quote where.

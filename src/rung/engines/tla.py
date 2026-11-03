@@ -165,8 +165,10 @@ def parse_output(output: str, returncode: int) -> TLCResult:
     return result
 
 
-def run(spec: Path, config: Path | None = None, *, workers: str = "auto", timeout: int = 600) -> TLCResult:
-    """Model-check `spec` with TLC and return the parsed result."""
+def run(
+    spec: Path, config: Path | None = None, *, workers: str = "auto", timeout: int = 600, dump: Path | None = None
+) -> TLCResult:
+    """Model-check `spec` with TLC and return the parsed result; `dump` writes the state graph there as DOT."""
     jar, java = find_jar(), find_java()
     spec = spec.resolve()
     cmd = [java, "-XX:+UseParallelGC", "-cp", str(jar), "tlc2.TLC", "-workers", workers]
@@ -174,6 +176,8 @@ def run(spec: Path, config: Path | None = None, *, workers: str = "auto", timeou
         cmd += ["-metadir", meta]
         if config is not None:
             cmd += ["-config", str(config.resolve())]
+        if dump is not None:
+            cmd += ["-dump", "dot,actionlabels", str(dump.resolve().with_suffix(""))]
         cmd.append(spec.name)
         try:
             proc = subprocess.run(cmd, cwd=spec.parent, capture_output=True, text=True, timeout=timeout)
