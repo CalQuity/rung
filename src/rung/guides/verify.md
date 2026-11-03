@@ -12,3 +12,11 @@ to drive it, and what observable state proves it works.
 - A feature the script cannot reach? Drive it with your browser or computer-use tool, record it,
   and `rung attest <check> <files> --by <tool> --note "<what you saw>"` (an evidence check
   declared without `run`).
+- A failure names its seed and prints the command that reproduces it exactly:
+  `rung check {check_id} --seed <N>`. Add `--scenario <name>` to run one scenario. Neither records a
+  verdict; run `rung check {check_id}` once it is fixed.
+- See what the script saw: each run writes an evidence page, `index.html`, in its directory under
+  `.rung/evidence/{check_id}/` (`rung evidence {check_id}` rewrites it, `--seed N` for one seed). It
+  has each scenario's assertions, screenshots and video. Open a Playwright trace with
+  `npx playwright show-trace <path>/trace.zip` (or drop it on trace.playwright.dev) to step through the
+  run with the DOM, network and console at every action; the `.har` file opens in browser dev tools.

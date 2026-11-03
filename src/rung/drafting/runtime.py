@@ -25,8 +25,17 @@ from pathlib import Path
 from rung import guides
 from rung.analysis.survey import Inspection
 from rung.checks import deps
-from rung.checks.base import Context
-from rung.checks.command import EvidenceChecker
+from rung.checks.base import Context, Outcome
+from rung.checks.command import (
+    CATEGORIES,
+    EvidenceChecker,
+    assertion_outcomes,
+    failed_assertions,
+    missing_required,
+    not_applicable,
+    read_result,
+    scenarios,
+)
 from rung.core import git
 from rung.core.config import Check
 from rung.core.errors import ToolMissing
@@ -46,7 +55,73 @@ FORMAT = """
 
 Return `files` with `drive.py` and `FEATURES.md`, `sources` with globs of the source files the driven
 feature depends on, `requirements` with the Python packages the script imports beyond the standard
-library (e.g. `playwright`; empty if none), and `notes` with anything the developer should know."""
+library (e.g. `playwright`; empty if none), and `notes` with anything the developer should know.
+`drive.py` reads `RUNG_SEED`, `RUNG_FAULTS` and `RUNG_SCENARIOS` and writes `result.json` with one
+scenario per category (or a reason in `not_applicable`), as the guide describes."""
+
+# What each `--require` suffix asks the script to record, so the model knows what to produce.
+SUFFIX_MEANING = {
+    ".webm": "a video of the browser session", ".zip": "a Playwright trace (trace.zip)",
+    ".har": "a HAR network log", ".png": "screenshots", ".gif": "an animated recording",
+    ".json": "a JSON record", ".txt": "a transcript",
+}  # fmt: skip
+ENV_VARS = ("RUNG_SEED", "RUNG_FAULTS", "RUNG_SCENARIOS")
+
+
+def contract_problems(drive_source: str, result: dict | None) -> list[str]:
+    """How a drive script falls short of the contract, from its source and the `result.json` it wrote.
+
+    The script must take its seed, faults and scenario selection from Rung, and drive more than the
+    happy path: one scenario per category, unless it says why a category does not apply.
+    """
+    problems = [f"drive.py never reads {v}" for v in ENV_VARS if v not in drive_source]
+    if result is None:
+        return [*problems, "drive.py wrote no result.json (an object with `seed` and `scenarios`)"]
+    if "seed" not in result:
+        problems.append("result.json has no `seed`; record the RUNG_SEED the run used")
+    found = scenarios(result) if isinstance(result.get("scenarios"), list) else []
+    if not found:
+        return [*problems, "result.json has no `scenarios`"]
+    if bad := sorted({s["category"] for s in found} - set(CATEGORIES)):
+        problems.append(f"unknown scenario categories {', '.join(map(repr, bad))}; use {', '.join(CATEGORIES)}")
+    covered = {s["category"] for s in found}
+    excused = not_applicable(result)
+    if "happy" not in covered:
+        problems.append("no `happy` scenario: drive the feature's main path first")
+    if missing := [c for c in CATEGORIES[1:] if c not in covered and c not in excused]:
+        problems.append(
+            f"no scenario in categories {', '.join(missing)}; add one per category, or give the reason it does not "
+            "apply to this feature in `not_applicable`"
+        )
+    if covered <= {"happy"}:
+        problems.append("result.json covers only the happy path; edge cases and faults are the point")
+    return problems
+
+
+def _flaky(first: dict | None, second: dict | None) -> list[str]:
+    """Assertions whose outcome differs between two runs with the same seed."""
+    a, b = dict(((s, n), ok) for s, n, ok in assertion_outcomes(first)), dict(
+        ((s, n), ok) for s, n, ok in assertion_outcomes(second))  # fmt: skip
+    return sorted(f"{s}: {n}" if s else n for s, n in set(a) | set(b) if a.get((s, n)) != b.get((s, n)))
+
+
+def _findings(check: Check, outcome: Outcome, result: dict | None) -> list[str]:
+    """Failures that belong to the app, not the script: the script ran, recorded its evidence, passed
+    its happy path, and only edge-case or fault scenarios failed. Those go to a person, like a failing
+    property; sending them back to the model would invite it to make the app's bug pass."""
+    if outcome.verdict != "fail" or result is None or not outcome.evidence:
+        return []
+    if missing_required(check, outcome.evidence):
+        return []
+    found = scenarios(result)
+    failing = [s for s in found if not s["passed"]]
+    if (
+        not failing
+        or any(s["category"] == "happy" for s in failing)
+        or not any(s["category"] == "happy" for s in found)
+    ):
+        return []
+    return failed_assertions(failing)
 
 
 MIN_PACKAGE_AGE_DAYS = 30
@@ -93,6 +168,10 @@ class RuntimeDraft:
     evidence: list[str] = field(default_factory=list)
     notes: str = ""
     run: str = ""
+    seed: int | None = None
+    findings: list[str] = field(default_factory=list)  # scenarios that failed on the real app: for a person
+    report: str = ""  # the evidence page of the accepted run
+    scenarios: list[dict] = field(default_factory=list)
 
 
 # Files that usually show how an app starts and what a user sees first, per project directory.
@@ -152,14 +231,16 @@ def draft_runtime(
     intent: str = "", max_rounds: int = 4, require: tuple[str, ...] = (),
 ) -> RuntimeDraft:  # fmt: skip
     out_dir = root / VERIFY_DIR
+    wants = ", ".join(f"{r} ({SUFFIX_MEANING[r.lower()]})" if r.lower() in SUFFIX_MEANING else r for r in require)
     prompt = (
         "Write the verification script and feature map for this project.\n"
         + (f"Drive this feature: {intent}\n" if intent else "")
-        + (f"The evidence must include: {', '.join(require)} (e.g. `.webm` means a video).\n" if require else "")
+        + (f"The evidence must include: {wants}.\n" if require else "")
         + "\n"
         + gather_context(root, info, focus)
     )
     files: list[Path] = []
+    checker = EvidenceChecker()
     for round_no in range(1, max_rounds + 1):
         reply = provider.complete_json(prompt, schema=SCHEMA, system=guides.load("runtime") + FORMAT, cwd=root)
         produced = files_of(reply)
@@ -181,13 +262,39 @@ def draft_runtime(
             continue
         run = run_command(requirements)
         check = Check(check_id, "evidence", covers, {"run": run, "timeout": 900, "require": list(require)})
-        outcome = EvidenceChecker().run(Context(root=root), check)
-        if outcome.verdict == "pass":
-            return RuntimeDraft(True, outcome.summary, files, round_no, covers, list(outcome.evidence),
-                                reply["notes"].strip(), run)  # fmt: skip
-        prompt += (
-            f"\n\nRung ran your script and it did not prove the feature ({outcome.summary}):\n"
-            + "\n".join(outcome.lines[-30:])
-            + "\nFix the script. Do not weaken what it checks. Return the same fields."
-        )
+        outcome = checker.run(Context(root=root), check)
+        first = outcome.details["runs"][0]
+        result = read_result(root / first["evidence_dir"])
+        findings = _findings(check, outcome, result)
+        if outcome.verdict != "pass" and not findings:
+            prompt += (
+                f"\n\nRung ran your script and it did not prove the feature ({outcome.summary}):\n"
+                + "\n".join(outcome.lines[-30:])
+                + "\nFix the script. Do not weaken what it checks. Return the same fields."
+            )
+            continue
+        if problems := contract_problems(produced["drive.py"], result):
+            prompt += (
+                "\n\nThe script ran, but it does not meet the contract:\n- "
+                + "\n- ".join(problems)
+                + "\nFix the script and FEATURES.md. Return the same fields."
+            )
+            continue
+        # The same seed must give the same outcome, or a failure could never be reproduced.
+        seed = first["seed"]
+        again = checker.run(Context(root=root, seed=seed), check)
+        if flaky := _flaky(result, read_result(root / again.details["runs"][0]["evidence_dir"])):
+            prompt += (
+                f"\n\nRung ran your script twice with RUNG_SEED={seed} and the runs disagreed on: "
+                + "; ".join(flaky[:10])
+                + ". Derive every random choice and timing from RUNG_SEED, wait for observable state instead of "
+                "sleeping, and give each scenario fresh state. Return the same fields."
+            )
+            continue
+        draft = RuntimeDraft(True, outcome.summary, files, round_no, covers, list(outcome.evidence),
+                             reply["notes"].strip(), run, seed, findings, outcome.details.get("report", ""),
+                             first.get("scenarios", []))  # fmt: skip
+        if findings:
+            draft.message = f"the script works and the app failed {len(findings)} assertion(s); see the findings"
+        return draft
     return RuntimeDraft(False, f"no passing verification script after {max_rounds} rounds", files, max_rounds)

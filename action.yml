@@ -17,6 +17,11 @@ inputs:
   working-directory:
     description: Directory containing rung.toml.
     default: "."
+  upload-evidence:
+    description: >-
+      Upload .rung/evidence/ (screenshots, videos, traces, HARs and each run's index.html) as a workflow
+      artifact, and link it from the report.
+    default: "true"
   policy-paths:
     description: >-
       More files that decide the gate, space-separated (e.g. a semgrep rules file a scan check uses).
@@ -71,6 +76,16 @@ runs:
         if [ "$code" -eq 0 ]; then echo "passed=true" >> "$GITHUB_OUTPUT"; else echo "passed=false" >> "$GITHUB_OUTPUT"; fi
         echo "code=$code" >> "$GITHUB_OUTPUT"
 
+    - name: Upload evidence
+      id: evidence
+      if: inputs.upload-evidence == 'true'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: rung-evidence
+        path: ${{ inputs.working-directory }}/.rung/evidence/
+        if-no-files-found: ignore
+        include-hidden-files: true
+
     - name: Flag policy changes
       id: policy
       if: github.base_ref != ''
@@ -100,8 +115,10 @@ runs:
     - name: Write report
       shell: bash
       working-directory: ${{ inputs.working-directory }}
+      env:
+        EVIDENCE_URL: ${{ steps.evidence.outputs.artifact-url }}
       run: |
-        rung report > "$RUNNER_TEMP/rung-report.md"
+        rung report --evidence-url "$EVIDENCE_URL" > "$RUNNER_TEMP/rung-report.md"
         if [ -f "$RUNNER_TEMP/rung-policy.md" ]; then cat "$RUNNER_TEMP/rung-policy.md" >> "$RUNNER_TEMP/rung-report.md"; fi
         cat "$RUNNER_TEMP/rung-report.md" >> "$GITHUB_STEP_SUMMARY"
 

@@ -4,6 +4,11 @@ You write a verification script that drives a real application the way a user do
 evidence. A program, not a person, will run it, with no one watching. Rung runs it as an `evidence`
 check: it passes only if the script exits 0 **and** leaves artifacts in `$RUNG_EVIDENCE_DIR`.
 
+The script is the app-verification part of the project's verification kit, next to its linters,
+tests and formal checks. It drives more than the happy path. Each feature gets named scenarios for its edge cases,
+its state, its permissions and the faults that matter for it, and every one is reproducible from a
+seed. People read what it recorded, so the evidence tells the story step by step.
+
 ## The contract
 
 - Python 3. Use the standard library (subprocess, urllib, json, time, pathlib, socket, signal).
@@ -16,7 +21,8 @@ check: it passes only if the script exits 0 **and** leaves artifacts in `$RUNG_E
   with a deadline (dev servers can take a minute on first compile) and fail with the server's last
   log lines if it never comes up.
 - Exercise ONE user-facing feature end to end through its real interface: HTTP requests, CLI
-  invocations, browser actions. Never internal functions or test-only endpoints.
+  invocations, browser actions, in every scenario below. Never internal functions or test-only
+  endpoints.
 - Drive only routes that exist. The request lists the routes Rung found in the code (method, path,
   `file:line`, and the prefixes routers are mounted under); use those paths and no others. If the
   feature you were asked to drive is not among them, do not guess a URL and retry on 404s: say in
@@ -38,27 +44,129 @@ check: it passes only if the script exits 0 **and** leaves artifacts in `$RUNG_E
   instead of launching the app locally. This is how a system too large to start from one script is
   verified.
 
+## Scenarios
+
+Drive the feature through named scenarios, each with its own assertions. Cover every category that
+applies to the feature; for one that does not (a shop with no sign-in has no `auth` scenarios), give
+the reason in `result.json` under `not_applicable`. Rung rejects a script that only drives the happy
+path.
+
+- `happy`: the main path a user takes, start to finish.
+- `input`: empty, whitespace-only, very long and unicode/emoji input; case variations (`welcome5`
+  against `WELCOME5`) and leading or trailing spaces; boundary values (zero, negative, the maximum,
+  exactly at a limit, one past it); invalid formats; injection-looking strings (`<script>alert(1)</script>`,
+  `' OR 1=1 --`), which must come back escaped and never run.
+- `state`: repeating an action (the same coupon twice, a second coupon replacing the first); an empty
+  cart or list; stale or expired state; refreshing after success; deep-linking straight to a mid-flow
+  URL.
+- `auth`, where the app has sign-in or permissions: signed out, the wrong user, a wrong or expired
+  token. Each must be refused without leaking details.
+- `fault`: the adverse conditions below.
+- `robustness`: the flow works with the keyboard only; no console errors; no uncaught page
+  exceptions (`page.on("pageerror")`); no 5xx response in the HAR or the recorded exchanges.
+
+Assert what must hold, not what the app happens to do: a total is never negative, nothing happens
+twice, input comes back escaped, an error is a user-facing message and never a stack trace. A
+scenario that fails because the app is wrong is a finding for a person; Rung does not ask you to make
+it pass, so never weaken an assertion to fit the app.
+
+Make the scripts themselves robust:
+
+- Select by role and label (`get_by_role`, `get_by_label`), not CSS internals.
+- Wait for observable state (`expect(...).to_be_visible()`, polling a response), never a fixed sleep.
+- Give each scenario fresh state: a new browser context, a fresh data directory or database file.
+- One scenario's failure must not stop the others. Catch it, record its outcome in `result.json`, go
+  on, and exit 1 at the end if any scenario failed.
+- `python drive.py --feature <name>` drives one feature; `RUNG_SCENARIOS` (comma-separated scenario
+  names) drives only those scenarios. A person uses these to look at one case.
+
+## Seeds
+
+Rung sets `RUNG_SEED` (an integer) for every run, and may run the script several times with
+different seeds. Create `random.Random(int(os.environ.get("RUNG_SEED", "0")))` once and derive every
+choice from it: which inputs to try, which backend call to delay and for how long, when to reload.
+Never use the clock or unseeded randomness to decide anything. The same seed must give the same
+scenarios and the same outcomes; Rung runs the same seed twice while drafting and rejects a script
+whose outcomes differ. Record the seed in `result.json`.
+
+## Faults
+
+`RUNG_FAULTS` is a comma-separated list of fault scenario names to drive. When it is unset, drive the
+fault scenarios the script declares (a `FAULTS` list at the top of the script); when it is set but
+empty, drive none. Use these names, with the parameters chosen from the seed:
+
+- `network`: with Playwright, `context.route("**/api/**", handler)` delays or aborts a seeded choice
+  of the feature's backend calls (`route.abort()`, or wait a seeded number of milliseconds, then
+  `route.continue_()`); `context.set_offline(True)` mid-flow, then back online.
+- `double-submit`: click an action that must happen once (pay, send, place order) twice quickly, or
+  from two tabs at once, then assert it happened once.
+- `reload`: reload the page or go back mid-flow, then assert the state is still right and nothing was
+  applied twice.
+- `restart`: kill the app's process group mid-flow (`os.killpg`), restart it with the same data
+  directory, continue, and assert the state is consistent.
+- `clock`: install Playwright's fake clock (`page.clock.install()`) and fast-forward
+  (`page.clock.fast_forward("25:00:00")`) to drive expiry and session timeouts.
+- `dependency-down`: start the app pointing a dependency (database, cache, payment API) at a dead
+  port, and assert the user sees an error message, not a stack trace or a hang.
+
+Drive only the faults that matter for the feature. Under every fault, assert the invariants: nothing
+happened twice, no state was lost or corrupted, and the user saw a clear error, never a stack trace.
+For an HTTP API or a CLI, inject the same faults with the standard library: kill and restart the
+process, send a request twice concurrently from threads, or put a small `http.server`-based proxy in
+front of the app that delays or drops a seeded choice of requests.
+
+## result.json
+
+Write `result.json` into the evidence directory, and print it as the last line of stdout:
+
+```json
+{
+  "feature": "apply a coupon at checkout",
+  "seed": 4242,
+  "passed": false,
+  "not_applicable": {"auth": "the checkout page has no sign-in"},
+  "scenarios": [
+    {"name": "happy", "category": "happy", "faults": [], "passed": true,
+     "assertions": [{"name": "total drops to $32.00", "expected": "$32.00", "observed": "$32.00",
+                     "passed": true}]},
+    {"name": "reload", "category": "fault", "faults": ["reload after applying WELCOME5"], "passed": false,
+     "assertions": [{"name": "coupon applied once after reload", "expected": "$32.00",
+                     "observed": "$27.00", "passed": false}]}
+  ]
+}
+```
+
+Each scenario has a `name`, a `category` (happy, input, state, auth, fault or robustness), the
+`faults` it injected as plain descriptions, whether it `passed`, and its `assertions`, each with what
+was expected and what was observed.
+
 ## Evidence
 
 Write everything into `Path(os.environ["RUNG_EVIDENCE_DIR"])`. Evidence must survive cleanup.
 
-- A structured result, `result.json`: the feature, whether it passed, and each assertion with what
-  was expected and what was observed. Also print it as the last line of stdout, so an agent can read
-  the outcome without parsing logs.
+- A structured result, `result.json`, as above.
+- Group each scenario's files in a subdirectory named after the scenario
+  (`$RUNG_EVIDENCE_DIR/reload/`), so the evidence page shows them under that scenario.
 - Commands: a transcript of each command and its output, `transcript.txt`.
 - HTTP: each request and response as JSON, `http_exchanges.json`.
 - Server logs: what the app printed while you drove it, `server.log`.
 - Web UIs, with Playwright's sync API (`from playwright.sync_api import sync_playwright, expect`):
-  - Launch Chromium headless and create the context with
-    `browser.new_context(record_video_dir=str(evidence), record_video_size={"width": 1280, "height": 720})`.
-  - Navigate with `page.goto(url, wait_until="networkidle")`; act through visible roles and text
-    (`page.get_by_role("button", name="Save")`, `page.get_by_text(...)`), not CSS internals.
-  - Take a full-page screenshot after each meaningful step:
-    `page.screenshot(path=str(evidence / "01-home.png"), full_page=True)`.
+  - Launch Chromium headless and create one context per scenario, recording a video and a HAR:
+    `browser.new_context(record_video_dir=str(scenario_dir), record_video_size={"width": 1280, "height": 720},
+    record_har_path=str(scenario_dir / "network.har"))`.
+  - Record a Playwright trace in each context:
+    `context.tracing.start(screenshots=True, snapshots=True, sources=True)` before driving, and
+    `context.tracing.stop(path=str(scenario_dir / "trace.zip"))` before closing, also when the scenario
+    fails. A person replays it with `npx playwright show-trace trace.zip` or at trace.playwright.dev.
+  - Navigate with `page.goto(url, wait_until="networkidle")`; act through visible roles and labels
+    (`page.get_by_role("button", name="Save")`, `page.get_by_label(...)`), not CSS internals.
+  - Take a full-page screenshot after each meaningful step, named after the step number and what it
+    proves, so the gallery reads as a story:
+    `page.screenshot(path=str(scenario_dir / "03-coupon-applied-total-32.png"), full_page=True)`.
   - Assert on what a user sees (`expect(page.get_by_text("Saved")).to_be_visible()`) and save the
-    browser console's errors to `console.json`.
-  - Call `context.close()` before `browser.close()`: Playwright writes the video only when the
-    context closes. The video is a `.webm` file in the evidence directory.
+    browser console's errors and page exceptions to `console.json`.
+  - Call `context.close()` before `browser.close()`: Playwright writes the video and the HAR only when
+    the context closes. The video is a `.webm` file.
 
 ## Recording with your own browser or computer-use tool
 
@@ -95,6 +203,8 @@ Write `FEATURES.md` with one section per user-facing feature (the top 3-5), each
 - **How a user reaches it**: the route, command, menu or button.
 - **How the script drives it**: the `drive_<feature>` function and the selectors or requests it uses.
 - **What proves it works**: the observable end state the script asserts.
+- **Scenarios**: each scenario by name and category, with what it asserts; and each category that
+  does not apply, with the reason.
 - **Gotchas**: preconditions (seed data, login, feature flags) and anything that makes it flaky.
 
 List the source files behind each feature. If a precondition is missing, the feature fails and the

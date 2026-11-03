@@ -24,15 +24,17 @@ from rung.core.errors import RungError
 CONFIG_NAME = "rung.toml"
 CHECK_KINDS = ("command", "evidence", "scan", "shortcuts", "deps", "tla", "lean", "drt")
 CHECK_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
+# A scenario name; scripts receive them comma-separated in RUNG_FAULTS and RUNG_SCENARIOS.
+SCENARIO_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 # Options that must be non-negative integers wherever they appear.
-INT_OPTIONS = ("timeout", "cases", "min_len", "max_len", "seed", "min_age_days")
+INT_OPTIONS = ("timeout", "cases", "min_len", "max_len", "seed", "min_age_days", "runs")
 # Options that must be lists of strings wherever they appear.
-LIST_OPTIONS = ("specs", "require", "allow", "theorems", "alphabet")
+LIST_OPTIONS = ("specs", "require", "allow", "theorems", "alphabet", "faults", "scenarios")
 # Every option each kind understands; anything else is a typo that would otherwise do nothing.
 COMMON_OPTIONS = ("timeout", "max_age_days", "specs", "drafted_by")
 KIND_OPTIONS = {
     "command": ("run", "cwd"),
-    "evidence": ("run", "cwd", "require"),
+    "evidence": ("run", "cwd", "require", "runs", "seed", "faults", "scenarios"),
     "scan": ("tool", "run", "cwd", "fail_on", "default_level"),
     "shortcuts": ("allow", "fail_on"),
     "deps": ("allow", "min_age_days"),
@@ -168,6 +170,11 @@ def _validate_check(check: Check) -> None:
     for key in LIST_OPTIONS:
         if key in check.options:
             check.get_list(key)
+    if "runs" in check.options and check.get_int("runs", 1) == 0:
+        raise ConfigError(f"check {check.id!r}: `runs` must be at least 1")
+    for key in ("faults", "scenarios"):
+        if bad := [f for f in check.get_list(key) if not SCENARIO_NAME.match(f)]:
+            raise ConfigError(f"check {check.id!r}: `{key}` names are letters, digits, `.`, `_` or `-`, not {bad[0]!r}")
     for key in ("run", "cwd", "tool", "spec", "config", "project", "model", "impl", "fail_on", "default_level",
                 "model_cwd", "impl_cwd"):  # fmt: skip
         if key in check.options and not isinstance(check.options[key], str):

@@ -61,8 +61,18 @@ def select(config: Config, ids: list[str], changed: set[str] | None) -> list[Che
     return [c for c in chosen if touched_by(c, changed) or not status(config, c, view=view).trusted]
 
 
-def run_check(config: Config, check: Check, *, base: str | None = None) -> Result:
+def run_check(
+    config: Config, check: Check, *, base: str | None = None, seed: int | None = None, scenarios: tuple[str, ...] = ()
+) -> Result:
+    """Run one check and record its verdict.
+
+    With `seed` or `scenarios`, a scripted evidence check runs that one seed or those scenarios only, to
+    reproduce a failure. Such a run does not stand for the check as declared, so it is not recorded.
+    """
     root = config.root
+    partial = seed is not None or bool(scenarios)
+    if partial and (check.kind != "evidence" or is_attested(check)):
+        raise ConfigError(f"--seed and --scenario apply to evidence checks with `run`, not {check.id!r} ({check.kind})")
     if is_attested(check) and (held := status(config, check)).trusted and held.entry:
         # Attested evidence cannot be re-run; while its files are unchanged, the attestation stands.
         return Result(check, Outcome("pass", held.entry.get("summary", "attested"), held.entry.get("evidence", [])))
@@ -70,7 +80,7 @@ def run_check(config: Config, check: Check, *, base: str | None = None) -> Resul
     cover_patterns, spec_patterns = checker.covers(check), checker.specs(check)
     before = (ledger.snapshot(root, cover_patterns), ledger.snapshot(root, spec_patterns))
     try:
-        outcome = checker.run(Context(root=root, base=base), check)
+        outcome = checker.run(Context(root=root, base=base, seed=seed, scenarios=scenarios), check)
     except (RungError, FileNotFoundError, subprocess.TimeoutExpired) as exc:
         outcome = Outcome("error", str(exc))
     # Hash before and after: a file edited mid-run must not be recorded as verified.
@@ -81,7 +91,9 @@ def run_check(config: Config, check: Check, *, base: str | None = None) -> Resul
             "files it covers changed while it ran: " + ", ".join(moved[:5]) + (" ..." if len(moved) > 5 else "")
             + ". If the check writes them itself (coverage, reports), add them to .gitignore or narrow `covers`."
         )  # fmt: skip
-        outcome = Outcome("error", hint, outcome.lines)
+        outcome = Outcome("error", hint, outcome.lines, details=outcome.details)
+    if partial:
+        return Result(check, outcome)
     ledger.record(
         root,
         check_id=check.id,
@@ -98,6 +110,7 @@ def run_check(config: Config, check: Check, *, base: str | None = None) -> Resul
             "lines": redact_lines(outcome.lines[:60]),
             "base": base or "",
             "findings": outcome.findings[:MAX_RECORDED_FINDINGS],
+            **outcome.details,
         },
     )
     return Result(check, outcome)
