@@ -63,12 +63,13 @@ and scans, adds the CI gate and installs the agent rules, while leaving the deci
 
 ```text
 # Claude Code (2.1.275+), inside a session:
-/plugin install rung --marketplace CalQuity/rung
+/plugin marketplace add CalQuity/rung
+/plugin install rung@rung
 /rung:setup
 
 # Codex and other agents that read .agents/skills:
 mkdir -p ~/.agents/skills/rung-setup && curl -fsSL \
-  https://raw.githubusercontent.com/CalQuity/rung/main/skills/setup/SKILL.md \
+  https://raw.githubusercontent.com/CalQuity/rung/main/plugin/skills/setup/SKILL.md \
   | sed 's/^name: setup$/name: rung-setup/' > ~/.agents/skills/rung-setup/SKILL.md
 ```
 

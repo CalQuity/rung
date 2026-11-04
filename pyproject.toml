@@ -44,7 +44,7 @@ packages = ["src/rung"]
 # The source distribution carries what is needed to build, test and read Rung, not the repository's
 # own CI, verdicts or local caches.
 [tool.hatch.build.targets.sdist]
-include = ["src/", "tests/", "examples/", "docs/", "skills/", ".claude-plugin/", "README.md", "CHANGELOG.md", "LICENSE",
+include = ["src/", "tests/", "examples/", "docs/", "plugin/", ".claude-plugin/", "README.md", "CHANGELOG.md", "LICENSE",
            "SECURITY.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "pyproject.toml", "uv.lock"]
 exclude = ["examples/*/.rung/", "**/__pycache__/", "**/.lake/", "**/node_modules/", "**/.next/", "**/.venv/",
            "**/*.tsbuildinfo", "examples/*/docs/screenshots/", "examples/*/backend/acme.db*"]

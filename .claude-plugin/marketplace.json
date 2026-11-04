@@ -1,12 +1,15 @@
 {
   "name": "rung",
-  "description": "Rung: a verification ledger for codebases where coding agents write much of the code.",
-  "owner": { "name": "CalQuity" },
+  "description": "Rung: a verification kit for code that coding agents write.",
+  "owner": {
+    "name": "CalQuity"
+  },
   "plugins": [
     {
       "name": "rung",
-      "source": "./",
-      "description": "Skills to set up and use Rung in a repository."
+      "source": "./plugin",
+      "description": "Set up and use Rung's verification kit in a repository.",
+      "category": "development"
     }
   ]
 }
