@@ -11,6 +11,11 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
   planted for Rung to find. Spoilers are in its `SOLUTIONS.md`.
 
 ### Changed
+- `rung check` on a drive script reads on its own: a failure names the scenarios that failed and lists
+  each failed assertion with what it expected and what the app did (up to 12, the rest on the
+  evidence page), instead of the script's last output lines. More than six evidence files are
+  summarised as a count and their directory; every file is still hashed into the verdict. With one
+  seed, the per-seed line no longer repeats the headline.
 - The model drafting a feature map or drive script now reads the app itself: the files that declare
   routes and pages, and two levels of the project's own modules they import, Python and TypeScript
   alike (`from app import pricing`, `@/components/...`, relative imports), in sub-projects such as

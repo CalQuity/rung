@@ -158,6 +158,32 @@ def assertion_outcomes(result: dict[str, Any] | None) -> list[tuple[str, str, bo
     return sorted((s["name"], a["name"], a["passed"]) for s in scenarios(result) for a in s["assertions"])
 
 
+MAX_LISTED_ARTIFACTS = 6
+MAX_FAILURE_LINES = 12
+
+
+def _short(value: Any, limit: int = 60) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, default=str)
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def failure_details(result: dict[str, Any] | None) -> list[str]:
+    """`scenario: assertion (expected X, observed Y)` for each failed assertion in a `result.json`."""
+    out: list[str] = []
+    for s in _items((result or {}).get("scenarios")):
+        for a in _items(s.get("assertions")):
+            if a.get("passed") is True:
+                continue
+            name = str(a.get("name", a.get("assertion", "")))
+            seen = ""
+            if "expected" in a or "observed" in a:
+                seen = f" (expected {_short(a.get('expected', '?'))}, observed {_short(a.get('observed', '?'))})"
+            out.append(f"{s.get('name') or 'default'}: {name}{seen}")
+    if len(out) > MAX_FAILURE_LINES:
+        out = [*out[:MAX_FAILURE_LINES], f"... and {len(out) - MAX_FAILURE_LINES} more; see the evidence page"]
+    return out
+
+
 def failed_assertions(found: list[dict[str, Any]]) -> list[str]:
     """`scenario: assertion` for each failed assertion; a failed scenario with none failing is listed by name."""
     out = []
@@ -234,8 +260,14 @@ class EvidenceChecker(Checker):
         out_dir = evidence_dir(ctx.root, check.id)
         artifacts: dict[str, str] = {}
         runs = [self._run_seed(ctx, check, out_dir, seed, artifacts) for seed in seeds(check, ctx.seed)]
-        lines = [f"evidence: {path}" for path in artifacts]
+        if len(artifacts) <= MAX_LISTED_ARTIFACTS:
+            lines = [f"evidence: {path}" for path in artifacts]
+        else:  # every file is still hashed into the verdict; the evidence page shows them all
+            lines = [f"evidence: {len(artifacts)} files in {out_dir.relative_to(ctx.root).as_posix()}/"]
         for r in runs:
+            if len(runs) == 1:  # the headline already says it
+                lines += r.lines
+                continue
             lines.append(f"seed {r.seed}: {r.verdict}: {r.summary}")
             lines += [f"  {line}" for line in r.lines]
         details: dict[str, Any] = {"runs": [r.to_dict() for r in runs]}
@@ -305,9 +337,13 @@ class EvidenceChecker(Checker):
         if result.returncode != 0:
             run.verdict, run.summary = "fail", f"`{command}` exited {result.returncode}"
             if failed:
-                run.summary += f"; failed: {'; '.join(failed[:3])}"
-            # result.json is the last stdout line by convention, and is already summarised above.
-            run.lines = [line if len(line) <= 240 else line[:237] + "..." for line in tail(result, 10)]
+                broken = [s["name"] or "default" for s in found if not s["passed"]]
+                run.summary = f"{len(broken)} of {len(found)} scenario(s) failed: {', '.join(broken[:4])}"
+                run.summary += " ..." if len(broken) > 4 else ""
+                # What each failed assertion expected and what the app did, rather than the script's raw output.
+                run.lines = failure_details(data)
+            else:  # no result.json to explain it: the script's own last lines say why it stopped
+                run.lines = [line if len(line) <= 240 else line[:237] + "..." for line in tail(result, 10)]
         elif not mine:
             run.verdict, run.summary = "fail", "the script exited 0 but recorded no evidence"
         elif missing := missing_required(check, mine):

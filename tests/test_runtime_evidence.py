@@ -329,3 +329,22 @@ def test_long_output_lines_are_shortened(tmp_path: Path) -> None:
     check = config.Check("e", "evidence", [], {"run": f"{PY} drive.py"})
     outcome = command.EvidenceChecker().run(command.Context(root=tmp_path), check)
     assert outcome.verdict == "fail" and max(len(line) for line in outcome.lines) < 300
+
+
+def test_a_failing_drive_script_reports_expected_and_observed_not_its_raw_output(tmp_path) -> None:
+    from rung.checks.command import failure_details
+
+    result = {"scenarios": [
+        {"name": "coupon-total-floor", "assertions": [
+            {"name": "total is never negative", "expected": "$0.00", "observed": "-$32.00", "passed": False},
+            {"name": "note shown", "passed": True}]},
+        {"name": "double-submit", "assertions": [{"name": "one paid order", "expected": 1, "observed": 2,
+                                                  "passed": False}]},
+    ]}  # fmt: skip
+    assert failure_details(result) == [
+        "coupon-total-floor: total is never negative (expected $0.00, observed -$32.00)",
+        "double-submit: one paid order (expected 1, observed 2)",
+    ]
+    many = {"scenarios": [{"name": "s", "assertions": [{"name": f"a{i}", "passed": False} for i in range(20)]}]}
+    lines = failure_details(many)
+    assert len(lines) == 13 and lines[-1].startswith("... and 8 more")
