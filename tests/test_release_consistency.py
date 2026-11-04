@@ -17,7 +17,9 @@ def test_versions_agree() -> None:
     assert rung.__version__ == version
     assert json.loads((ROOT / "plugin" / ".claude-plugin" / "plugin.json").read_text())["version"] == version
     action_refs = set(re.findall(r"CalQuity/rung@v([\d.]+)", (ROOT / "README.md").read_text()))
-    action_refs |= set(re.findall(r"CalQuity/rung@v([\d.]+)", (ROOT / "plugin" / "skills" / "setup" / "SKILL.md").read_text()))
+    action_refs |= set(
+        re.findall(r"CalQuity/rung@v([\d.]+)", (ROOT / "plugin" / "skills" / "setup" / "SKILL.md").read_text())
+    )
     assert action_refs == {version}
 
 

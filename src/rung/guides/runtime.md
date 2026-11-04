@@ -209,7 +209,7 @@ entry point is incomplete when the map lists others.
 
 ## The feature map
 
-Write `FEATURES.md` with one section per user-facing feature (the top 3-5), each with these headings:
+Without an approved feature map, also write `FEATURES.md` with one section per user-facing feature (the top 3-5), each with these headings:
 
 - **How a user reaches it**: the route, command, menu or button.
 - **How the script drives it**: the `drive_<feature>` function and the selectors or requests it uses.

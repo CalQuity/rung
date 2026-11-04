@@ -136,7 +136,8 @@ def _suggestions(info: Inspection, existing: set[str]) -> dict[str, tuple[str, s
         found["properties"] = (f"rung draft property {target}",
                                f"Property tests for {target}, kept only if they catch planted bugs")  # fmt: skip
     if info.surfaces and info.surfaces != ["library"]:
-        surface = info.surfaces[0]
+        # A web UI is what a user touches first, even when the app also serves an API.
+        surface = next((x for x in ("web UI", "desktop app") if x in info.surfaces), info.surfaces[0])
         seen = "screenshots and video" if surface in ("web UI", "desktop app") else "transcripts"
         found["app"] = ("rung map", f"Map the {surface}'s features, approve them, then drive them through scenarios "
                         f"and faults, recording {seen}")  # fmt: skip

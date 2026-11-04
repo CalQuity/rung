@@ -207,3 +207,27 @@ def test_a_failing_happy_path_is_explained_to_the_model_with_what_it_observed() 
     assert "own scenario" in advice and "finding" in advice
     assert happy_path_advice({"scenarios": [{"name": "happy", "category": "happy", "assertions": []}]}) == ""
     assert happy_path_advice(None) == ""
+
+
+def test_ui_components_are_neither_protocols_nor_pure_cores_but_money_code_is_a_protocol(tmp_path: Path) -> None:
+    (tmp_path / "components").mkdir()
+    (tmp_path / "components" / "grid.tsx").write_text(
+        "import { useState } from 'react'\nexport function Grid() {\n"
+        + "  const [state, setState] = useState(); const status = state; // retry timeout status state\n" * 4
+        + "}\n"
+    )
+    (tmp_path / "orders.py").write_text(
+        "def checkout(cart):\n    charge = payments.charge(cart)  # the order is paid once the charge settles\n"
+        "    if charge.status == 'paid':\n        mark_paid(cart, charge, payment=charge)\n"
+    )
+    info = survey.survey(tmp_path)
+    assert [c.path for c in info.protocol_candidates] == ["orders.py"]
+    assert "components/grid.tsx" not in [c.path for c in info.model_candidates]
+
+
+def test_the_kit_drives_the_web_ui_when_an_app_also_serves_an_api(project: Path, capsys) -> None:
+    (project / "src" / "server.py").write_text("from http.server import BaseHTTPRequestHandler  # text/html\n")
+    (project / "pyproject.toml").write_text('[project]\nname = "x"\ndependencies = ["fastapi"]\n')
+    assert run(project, "kit", "--json") == 0
+    app = next(p for p in json.loads(capsys.readouterr().out)["parts"] if p["part"] == "app")
+    assert "web UI" in app["missing"] and "screenshots" in app["missing"]

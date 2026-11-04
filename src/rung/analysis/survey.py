@@ -50,7 +50,19 @@ STATEFUL_WORDS = frozenset({
     "state", "status", "transition", "retry", "retries", "backoff", "lease", "leases", "lock", "locks",
     "claim", "claimed", "queue", "dispatch", "timeout", "expire", "expired", "expires", "ack", "nack",
     "commit", "rollback", "reconcile", "reconciliation", "idempotent", "idempotency", "attempt", "attempts",
+    # Code that moves money: a missed interleaving here charges a customer twice.
+    "charge", "charges", "charged", "paid", "payment", "payments", "refund", "refunds", "refunded", "checkout",
+    "capture", "captured", "settle", "settled", "transfer", "balance",
 })  # fmt: skip
+# UI components re-render on state, so their "state" is not a protocol, and they are not a pure core either.
+UI_SUFFIXES = (".tsx", ".jsx", ".vue", ".svelte")
+_REACT = re.compile(r"""from\s+['"]react['"]|require\(['"]react['"]\)""")
+
+
+def is_ui_component(rel: Path, text: str) -> bool:
+    return rel.suffix in UI_SUFFIXES or "components" in rel.parts or bool(_REACT.search(text))
+
+
 _WORD = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])")
 
 
@@ -306,7 +318,8 @@ def survey(root: Path) -> Inspection:
         text = _read(path)
         code = code_only(text)
         lines = text.count("\n") + 1
-        hits = len(stateful_terms(code))
+        ui = is_ui_component(rel, text)
+        hits = 0 if ui else len(stateful_terms(code))
         if hits >= 6:
             protocol.append(Candidate(posix, hits, f"{hits} state/retry/lease terms in {lines} lines"))
         serves = _served_surfaces(text)
@@ -315,7 +328,7 @@ def survey(root: Path) -> Inspection:
             result.app_files.append(posix)
         effects = len(SIDE_EFFECTS.findall(code))
         functions = len(re.findall(r"^\s*(?:def|function|fn|func)\s", code, re.M))
-        if functions >= 1 and effects == 0 and not serves and lines <= 600:
+        if functions >= 1 and effects == 0 and not serves and not ui and lines <= 600:
             model.append(Candidate(posix, functions, f"{functions} functions and no I/O; a small pure core"))
 
     result.languages = dict(languages.most_common())
