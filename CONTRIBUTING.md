@@ -46,8 +46,8 @@ To change what models or agents are told, edit the Markdown in `src/rung/guides/
 
 ## Releasing
 
-1. Move the CHANGELOG.md entries out of "unreleased". Bump the version in `pyproject.toml`, `src/rung/__init__.py` and `.claude-plugin/plugin.json`, and the
-   `CalQuity/rung@v…` references in `README.md` and `skills/setup/SKILL.md`.
+1. Move the CHANGELOG.md entries out of "unreleased". Bump the version in `pyproject.toml`, `src/rung/__init__.py` and `plugin/.claude-plugin/plugin.json`, and the
+   `CalQuity/rung@v…` references in `README.md` and `plugin/skills/setup/SKILL.md`.
    `tests/test_release_consistency.py` fails if any of them disagree.
 2. Merge to `main` through a pull request.
 3. A maintainer pushes the tag (`git tag -a vX.Y.Z -m "Rung X.Y.Z" && git push origin vX.Y.Z`); only
@@ -69,7 +69,7 @@ Options are deprecated with a warning for at least one minor release before they
 
 ## The setup skill and plugin
 
-`skills/setup/SKILL.md` is what developers give their coding agents to set Rung up; `.claude-plugin/`
-publishes it as a Claude Code plugin (`/plugin install rung --marketplace CalQuity/rung`, then
-`/rung:setup`). Validate changes with `claude plugin validate .`. The skills Rung installs *into* a
+`plugin/skills/setup/SKILL.md` is what developers give their coding agents to set Rung up; `.claude-plugin/`
+publishes it as a Claude Code plugin (`/plugin marketplace add CalQuity/rung`, `/plugin install rung@rung`, then
+`/rung:setup`). Validate changes with `claude plugin validate --strict plugin` and `claude plugin validate .`. The skills Rung installs *into* a
 project (`rung agents`) live in `src/rung/guides/` instead.

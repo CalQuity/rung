@@ -3,6 +3,15 @@
 All notable changes to Rung. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 
+## Unreleased
+
+### Changed
+- The Claude Code plugin lives in its own folder, `plugin/` (its manifest, the `setup` skill, a README
+  that says what the skill runs and what it sends, a license and an icon), so it can be listed in
+  Anthropic's plugin directory. Install with `/plugin marketplace add CalQuity/rung` and
+  `/plugin install rung@rung`; the marketplace keeps its name, so existing installs update in place.
+  The setup skill's raw URL is now `.../main/plugin/skills/setup/SKILL.md`.
+
 ## 0.3.0 (2026-11-04)
 
 ### Added

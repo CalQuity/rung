@@ -1,10 +1,10 @@
 ---
 name: setup
 description: >-
-  Set up Rung in a repository and start using it: install the CLI, record the project's tests and
-  security scans as checks, gate pull requests in CI, and teach coding agents the rules. Use when
-  asked to "set up rung", "add rung to this repo", "verify this repo with rung", or when a repository
-  needs a verification ledger for agent-written code.
+  Set up Rung's verification kit in a repository: install the CLI, record the project's linters,
+  tests and security scans as checks, gate pull requests in CI, and teach coding agents to verify
+  their work. Use when asked to "set up rung", "add rung to this repo", "verify this repo with rung",
+  or when a repository needs a way to prove agent-written code works.
 ---
 
 # Set up Rung in a repository
