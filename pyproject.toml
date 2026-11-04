@@ -46,7 +46,8 @@ packages = ["src/rung"]
 [tool.hatch.build.targets.sdist]
 include = ["src/", "tests/", "examples/", "docs/", "skills/", ".claude-plugin/", "README.md", "CHANGELOG.md", "LICENSE",
            "SECURITY.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "pyproject.toml", "uv.lock"]
-exclude = ["examples/*/.rung/", "**/__pycache__/", "**/.lake/"]
+exclude = ["examples/*/.rung/", "**/__pycache__/", "**/.lake/", "**/node_modules/", "**/.next/", "**/.venv/",
+           "**/*.tsbuildinfo", "examples/*/docs/screenshots/", "examples/*/backend/acme.db*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
