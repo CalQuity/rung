@@ -16,6 +16,7 @@ verdict goes stale and the script must be re-proven.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import shutil
@@ -49,7 +50,7 @@ CONTEXT_FILES = (
     "README.md", "README.rst", "package.json", "pyproject.toml", "Makefile", "justfile", "Procfile",
     "docker-compose.yml", "compose.yaml", "manage.py", "main.py", "app.py", "go.mod", "Cargo.toml",
 )  # fmt: skip
-MAX_CONTEXT_BYTES = 60_000
+MAX_CONTEXT_BYTES = 120_000
 SCHEMA = schema(files=FILES, sources=STRINGS, requirements=STRINGS, notes={"type": "string"})
 
 FORMAT = """
@@ -235,28 +236,68 @@ def _context_files(root: Path, info: Inspection, focus: list[str], files: list[s
 
 def app_focus(root: Path, info: Inspection, files: list[str] | None = None) -> list[str]:
     """The files a user-facing feature lives in, when none were named: those that serve requests and those
-    that declare routes, so the model reads the real page, form fields and handlers instead of the README."""
+    that declare routes or pages, then the project's own modules they import (two levels: a page and the
+    components it renders), so the model reads the real labels, fields and handlers instead of the README."""
     listed = files if files is not None else git.list_files(root)
     route_files = [r.file for r in routes.scan(root, listed)]
-    app = list(dict.fromkeys([*info.app_files, *route_files]))
-    return list(dict.fromkeys([*app, *_local_imports(root, app, set(listed))]))[:12]
+    chosen = list(dict.fromkeys([*info.app_files, *route_files]))
+    known = set(listed)
+    frontier = chosen
+    for _ in range(2):
+        frontier = [f for f in _local_imports(root, frontier, known) if f not in chosen]
+        chosen += list(dict.fromkeys(frontier))
+    return chosen[:MAX_FOCUS_FILES]
 
 
-_PY_IMPORT = re.compile(r"^\s*(?:from\s+([\w.]+)\s+import|import\s+([\w.]+))", re.M)
+MAX_FOCUS_FILES = 32
+_PY_IMPORT = re.compile(r"^\s*(?:from\s+([\w.]+)\s+import\s+\(?([\w ,]+)|import\s+([\w.]+))", re.M)
+_JS_IMPORT = re.compile(r"""(?:\bfrom|\bimport)\s*\(?\s*['"]([^'"]+)['"]""")
+_JS_SUFFIXES = ("", ".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.tsx", "/index.js", "/index.jsx")
+
+
+def _ancestors(rel: str) -> list[str]:
+    """`a/b/c.py` -> ["a/b/", "a/", ""]: the directories a module path may be relative to."""
+    parts = rel.split("/")[:-1]
+    return [("/".join(parts[:n]) + "/") if n else "" for n in range(len(parts), -1, -1)]
 
 
 def _local_imports(root: Path, sources: list[str], listed: set[str]) -> list[str]:
-    """The repository's own Python modules that `sources` import (`from shop.pricing import ...`)."""
+    """The repository's own modules that `sources` import: Python (`from app.pricing import ...`, resolved
+    against each enclosing directory, so `backend/app/pricing.py` is found), and TypeScript or JavaScript
+    (relative paths and the `@/` alias, resolved against the nearest directory with a tsconfig or package.json)."""
     found: list[str] = []
     for rel in sources:
-        if not rel.endswith(".py"):
+        path = root / rel
+        if not path.is_file():
             continue
-        text = (root / rel).read_text(errors="ignore")
-        for m in _PY_IMPORT.finditer(text):
-            module = (m.group(1) or m.group(2)).replace(".", "/")
-            for candidate in (f"{module}.py", f"{module}/__init__.py", f"src/{module}.py"):
-                if candidate in listed and candidate not in sources:
-                    found.append(candidate)
+        text = path.read_text(errors="ignore")
+        candidates: list[str] = []
+        if rel.endswith(".py"):
+            for m in _PY_IMPORT.finditer(text):
+                module = (m.group(1) or m.group(3)).replace(".", "/")
+                # `from app import pricing` names a module too: try `app/pricing.py` for each imported name.
+                names = [n.strip() for n in (m.group(2) or "").split(",") if n.strip().isidentifier()]
+                for target in [*(f"{module}/{n}" for n in names), module]:
+                    candidates += [f"{b}{target}{ext}" for b in _ancestors(rel) for ext in (".py", "/__init__.py")]
+        elif rel.endswith((".ts", ".tsx", ".js", ".jsx", ".mjs")):
+            here = rel.rsplit("/", 1)[0] + "/" if "/" in rel else ""
+            for m in _JS_IMPORT.finditer(text):
+                spec = m.group(1)
+                if spec.startswith("."):
+                    base = os.path.normpath(here + spec).replace(os.sep, "/")
+                    candidates += [base + ext for ext in _JS_SUFFIXES]
+                elif spec.startswith("@/"):
+                    for anc in _ancestors(rel):
+                        if f"{anc}tsconfig.json" in listed or f"{anc}package.json" in listed:
+                            for prefix in (anc, f"{anc}src/"):
+                                candidates += [prefix + spec[2:] + ext for ext in _JS_SUFFIXES]
+                            break
+        for c in candidates:
+            # An empty `__init__.py` or a design-system primitive (`components/ui/button.tsx`) says nothing
+            # about the app's features; leave the room to code that does.
+            if c in listed and c not in sources and c not in found and "/ui/" not in f"/{c}" \
+                    and (root / c).stat().st_size > 40:  # fmt: skip
+                found.append(c)
     return found
 
 

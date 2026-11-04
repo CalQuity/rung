@@ -283,3 +283,32 @@ def test_the_page_renders_inline_markdown_but_never_raw_html() -> None:
     assert map_page._block("Intro\n- one\n- `two`\nEnd") == (
         "<p>Intro</p><ul><li>one</li><li><code>two</code></li></ul><p>End</p>"
     )
+
+
+def test_app_focus_follows_python_and_typescript_imports_into_sub_projects(repo: Path) -> None:
+    from rung.drafting import runtime
+
+    files = {
+        "backend/pyproject.toml": '[project]\nname = "b"\ndependencies = ["fastapi"]\n',
+        "backend/app/__init__.py": "",
+        "backend/app/routes.py": "from fastapi import APIRouter\nfrom app import pricing, carts\nrouter = APIRouter()\n"
+        "@router.get('/api/cart')\ndef cart():\n    return carts.load()\n",
+        "backend/app/pricing.py": "def total(items, coupon):\n    return sum(items) - coupon  # the pricing rules\n",
+        "backend/app/carts.py": "from app.pricing import total\ndef load():\n    return total([1, 2], 0)  # the cart\n",
+        "frontend/package.json": '{"dependencies": {"next": "16"}}',
+        "frontend/tsconfig.json": "{}",
+        "frontend/app/cart/page.tsx": "import { CartView } from '@/components/cart-view'\n"
+        "import { Button } from '@/components/ui/button'\nexport default function Page() { return <CartView /> }\n",
+        "frontend/components/cart-view.tsx": "import { CouponForm } from './coupon-form'\n"
+        "export function CartView() { return <CouponForm /> }\n",
+        "frontend/components/coupon-form.tsx": "export function CouponForm() { return <form aria-label='Coupon' /> }\n",
+        "frontend/components/ui/button.tsx": "export function Button() { return <button /> }  // a primitive\n",
+    }
+    for rel, text in files.items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(text)
+    commit_all(repo, "app")
+    focus = runtime.app_focus(repo, survey.survey(repo))
+    assert {"backend/app/routes.py", "backend/app/pricing.py", "backend/app/carts.py", "frontend/app/cart/page.tsx",
+            "frontend/components/cart-view.tsx", "frontend/components/coupon-form.tsx"} <= set(focus)  # fmt: skip
+    assert "frontend/components/ui/button.tsx" not in focus and "backend/app/__init__.py" not in focus

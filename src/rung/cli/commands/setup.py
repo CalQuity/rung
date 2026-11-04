@@ -140,7 +140,8 @@ def _offers(cfg: Config, info: survey.Inspection) -> list[_Offer]:
     kinds = {c.kind for c in cfg.checks}
     offers: list[_Offer] = []
     if "app" not in have and info.surfaces and info.surfaces != ["library"]:
-        offers.append(_Offer("runtime", f"Map the {info.surfaces[0]}'s features for you to approve, then draft a "
+        surface = next((x for x in ("web UI", "desktop app") if x in info.surfaces), info.surfaces[0])
+        offers.append(_Offer("runtime", f"Map the {surface}'s features for you to approve, then draft a "
                              "script that drives the approved ones through scenarios and faults?", []))  # fmt: skip
     model_files = [c.path for c in info.model_candidates[:3]]
     if "properties" not in have and model_files:

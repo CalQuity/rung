@@ -3,6 +3,28 @@
 All notable changes to Rung. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 
+## Unreleased
+
+### Added
+- `examples/acme-store`: a small shop to try Rung on in a minute, built the way a team would build
+  one today (FastAPI and SQLite behind a Next.js, TypeScript and Tailwind front end), with a few bugs
+  planted for Rung to find. Spoilers are in its `SOLUTIONS.md`.
+
+### Changed
+- The model drafting a feature map or drive script now reads the app itself: the files that declare
+  routes and pages, and two levels of the project's own modules they import, Python and TypeScript
+  alike (`from app import pricing`, `@/components/...`, relative imports), in sub-projects such as
+  `backend/` and `frontend/`. Empty `__init__.py` files and design-system primitives
+  (`components/ui/`) are left out to make room.
+- The survey no longer suggests UI components as TLA+ or pure-core candidates, and counts the words of
+  code that moves money (charge, paid, payment, refund, checkout) as signs of a protocol worth
+  modelling. When an app has both a web UI and an API, the kit drives the web UI.
+- The Claude Code plugin lives in its own folder, `plugin/` (its manifest, the `setup` skill, a README
+  that says what the skill runs and what it sends, a license and an icon), so it can be listed in
+  Anthropic's plugin directory. Install with `/plugin marketplace add CalQuity/rung` and
+  `/plugin install rung@rung`; the marketplace keeps its name, so existing installs update in place.
+  The setup skill's raw URL is now `.../main/plugin/skills/setup/SKILL.md`.
+
 ## 0.3.0 (2026-11-04)
 
 ### Added

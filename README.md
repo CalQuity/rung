@@ -10,6 +10,13 @@ skills that make your coding agent use the kit, and records every result in a le
 exact bytes it checked. A result expires the moment those bytes change, and a pull request is
 blocked only on what it introduces.
 
+![Rung on the Acme Store example: rung init builds the kit, rung map drafts a feature map you approve, and the drive script finds a negative total and a double charge](https://raw.githubusercontent.com/CalQuity/rung/main/docs/assets/first-run.gif)
+
+<sub>A minute on [`examples/acme-store`](examples/acme-store), a FastAPI and Next.js shop: `rung init`
+builds the kit, `rung map` drafts a feature map you approve, and the drive script it writes finds a
+coupon that makes the total negative and a double-click that charges the card twice. The model's
+drafting steps take a few minutes and are skipped in the recording; every output shown is real.</sub>
+
 What a pass means depends on the check: a test suite proves what its tests assert, TLC proves an
 invariant over every state of a model, a Lean proof holds for the model it is about. Rung makes
 each of those explicit and keeps them current; it cannot make a weak test strong.
@@ -52,6 +59,9 @@ rung check                        # run everything and record verdicts
 rung kit                          # every part of the kit, how it stands, and the next command
 ```
 
+To try it on an app with a few bugs planted for it to find, run the same commands in
+[`examples/acme-store`](examples/acme-store).
+
 `rung init` asks before each part a model drafts and shows the candidate files it found, so you
 choose what gets modelled. `rung init --yes` drafts every part it can without asking;
 `--no-drafts` sets up the checks and agent skills only. Run it again later to fill the parts still
@@ -63,12 +73,13 @@ and scans, adds the CI gate and installs the agent rules, while leaving the deci
 
 ```text
 # Claude Code (2.1.275+), inside a session:
-/plugin install rung --marketplace CalQuity/rung
+/plugin marketplace add CalQuity/rung
+/plugin install rung@rung
 /rung:setup
 
 # Codex and other agents that read .agents/skills:
 mkdir -p ~/.agents/skills/rung-setup && curl -fsSL \
-  https://raw.githubusercontent.com/CalQuity/rung/main/skills/setup/SKILL.md \
+  https://raw.githubusercontent.com/CalQuity/rung/main/plugin/skills/setup/SKILL.md \
   | sed 's/^name: setup$/name: rung-setup/' > ~/.agents/skills/rung-setup/SKILL.md
 ```
 

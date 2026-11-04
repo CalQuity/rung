@@ -1,0 +1,24 @@
+{
+  "name": "rung",
+  "description": "Set up Rung's verification kit in a repository: record the project's linters, tests and security scans as checks, gate pull requests in CI, draft a feature map and app-driving scripts, and teach coding agents to verify their work.",
+  "version": "0.3.0",
+  "author": {
+    "name": "CalQuity",
+    "url": "https://github.com/CalQuity"
+  },
+  "homepage": "https://github.com/CalQuity/rung",
+  "repository": "https://github.com/CalQuity/rung",
+  "license": "Apache-2.0",
+  "keywords": [
+    "verification",
+    "testing",
+    "security",
+    "playwright",
+    "tla+",
+    "lean",
+    "coding-agents"
+  ],
+  "displayName": "Rung",
+  "documentationUrl": "https://github.com/CalQuity/rung#readme",
+  "supportUrl": "https://github.com/CalQuity/rung/issues"
+}
