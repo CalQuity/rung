@@ -86,8 +86,9 @@ Plan a change with `rung plan --path src/payments.py` or inspect a branch with
 `rung plan --changed --base origin/main`. The plan offers focused checks for declared targets
 and the broader set of checks that may be affected through shared inputs. It also highlights paths
 without an execution check. Read each check's assertions to see which behavior it exercises.
-Use `rung check --changed --focused` for a quick pass over declared workspace targets.
-The output lists which checks it omitted. Use `rung gate` for the merge decision.
+Use `rung check --changed --focused` for a quick pass over declared workspace targets; in a
+single project it runs the root checks. The output lists which checks it omitted, and when no
+declared target matches the change it runs every touched check instead. Use `rung gate` for the merge decision.
 
 Or let your coding agent do the setup. Rung ships a skill that installs the CLI, records your tests
 and scans, adds the CI gate and installs the agent rules, while leaving the decisions that are yours
@@ -370,6 +371,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: CalQuity/rung@v0.3.0
+        with:
+          upload-evidence: false   # v0.3.0 uploads evidence by default
+          comment: false           # v0.3.0 comments by default, which needs pull-requests: write
+          policy-changes: fail     # v0.3.0 only warns by default
 ```
 
 Use `rung gate --base origin/main` to run the same merge decision locally or in another CI
@@ -468,7 +473,12 @@ rung report --json
 `rung agents --hooks` installs the Claude Code Stop hook. For Codex, use
 `rung agents --codex-hooks` and review the project hook with `/hooks` in Codex.
 Both hooks point the agent to checks that still need to run and allow the second stop
-so a tool failure cannot trap the session. The merge workflow uses `rung gate` to execute
+so a tool failure cannot trap the session; the Codex hook keeps a per-session marker in
+`.rung/cache/hooks/` for this when Codex does not report that it already blocked once. In a
+workspace, the hooks ask first for the checks whose `verifies` targets hold the edited files
+(and checks with no declared target); checks for other packages are left to
+`rung check --changed` and the merge gate. An edit to shared code outside every declared target
+asks for every touched check. The merge workflow uses `rung gate` to execute
 the checks independently. See [Codex hook setup and trust](https://learn.chatgpt.com/docs/hooks).
 
 Drafting uses a model you already have. `rung init` reuses your `claude` or `codex` login, or
@@ -481,12 +491,13 @@ any OpenAI-compatible endpoint, including local models. Rung never stores creden
 | `rung init [--dry-run] [--refresh] [--no-drafts] [--no-agents]` | Build the verification kit: survey the repo, add checks, install agent skills and the Stop hook, draft app scenarios, property tests and formal models with your approval |
 | `rung kit` | Every part of the kit, its checks and their state, and the next command to run |
 | `rung map [--approve F] [--not-built F] [--drop F] [--redraft]` | Draft the feature map, show it (terminal and HTML page), record your decision on each feature |
-| `rung plan [--path PATH\|--changed]` | Recommend checks and show scopes for a proposed or actual change |
-| `rung check [ids] [--changed] [--base REF]` | Run checks and record verdicts |
+| `rung plan [--path PATH\|--changed]` | Recommend checks and show scopes for a proposed or actual change. `--path` takes files or directories, relative to the current directory |
+| `rung check [ids] [--changed [--focused]] [--base REF]` | Run checks and record verdicts. `--focused` runs the checks whose declared targets (or the root project) hold the change, and falls back to every touched check when none do |
+| `rung check --reuse-local` | Skip checks with a fresh local verdict from the same base and environment (`--ci` is an alias kept for compatibility; CI should use `rung gate`) |
 | `rung check <id> --seed N [--scenario NAME]` | Run one seed (or scenario) of a drive script again, without recording it |
 | `rung evidence <check> [--seed N] [--out DIR]` | Write the HTML evidence page of a drive script's newest run |
 | `rung gate [--base REF] [--executor local\|daytona]` | Re-run the merge checks after policy preflight |
-| `rung status [--ci]` | Fresh, stale, failing; `--ci` exits 1 unless all fresh |
+| `rung status [--require-fresh]` | Fresh, stale, failing; `--require-fresh` (alias `--ci`) exits 1 unless all fresh |
 | `rung report [--format md\|json]` | Checks, laws, new findings and fix proofs |
 | `rung prove 'pytest tests/test_x.py'` | Show a test fails without the fix and passes with it. Pytest and Node can report individual cases. |
 | `rung laws [--approve ID]` | Which laws hold |
@@ -498,7 +509,7 @@ any OpenAI-compatible endpoint, including local models. Rung never stores creden
 | `rung maintain <check>` | Bring a TLA+ or Lean model back in line with code that changed since it was confirmed |
 | `rung confirm <check> --by NAME --reason TEXT` | Record that a person checked a TLA+ or Lean model still describes the code |
 | `rung agents [--hooks] [--codex-hooks]` | Agent workflows, AGENTS.md rules, optional Stop hooks |
-| `rung doctor [--strict]` | Diagnose missing executables for the current kit |
+| `rung doctor [--strict]` | Diagnose missing executables for the current kit; `--json` lists `tools` and the `strict_failures` that `--strict` fails on |
 | `rung ledger [--prune]` | Check the verdict files for corruption |
 
 Every command accepts `-C DIR` and `--json`. Human output uses color in a terminal. Use

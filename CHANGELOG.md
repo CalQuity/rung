@@ -75,6 +75,37 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
   Anthropic's plugin directory. Install with `/plugin marketplace add CalQuity/rung` and
   `/plugin install rung@rung`; the marketplace keeps its name, so existing installs update in place.
   The setup skill's raw URL is now `.../main/plugin/skills/setup/SKILL.md`.
+- The survey reads Makefiles (`GNUmakefile`, `makefile`, `Makefile`) and records `make test` only
+  when the directory has no native test runner it can detect. With pytest and a Makefile `test:`
+  target, the kit records pytest once and `rung plan` recommends per-case `rung prove` runs.
+  `rung init --refresh` no longer adds a detected command whose run and cwd are already recorded
+  under another id. If an earlier refresh recorded the same suite twice, delete one of the checks.
+- Run without a terminal, `rung init` records provider `none` instead of the first detected model CLI.
+  To draft, pass `rung init --provider claude-cli` (or `codex-cli`, `openai-compatible`) or set
+  `provider` under `[llm]` in `rung.toml`; `rung draft` and `rung map` now say so when no provider is set.
+- `rung doctor --json` prints `{"schema_version": 1, "tools": [...], "strict_failures": [...]}`, where
+  `strict_failures` names the configured tools `--strict` fails on, and `rung laws --json` prints
+  `{"schema_version": 1, "laws": [...]}`. Scripts that read either as a bare list must read `tools`
+  or `laws`.
+- `rung check --ci` is now an alias of `rung check --reuse-local`: it skips only checks with a fresh
+  local verdict from the same base and environment. `rung status --ci` is an alias of
+  `rung status --require-fresh`. Use `rung gate` in CI for the merge decision.
+- `rung check --changed --focused` counts a root check with no declared scope as focused, so it runs
+  the suite of a single-project repository. When no declared target matches the change it runs every
+  touched check (`"selection": "full-fallback"` in JSON) instead of exiting 1.
+- The Stop hooks ask first for the checks whose `verifies` targets hold every edited source file, plus
+  checks with no declared target; checks for other workspace packages are left to `rung check --changed`
+  and the merge gate. Edits outside every declared target, or to `rung.toml`, still ask for every
+  touched check. The Codex Stop hook keeps a per-session marker in `.rung/cache/hooks/` so it allows
+  the second consecutive stop even when Codex does not send `stop_hook_active`.
+- `rung plan --path` resolves paths from the current directory when run inside the project, accepts
+  directories (every file under them), and warns about paths outside every detected project
+  (`outside_projects` in JSON).
+- `rung kit` counts a command check that runs a test runner (pytest, unittest, go test, node --test,
+  npm/pnpm/yarn/bun test, cargo test, make test, vitest, jest and similar) as a test suite whatever its
+  id, and never lists the `<your test command>` placeholder as a next step.
+- The plugin manifest keeps the latest released version during a development cycle and is bumped with
+  the package at release.
 
 ## 0.3.0 (2026-11-04)
 
