@@ -36,6 +36,8 @@ def test_a_link_outside_the_project_is_recorded_not_refused(repo: Path, tmp_path
         return runner.status(cfg, cfg.check("unit")).changed
 
     assert "shared" not in changed()
+    cfg = config.load(repo)
+    assert runner.status(cfg, cfg.check("unit")).state == "fresh"  # an unchanged link no longer stales the verdict
     (repo / "shared").unlink()
     (repo / "shared").symlink_to(elsewhere)
     assert "shared" in changed()

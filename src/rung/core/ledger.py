@@ -313,11 +313,6 @@ class View:
             changed.append("(evidence format changed; run the check again)")
         elif inputs_digest(now) != inputs.get("digest"):
             changed += self._changed_files(check_id, now)
-        changed += [
-            f"(external symlink target is outside the evidence scope: {p})"
-            for p, digest in now.items()
-            if digest.startswith("external-link:")
-        ]
         if definition and entry.get("definition", definition) != definition:
             changed.append("(the check's definition in rung.toml)")
         if context is not None and entry.get("context", "") != context:

@@ -26,6 +26,9 @@ For an edited file, name each regression case with a separate `--case`:
 rung prove "node --test test/refunds.test.js" --case "test/refunds.test.js::caps the refund"
 ```
 
+A case inside `describe` blocks is named with its suites, joined by ` > `:
+`--case "test/refunds.test.js::refund > caps the refund"`.
+
 Use a Node version with the JUnit reporter. Case names must be unique within each file.
 For runners without individual case support, `--expect` identifies the failure in a suite-level proof.
 
