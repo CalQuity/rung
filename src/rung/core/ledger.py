@@ -21,37 +21,78 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from rung import __version__
 from rung.core import git
-from rung.core.config import write_atomic
+from rung.core.config import ConfigError, managed_path, write_atomic
 
 VERDICTS_DIR = Path(".rung") / "verdicts"
 CACHE_DIR = Path(".rung") / "cache"
 HISTORY_PATH = CACHE_DIR / "history.jsonl"
+INPUT_VERSION = 2
 CORRUPT = "(the verdict file is corrupt or was edited; re-run the check)"
 
 
 def file_digest(path: Path) -> str:
     """sha256 of a file's bytes, or "missing" when it does not exist."""
     try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
+        if not path.is_file():
+            return "missing"
+        with path.open("rb") as data:
+            return hashlib.file_digest(data, "sha256").hexdigest()
     except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
         return "missing"
 
 
 def snapshot(root: Path, patterns: list[str]) -> dict[str, str]:
-    return {rel: file_digest(root / rel) for rel in git.expand(root, patterns)}
+    """Record contents, execution permission, and the identity of symbolic links."""
+    files = {}
+    for rel in git.expand(root, patterns):
+        path = root / rel
+        try:
+            mode = path.stat().st_mode
+        except (FileNotFoundError, NotADirectoryError):
+            mode = 0
+        if path.is_symlink():
+            target = hashlib.sha256(os.fsencode(os.readlink(path))).hexdigest()
+            if not path.resolve().is_relative_to(root.resolve()):
+                files[rel] = f"external-link:{target}"
+                continue
+            link = f"link:{target}:"
+        else:
+            link = ""
+        files[rel] = f"{link}{mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH):o}:{file_digest(path)}"
+    return files
+
+
+def artifact_issues(root: Path, artifacts: list[str]) -> list[str]:
+    """Confirm that the recorded artifacts are still ordinary files in the evidence directory."""
+    issues = []
+    root = root.resolve()
+    for artifact in artifacts:
+        name, sep, digest = artifact.rpartition(" sha256:")
+        path = root / name
+        try:
+            safe = sep and path.is_relative_to(root / ".rung/evidence") and path.resolve() == path
+            valid = safe and path.is_file() and file_digest(path) == digest
+        except (OSError, RuntimeError, ValueError):
+            valid = False
+        if not valid:
+            issues.append(f"(missing, modified, or unsafe evidence: {name or 'invalid artifact record'})")
+    return issues
 
 
 def inputs_digest(files: dict[str, str]) -> str:
     """One digest over every (path, content digest) pair, in sorted order."""
     h = hashlib.sha256()
     for path in sorted(files):
-        h.update(f"{path}\0{files[path]}\n".encode())
+        h.update(os.fsencode(f"{path}\0{files[path]}\n"))
     return h.hexdigest()
 
 
@@ -64,6 +105,27 @@ def definition_hash(kind: str, covers: list[str], options: dict[str, Any]) -> st
 def _self_hash(entry: dict[str, Any]) -> str:
     body = {k: v for k, v in entry.items() if k != "hash"}
     return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+
+
+def _environment_hash(entry: dict[str, Any], tools: dict[str, tuple[int, ...]]) -> str:
+    body = json.dumps([__version__, entry["hash"], sorted(os.environ.items()), tools], sort_keys=True)
+    return hashlib.sha256(body.encode()).hexdigest()
+
+
+def record_environment(root: Path, check_id: str, entry: dict[str, Any], tools: dict[str, tuple[int, ...]]) -> None:
+    """Cache a digest locally for opt-in reuse. Keep environment data out of the shared verdict."""
+    path = managed_path(root, CACHE_DIR / "environment" / _file_name(check_id))
+    write_atomic(path, _environment_hash(entry, tools) + "\n")
+
+
+def same_environment(root: Path, status: Status, tools: dict[str, tuple[int, ...]] | None) -> bool:
+    if tools is None or not status.entry or not status.trusted:
+        return False
+    try:
+        path = managed_path(root, CACHE_DIR / "environment" / _file_name(status.check_id))
+        return path.read_text().strip() == _environment_hash(status.entry, tools)
+    except (OSError, ConfigError):
+        return False
 
 
 def _file_name(check_id: str) -> str:
@@ -94,6 +156,9 @@ def record(
     if verdict not in ("pass", "fail", "error"):
         raise ValueError(f"verdict must be pass, fail or error, not {verdict!r}")
     files = covers | specs
+    verdict_file = managed_path(root, VERDICTS_DIR / _file_name(check_id))
+    cache_file = managed_path(root, CACHE_DIR / "inputs" / _file_name(check_id))
+    history = managed_path(root, HISTORY_PATH)
     entry: dict[str, Any] = {
         "check": check_id,
         "kind": kind,
@@ -101,7 +166,7 @@ def record(
         "summary": summary,
         "at": datetime.now(UTC).isoformat(timespec="seconds"),
         "commit": git.head(root),
-        "inputs": {"digest": inputs_digest(files), "files": len(files)},
+        "inputs": {"digest": inputs_digest(files), "files": len(files), "version": INPUT_VERSION},
         "definition": definition,
         "context": context,
         "valid_until": valid_until,
@@ -109,9 +174,8 @@ def record(
         "details": details or {},
     }
     entry["hash"] = _self_hash(entry)
-    write_atomic(verdict_path(root, check_id), json.dumps(entry, indent=1, sort_keys=True) + "\n")
-    write_atomic(root / CACHE_DIR / "inputs" / _file_name(check_id), json.dumps(files, sort_keys=True))
-    history = root / HISTORY_PATH
+    write_atomic(verdict_file, json.dumps(entry, indent=1, sort_keys=True) + "\n")
+    write_atomic(cache_file, json.dumps(files, sort_keys=True))
     history.parent.mkdir(parents=True, exist_ok=True)
     with history.open("a") as fh:
         fh.write(json.dumps(entry, sort_keys=True) + "\n")
@@ -128,6 +192,15 @@ def _load(path: Path) -> dict[str, Any]:
         return {"invalid": "not a verdict"}
     if _self_hash(entry) != entry.get("hash"):
         return {"invalid": "contents do not match the file's own hash (edited by hand?)", "check": entry["check"]}
+    evidence = entry.get("evidence", [])
+    if (
+        entry.get("verdict") not in ("pass", "fail", "error")
+        or not isinstance(entry.get("inputs"), dict)
+        or not isinstance(entry.get("details", {}), dict)
+        or not isinstance(evidence, list)
+        or any(not isinstance(item, str) for item in evidence)
+    ):
+        return {"invalid": "malformed verdict fields", "check": entry["check"]}
     return entry
 
 
@@ -166,6 +239,7 @@ class Status:
     state: str  # fresh | stale | failing | never | drifted (a formal model's code changed since it was confirmed)
     entry: dict[str, Any] | None
     changed: list[str]
+    implementation_link: str = ""
 
     @property
     def trusted(self) -> bool:
@@ -206,12 +280,22 @@ class View:
             return Status(check_id, "failing", entry, [])
         changed: list[str] = []
         now = snapshot(self.root, covers) | snapshot(self.root, specs)
-        if inputs_digest(now) != entry.get("inputs", {}).get("digest"):
+        inputs = entry.get("inputs", {})
+        if inputs.get("version") != INPUT_VERSION:
+            changed.append("(evidence format changed; run the check again)")
+        elif inputs_digest(now) != inputs.get("digest"):
             changed += self._changed_files(check_id, now)
+        changed += [
+            f"(external symlink target is outside the evidence scope: {p})"
+            for p, digest in now.items()
+            if digest.startswith("external-link:")
+        ]
         if definition and entry.get("definition", definition) != definition:
             changed.append("(the check's definition in rung.toml)")
         if context is not None and entry.get("context", "") != context:
             changed.append(f"(verified against {entry.get('context') or 'no base'}, not {context or 'no base'})")
+        if artifacts := entry.get("evidence"):
+            changed += artifact_issues(self.root, artifacts)
         today = datetime.now(UTC)
         if (until := entry.get("valid_until")) and today.date().isoformat() > until:
             changed.append(f"(a waiver it relied on expired on {until})")

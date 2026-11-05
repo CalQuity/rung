@@ -109,3 +109,24 @@ def test_dependency_findings_survive_manifest_edits_and_version_formatting() -> 
     (before,) = sarif.parse(doc("2.10.0", "aaa"), REPO)
     (after,) = sarif.parse(doc("2.10", "bbb"), REPO)
     assert before.fingerprint == after.fingerprint
+
+
+def test_gitleaks_redacted_fingerprint_ignores_columns_but_covers_last_byte(tmp_path: Path) -> None:
+    def scan(line: int, column: int) -> sarif.Finding:
+        result = {
+            "ruleId": "secret", "message": {"text": "redacted finding"},
+            "locations": [{"physicalLocation": {
+                "artifactLocation": {"uri": "app.py"},
+                "region": {"startLine": line, "startColumn": column, "endColumn": column + 5,
+                           "snippet": {"text": "REDACTED"}},
+            }}],
+        }  # fmt: skip
+        return sarif.parse({"runs": [{"tool": {"driver": {"name": "gitleaks"}}, "results": [result]}]}, tmp_path)[0]
+
+    source = tmp_path / "app.py"
+    source.write_text('KEY = "demo1"\n')
+    first = scan(1, 8)
+    source.write_text('# unrelated\nKEY = "demo1"\n')
+    assert first.fingerprint == scan(2, 9).fingerprint
+    source.write_text('KEY = "demo2"\n')
+    assert first.fingerprint != scan(1, 8).fingerprint

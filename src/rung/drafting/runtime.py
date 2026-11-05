@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from rung import guides
-from rung.analysis.survey import Inspection
+from rung.analysis.survey import LANGUAGES, Inspection
 from rung.checks import deps
 from rung.checks.base import Context, Outcome
 from rung.checks.command import (
@@ -33,13 +33,14 @@ from rung.checks.command import (
     EvidenceChecker,
     assertion_outcomes,
     failed_assertions,
-    missing_required,
+    missing_artifacts,
     not_applicable,
     read_result,
     scenarios,
+    structured_problem,
 )
-from rung.core import git
-from rung.core.config import Check
+from rung.core import git, ledger, sandbox
+from rung.core.config import Check, managed_path
 from rung.core.errors import ToolMissing
 from rung.drafting import feature_map, routes
 from rung.drafting.common import FILES, STRINGS, files_of, machine_path_problem, safe_write, schema
@@ -89,6 +90,8 @@ def contract_problems(drive_source: str, result: dict | None) -> list[str]:
     found = scenarios(result) if isinstance(result.get("scenarios"), list) else []
     if not found:
         return [*problems, "result.json has no `scenarios`"]
+    if problem := structured_problem(result):
+        problems.append(problem)
     if bad := sorted({s["category"] for s in found} - set(CATEGORIES)):
         problems.append(f"unknown scenario categories {', '.join(map(repr, bad))}; use {', '.join(CATEGORIES)}")
     covered = {s["category"] for s in found}
@@ -144,13 +147,13 @@ def happy_path_advice(result: dict | None) -> str:
     )
 
 
-def _findings(check: Check, outcome: Outcome, result: dict | None) -> list[str]:
+def _findings(root: Path, check: Check, outcome: Outcome, result: dict | None) -> list[str]:
     """Failures that belong to the app, not the script: the script ran, recorded its evidence, passed
     its happy path, and only edge-case or fault scenarios failed. Those go to a person, like a failing
     property; sending them back to the model would invite it to make the app's bug pass."""
     if outcome.verdict != "fail" or result is None or not outcome.evidence:
         return []
-    if missing_required(check, outcome.evidence):
+    if missing_artifacts(check, (root / name for name in outcome.evidence)):
         return []
     found = scenarios(result)
     failing = [s for s in found if not s["passed"]]
@@ -186,9 +189,9 @@ def vet_requirements(requirements: list[str]) -> list[str]:
     return problems
 
 
-def run_command(requirements: list[str]) -> str:
+def run_command(requirements: list[str], script: str = ".rung/verify/drive.py") -> str:
     """How Rung runs the drive script: plain Python, or an isolated uv environment with its packages."""
-    script = (VERIFY_DIR / "drive.py").as_posix()
+    script = shlex.quote(script)
     if not requirements:
         return f"python3 {script}"
     if not shutil.which("uv"):
@@ -211,6 +214,7 @@ class RuntimeDraft:
     findings: list[str] = field(default_factory=list)  # scenarios that failed on the real app: for a person
     report: str = ""  # the evidence page of the accepted run
     scenarios: list[dict] = field(default_factory=list)
+    sensitivity: str = ""
 
 
 # Files that usually show how an app starts and what a user sees first, per project directory.
@@ -238,7 +242,7 @@ def app_focus(root: Path, info: Inspection, files: list[str] | None = None) -> l
     """The files a user-facing feature lives in, when none were named: those that serve requests and those
     that declare routes or pages, then the project's own modules they import (two levels: a page and the
     components it renders), so the model reads the real labels, fields and handlers instead of the README."""
-    listed = files if files is not None else git.list_files(root)
+    listed = [f for f in (files if files is not None else git.list_files(root)) if not (root / f).is_symlink()]
     route_files = [r.file for r in routes.scan(root, listed)]
     chosen = list(dict.fromkeys([*info.app_files, *route_files]))
     known = set(listed)
@@ -308,7 +312,7 @@ def gather_context(root: Path, info: Inspection, focus: list[str]) -> str:
     behind hundreds of unrelated files that sort earlier. The routes come from the code itself, so the
     model drives URLs that exist instead of guessing them.
     """
-    files = git.list_files(root)
+    files = [name for name in git.list_files(root) if not (root / name).is_symlink()]
     focus_dirs = {str(Path(f).parent) for f in focus} - {"."}
     near = [f for f in files if any(f.startswith(d + "/") for d in focus_dirs)]
     listing = list(dict.fromkeys(near + files))[:MAX_LISTED_FILES]
@@ -324,7 +328,7 @@ def gather_context(root: Path, info: Inspection, focus: list[str]) -> str:
     budget = MAX_CONTEXT_BYTES
     for rel in _context_files(root, info, focus, files):
         path = root / rel
-        if not path.is_file() or budget <= 0:
+        if not path.is_file() or not path.resolve().is_relative_to(root.resolve()) or budget <= 0:
             continue
         text = path.read_text(errors="ignore")[: min(budget, 12_000)]
         budget -= len(text)
@@ -332,11 +336,70 @@ def gather_context(root: Path, info: Inspection, focus: list[str]) -> str:
     return "\n".join(parts)
 
 
+def _trial_context(root: Path, *, seed: int | None, guarded: bool, network: bool) -> Context:
+    prefix = sandbox.write_guard(root, network=network) if guarded else ()
+    return Context(root=root, seed=seed, command_prefix=prefix, environment=sandbox.trial_environment(root))
+
+
+def _passes_with_broken_sources(checker: EvidenceChecker, check: Check, context: Context, paths: list[str]) -> bool:
+    """Break application inputs without changing their paths, so existence checks are insufficient."""
+    stash = context.root / ".rung" / "cache" / "trial" / "source-canary"
+    moved = []
+    try:
+        for relative in paths:
+            source = context.root / relative
+            if not source.is_file() or source.is_symlink():
+                continue
+            destination = stash / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            source.rename(destination)
+            moved.append((destination, source))
+            failure = {
+                ".py": "raise RuntimeError('RUNG_SOURCE_CANARY')\n",
+                ".sh": "#!/bin/sh\nexit 97\n",
+                ".js": "throw new Error('RUNG_SOURCE_CANARY');\n",
+                ".ts": "throw new Error('RUNG_SOURCE_CANARY');\n",
+            }.get(source.suffix, "RUNG_SOURCE_CANARY: intentionally unusable application input\n")
+            source.write_text(failure)
+            source.chmod(destination.stat().st_mode & 0o777)
+        options = {**check.options, "timeout": 30}
+        negative = Check(check.id, check.kind, check.covers, options)
+        return not moved or checker.run(context, negative).verdict == "pass"
+    finally:
+        for destination, source in reversed(moved):
+            destination.replace(source)
+
+
 def draft_runtime(
     provider: Provider, root: Path, info: Inspection, *, focus: list[str], check_id: str = "runtime",
-    intent: str = "", max_rounds: int = 4, require: tuple[str, ...] = (),
+    intent: str = "", max_rounds: int = 4, require: tuple[str, ...] = (), guarded: bool = False,
+    require_source: bool = False,
 ) -> RuntimeDraft:  # fmt: skip
-    out_dir = root / VERIFY_DIR
+    if guarded:
+        sandbox.probe_write_guard(root)
+    with sandbox.copy_of(root) as trial:
+        return _draft_in_copy(
+            provider,
+            root,
+            trial.resolve(),
+            info,
+            focus=focus,
+            check_id=check_id,
+            intent=intent,
+            max_rounds=max_rounds,
+            require=require,
+            guarded=guarded,
+            require_source=require_source,
+        )
+
+
+def _draft_in_copy(
+    provider: Provider, root: Path, trial: Path, info: Inspection, *, focus: list[str], check_id: str,
+    intent: str, max_rounds: int, require: tuple[str, ...], guarded: bool, require_source: bool,
+) -> RuntimeDraft:  # fmt: skip
+    verify_dir = VERIFY_DIR if check_id == "runtime" else VERIFY_DIR / "drives" / check_id
+    out_dir = managed_path(root, verify_dir)
+    script = (verify_dir / "drive.py").as_posix()
     wants = ", ".join(f"{r} ({SUFFIX_MEANING[r.lower()]})" if r.lower() in SUFFIX_MEANING else r for r in require)
     # With an approved feature map, the map is the plan: the script drives exactly its approved features.
     mapped, map_ids, map_sources = feature_map.approved_block(root)
@@ -344,6 +407,9 @@ def draft_runtime(
     prompt = (
         ("Write the verification script for the approved features of this project.\n" if mapped
          else "Write the verification script and feature map for this project.\n")
+        + "Return each complete file in the JSON reply. Rung writes those files after receiving the reply.\n"
+        + f"The script path is {script}; Rung launches it with the project root as the working directory.\n"
+        + f"Use these exact names for `files[].path`: {', '.join(needed)}.\n"
         + (f"Drive this feature: {intent}\n" if intent else "")
         + (f"The evidence must include: {wants}.\n" if require else "")
         + "\n"
@@ -353,35 +419,51 @@ def draft_runtime(
     files: list[Path] = []
     checker = EvidenceChecker()
     last_failure = ""
+    produced: dict[str, str] = {}
     for round_no in range(1, max_rounds + 1):
         system = guides.load("runtime") + (FORMAT_MAPPED if mapped else FORMAT)
         reply = provider.complete_json(prompt, schema=SCHEMA, system=system, cwd=root)
-        produced = files_of(reply)
-        produced = {k: v for k, v in produced.items() if k in needed}
-        if any(n not in produced for n in needed):
-            prompt += f"\n\nYour reply must contain {' and '.join(f'`{n}`' for n in needed)} in `files`."
+        returned = files_of(reply)
+        produced = {}
+        for name in needed:
+            body = returned.get(name, "")
+            if not body.strip():
+                body = returned.get((verify_dir / name).as_posix(), "")
+            if body.strip():
+                produced[name] = body
+        if missing_files := [name for name in needed if name not in produced]:
+            last_failure = f"model response did not include nonempty files named {', '.join(missing_files)}"
+            prompt += f"\n\nThe {last_failure}. Return their contents in `files`, using only the filenames as paths."
             continue
         if problem := machine_path_problem(produced):
+            last_failure = "the script hard-coded paths specific to the drafting machine"
             prompt += problem
             continue
-        files = safe_write(out_dir, produced)
+        safe_write(managed_path(trial, verify_dir), produced)
         covers = [g.strip() for g in reply["sources"] if g.strip()]
         if mapped:  # the approved map and its features' code stale the verdict too
             covers = list(dict.fromkeys([*covers, *map_sources, f"{feature_map.MAP_DIR.as_posix()}/*.md"]))
         requirements = [p.strip() for p in reply["requirements"] if p.strip()]
         if problems := vet_requirements(requirements):
+            last_failure = "the model requested dependencies that Rung could not approve"
             prompt += (
                 "\n\nRung will not install these requirements: "
                 + "; ".join(problems)
                 + ". Use only established packages (or none). Return the same fields."
             )
             continue
-        run = run_command(requirements)
+        run = run_command(requirements, script)
         check = Check(check_id, "evidence", covers, {"run": run, "timeout": 900, "require": list(require)})
-        outcome = checker.run(Context(root=root), check)
+        context = _trial_context(trial, seed=None, guarded=guarded, network=bool(requirements))
+        drive_inputs = [*covers, script]
+        before = ledger.snapshot(trial, drive_inputs)
+        outcome = checker.run(context, check)
+        if ledger.snapshot(trial, drive_inputs) != before:
+            last_failure = "the drive modified a covered source or its own script"
+            break
         first = outcome.details["runs"][0]
-        result = read_result(root / first["evidence_dir"])
-        findings = _findings(check, outcome, result)
+        result = read_result(trial / first["evidence_dir"])
+        findings = _findings(trial, check, outcome, result)
         if outcome.verdict != "pass" and not findings:
             last_failure = outcome.summary
             prompt += (
@@ -399,6 +481,7 @@ def draft_runtime(
                 "`unreachable` with the precondition the run lacked"
             )
         if problems:
+            last_failure = problems[0]
             prompt += (
                 "\n\nThe script ran, but it does not meet the contract:\n- "
                 + "\n- ".join(problems)
@@ -411,8 +494,16 @@ def draft_runtime(
             continue
         # The same seed must give the same outcome, or a failure could never be reproduced.
         seed = first["seed"]
-        again = checker.run(Context(root=root, seed=seed), check)
-        if flaky := _flaky(result, read_result(root / again.details["runs"][0]["evidence_dir"])):
+        context.seed = seed
+        again = checker.run(context, check)
+        flaky = _flaky(result, read_result(trial / again.details["runs"][0]["evidence_dir"]))
+        if ledger.snapshot(trial, drive_inputs) != before:
+            last_failure = "the replay modified a covered source or its own script"
+            break
+        if again.verdict != outcome.verdict:
+            flaky.append("overall verdict or covered source state")
+        if flaky:
+            last_failure = "repeating the same seed produced different results"
             prompt += (
                 f"\n\nRung ran your script twice with RUNG_SEED={seed} and the runs disagreed on: "
                 + "; ".join(flaky[:10])
@@ -420,11 +511,35 @@ def draft_runtime(
                 "sleeping, and give each scenario fresh state. Return the same fields."
             )
             continue
+        candidates = set(focus or app_focus(root, info)) | set(git.expand(root, covers))
+        app_sources = sorted(
+            file
+            for file in candidates
+            if not file.startswith(".rung/")
+            and Path(file).suffix in {*LANGUAGES, ".html", ".jsx", ".sh"}
+            and (trial / file).is_file()
+        )
+        sensitivity = "no application inputs identified"
+        if app_sources:
+            if _passes_with_broken_sources(checker, check, context, app_sources):
+                last_failure = "the drive still passes with deliberately broken application sources"
+                prompt += "\n\nThe drive passed with broken application sources. Exercise the real app boundary."
+                continue
+            sensitivity = f"failed with {len(app_sources)} deliberately broken application source file(s)"
+        elif guarded or require_source:
+            last_failure = sensitivity
+            prompt += "\n\nName the actual application files this drive depends on in the sources list."
+            continue
+        if report := outcome.details.get("report"):
+            sandbox.retain_evidence(root, trial, report)
+        files = safe_write(out_dir, produced)
         draft = RuntimeDraft(True, outcome.summary, files, round_no, covers, list(outcome.evidence),
                              reply["notes"].strip(), run, seed, findings, outcome.details.get("report", ""),
-                             first.get("scenarios", []))  # fmt: skip
+                             first.get("scenarios", []), sensitivity)  # fmt: skip
         if findings:
             draft.message = f"the script works and the app failed {len(findings)} assertion(s); see the findings"
         return draft
+    if produced:
+        files = safe_write(managed_path(root, Path(".rung/cache/drafts") / check_id), produced)
     why = f"; the last run: {last_failure}" if last_failure else ""
     return RuntimeDraft(False, f"no passing verification script after {max_rounds} rounds{why}", files, max_rounds)

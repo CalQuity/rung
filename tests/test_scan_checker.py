@@ -126,3 +126,12 @@ def test_osv_preset_scans_a_manifest_that_names_an_unresolvable_package(repo: Pa
     cfg = config.load(repo)
     result = runner.run_check(cfg, cfg.check("vulnerable-deps"))
     assert result.verdict == "pass", result.outcome.summary  # the `deps` check is what flags the invented package
+
+
+def test_partial_sarif_from_failed_scanner_is_an_error(repo: Path) -> None:
+    cfg = _setup(repo)
+    scanner = repo / "fake_scanner.py"
+    scanner.write_text(FAKE_SCANNER + '\nsys.stderr.write("fatal error during scan\\n")\nsys.exit(2)\n')
+    result = runner.run_check(cfg, cfg.check("secrets"), base=git.merge_base(repo, "main"))
+    assert result.verdict == "error"
+    assert "did not complete the scan (exit 2)" in result.outcome.summary

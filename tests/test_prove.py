@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
+
+import pytest
 
 from rung.checks import prove
 from rung.core import ledger
@@ -155,3 +158,34 @@ def test_pytest_commands_are_recognised() -> None:
     assert prove.runs_pytest([".venv/bin/pytest"])
     assert not prove.runs_pytest(["npx", "vitest", "run"])
     assert not prove.runs_pytest(["python", "-m", "unittest"])
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="requires the Node test runner")
+@pytest.mark.parametrize("existing", [False, True])
+def test_node_proof_distinguishes_a_real_regression_from_a_vacuous_case(repo, existing):
+    app = repo / "app.cjs"
+    app.write_text("module.exports = () => 1;\n")
+    test = repo / "app.test.cjs"
+    fixture = (
+        "const { test } = require('node:test');\n"
+        "const assert = require('node:assert/strict');\n"
+        "const increment = require('./app.cjs');\n"
+    )
+    weak = "test('already passes', () => assert.equal(1, 1));\n"
+    if existing:
+        test.write_text(fixture + weak)
+    commit_all(repo, "buggy baseline")
+    run_git(repo, "checkout", "-qb", "fix")
+    app.write_text("module.exports = () => 2;\n")
+    test.write_text(fixture + weak + "test('catches bug', () => assert.equal(increment(), 2));\n")
+    cmd = "node --test app.test.cjs"
+    result = prove.prove(repo, cmd, "main")
+    if existing:
+        assert result.verdict == "error" and "--case" in result.summary
+        result = prove.prove(repo, cmd, "main", node_cases=["app.test.cjs::catches bug"])
+        assert result.verdict == "pass", result.summary
+    else:
+        assert result.verdict == "fail" and "already passes" in result.summary
+        assert result.cases[0].base == "passed"
+    regression = next(case for case in result.cases if case.test == "app.test.cjs::catches bug")
+    assert regression.proven

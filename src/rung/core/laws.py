@@ -134,4 +134,9 @@ def state(law: Law, statuses: dict[str, Status]) -> tuple[str, str]:
     pending = [c for c in law.enforced_by if statuses[c].state != "fresh"]
     if pending:
         return "unproven", f"stale or never run: {', '.join(pending)}"
+    if all(statuses[c].implementation_link == "model-only" for c in law.enforced_by):
+        return (
+            "unproven",
+            "Model checks passed. Confirm a source link or add a check that exercises the implementation.",
+        )
     return "held", "every enforcing check is fresh and passing"

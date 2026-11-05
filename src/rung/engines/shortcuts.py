@@ -331,7 +331,7 @@ def find(files: Iterable[tuple[str, str]], ignore: Iterable[str] = ()) -> list[F
                 outside = not any(s in sections[number - 1] for s in rule.sections) if rule.sections else False
                 if outside and PurePosixPath(path).name not in CHECKER_ONLY:
                     continue
-                # In a comment, text in backticks is prose about a directive (`# noqa`), not the directive.
+                # Backticks in comments quote an example without activating the directive.
                 target = {"code": code, "comment": _PROSE.sub("", comment)}.get(rule.where, line)
                 if m := rule.pattern.search(target):
                     # The fingerprint is the directive plus the code it sits on, so editing the

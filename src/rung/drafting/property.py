@@ -1,6 +1,6 @@
 """`rung draft property`: a model writes property-based tests for a law; real runs and mutants decide.
 
-The loop, all inside a disposable copy of the project (`rung.drafting.sandbox`):
+The loop, all inside a disposable copy of the project (`rung.core.sandbox`):
 
 1. The model writes one test file of Hypothesis (Python) or fast-check (TypeScript/JavaScript)
    properties for the source files and the laws the developer gives.
@@ -21,6 +21,7 @@ exists at that path. A failed draft is kept under `.rung/cache/drafts/`.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import shutil
@@ -29,10 +30,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from rung import guides
-from rung.core import proc
+from rung.core import proc, sandbox
 from rung.core.config import ConfigError
 from rung.core.errors import RungError, ToolMissing
-from rung.drafting import sandbox
 from rung.drafting.common import LAWS, LAWS_FORMAT, DraftResult, machine_path_problem, schema, source_block
 from rung.drafting.providers import Provider
 from rung.engines import mutate
@@ -195,15 +195,16 @@ def classify(returncode: int, output: str, sources: list[str], test_file: str) -
     return "finding"
 
 
-def _run(target: Target, base: Path) -> tuple[int, str]:
+def _run(target: Target, base: Path, *, guarded: bool = False) -> tuple[int, str]:
     """Run the property file in the copy at `base`, without credentials in the environment."""
     project = base / target.project
     path = [str(project / "src"), str(project)] if (project / "src").is_dir() else [str(project)]
     # The copy's own code must win over an installed (editable) package pointing at the real tree, and
     # bytecode is never cached for files Rung mutates.
-    env = sandbox.scrubbed_env({"PYTHONPATH": ":".join(path), "PYTHONDONTWRITEBYTECODE": "1"})
+    env = sandbox.trial_environment(base) | {"PYTHONPATH": os.pathsep.join(path)}
+    prefix = sandbox.write_guard(base, network=target.argv[0] == "uv") if guarded else ()
     try:
-        result = proc.run(target.argv, cwd=project, timeout=RUN_TIMEOUT, env=env)
+        result = proc.run([*prefix, *target.argv], cwd=project, timeout=RUN_TIMEOUT, env=env)
     except FileNotFoundError as exc:
         raise ToolMissing(f"cannot run `{target.command}`: {exc}") from exc
     except subprocess.TimeoutExpired:
@@ -211,14 +212,14 @@ def _run(target: Target, base: Path) -> tuple[int, str]:
     return result.returncode, (result.stdout or "") + (result.stderr or "")
 
 
-def _exercises_copy(target: Target, base: Path, sources: list[str]) -> bool:
+def _exercises_copy(target: Target, base: Path, sources: list[str], *, guarded: bool = False) -> bool:
     """Whether the tests import the copied sources: a canary appended to one must show up in the run."""
     source = base / sources[0]
     line = f'\nraise RuntimeError("{CANARY}")\n' if source.suffix == ".py" else f'\nthrow new Error("{CANARY}");\n'
     original = source.read_bytes()
     try:
         source.write_bytes(original + line.encode())
-        _, output = _run(target, base)
+        _, output = _run(target, base, guarded=guarded)
     finally:
         source.write_bytes(original)
     return CANARY in output
@@ -235,14 +236,14 @@ class Score:
         return len(self.caught) + len(self.survived)
 
 
-def mutation_score(target: Target, base: Path, sources: list[str]) -> Score:
+def mutation_score(target: Target, base: Path, sources: list[str], *, guarded: bool = False) -> Score:
     """Run the property file against each mutant in the copy; only a property failure counts as a catch."""
     sample = [m for s in sources for m in mutate.mutants(base / s, limit=MAX_MUTANTS)][:MAX_MUTANTS]
     score = Score([], [], [])
     names = [Path(s).name for s in sources]
     for mutant in sample:
         with mutate.applied(mutant):
-            code, output = _run(target, base)
+            code, output = _run(target, base, guarded=guarded)
         verdict = classify(code, output, names, Path(target.test_file).name)
         {"finding": score.caught, "pass": score.survived}.get(verdict, score.nonviable).append(mutant)
     return score
@@ -268,7 +269,10 @@ def draft(
     intent: str = "",
     out: str = "",
     max_rounds: int = 4,
+    guarded: bool = False,
 ) -> tuple[DraftResult, Target]:
+    if guarded:
+        sandbox.probe_write_guard(root)
     target = target_for(root, sources, slug, out)
     final = root / target.test_file
     if final.exists():
@@ -300,7 +304,7 @@ def draft(
                 prompt += problem
                 continue
             test_in_box.write_text(body)
-            code, output = _run(target, box)
+            code, output = _run(target, box, guarded=guarded)
             if missing := _MISSING_PACKAGE.search(output):
                 raise ToolMissing(f"`{missing.group(0)}`: install the test dependencies, then draft again")
             verdict = classify(code, output, names, test_in_box.name)
@@ -313,27 +317,34 @@ def draft(
                 why = "ran no tests" if code == 0 else "did not run cleanly"
                 prompt += f"\n\nThe test file {why}:\n{_tail(output)}\nFix the test (not the code)."
                 continue
-            if not _exercises_copy(target, box, rel_sources):
+            if not _exercises_copy(target, box, rel_sources, guarded=guarded):
                 raise RungError(
                     "the tests pass, but they do not import the code being tested from the project (an "
                     "installed copy of the package?), so deliberate bugs could not reach them. Make the "
                     "project's own tests import its source, then draft again."
                 )
-            score = mutation_score(target, box, rel_sources)
+            score = mutation_score(target, box, rel_sources, guarded=guarded)
             warnings = [f"survived: {m.describe}" for m in score.survived]
             warnings += [f"not counted (broke the build or timed out): {m.describe}" for m in score.nonviable]
-            if score.viable == 0 or len(score.caught) / score.viable >= GOOD_ENOUGH:
+            metrics = {"caught": len(score.caught), "viable": score.viable, "nonviable": len(score.nonviable)}
+            if score.viable == 0:
+                kept = _keep_failed(root, target, body)
+                return DraftResult(
+                    False,
+                    "INCONCLUSIVE: no viable mutant tested the passing properties; draft kept for review",
+                    [kept],
+                    round_no,
+                    notes=notes,
+                    warnings=warnings,
+                    failability=metrics,
+                ), target
+            if len(score.caught) / score.viable >= GOOD_ENOUGH:
                 final.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(test_in_box, final)
-                if score.viable:
-                    caught = f"{len(score.caught)} of {score.viable}"
-                    message = f"properties hold on the real code and caught {caught} deliberate bugs"
-                else:
-                    message = (
-                        "properties hold on the real code; INCONCLUSIVE: no deliberate bug could be made to test them"
-                    )
+                caught = f"{len(score.caught)} of {score.viable}"
+                message = f"properties hold on the real code and caught {caught} deliberate bugs"
                 result = DraftResult(True, message, [final], round_no, notes=notes, laws=laws,
-                                     warnings=warnings + undeclared(root, target))  # fmt: skip
+                                     warnings=warnings + undeclared(root, target), failability=metrics)  # fmt: skip
                 return result, target
             listed = "\n".join(f"- {m.describe}" for m in score.survived)
             prompt += (

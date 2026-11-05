@@ -64,3 +64,52 @@ def test_report_markdown_summarizes_checks_and_laws(repo: Path) -> None:
     md = report.markdown(data)
     assert md.startswith(report.COMMENT_MARKER)
     assert "Core works." in md and "`unit`" in md
+
+
+def test_codex_hook_is_opt_in_and_uses_structured_stop_protocol(repo, monkeypatch, capsys):
+    from io import StringIO
+
+    from rung import cli
+
+    cfg = _project(repo)
+    hooks = repo / ".codex" / "hooks.json"
+    assert cli.main(["-C", str(repo), "agents", "--hooks"]) == 0
+    assert not hooks.exists()
+    hooks.parent.mkdir()
+    hooks.write_text('{"description":"local policy","hooks":{"SessionStart":[]}}')
+    for _ in range(2):
+        assert cli.main(["-C", str(repo), "agents", "--codex-hooks"]) == 0
+    data = json.loads(hooks.read_text())
+    assert data["description"] == "local policy"
+    assert data["hooks"]["SessionStart"] == []
+    stop = data["hooks"]["Stop"]
+    assert len(stop) == 1 and stop[0]["hooks"][0]["command"] == "rung hook stop --agent codex"
+    capsys.readouterr()
+
+    (repo / "src" / "core.py").write_text("x = 2\n")
+
+    def codex_stop(**fields):
+        payload = {"cwd": str(repo / "src"), **fields}
+        monkeypatch.setattr(sys, "stdin", StringIO(json.dumps(payload)))
+        assert cli.main(["hook", "stop", "--agent", "codex"]) == 0
+        captured = capsys.readouterr()
+        assert captured.err == ""
+        return json.loads(captured.out)
+
+    blocked = codex_stop()
+    assert blocked["decision"] == "block" and "rung check unit" in blocked["reason"]
+    assert codex_stop(stop_hook_active=True) == {}
+    assert runner.run_check(cfg, cfg.check("unit")).verdict == "pass"
+    assert codex_stop() == {}
+
+
+def test_cli_markdown_report_removes_terminal_controls(repo, capsys):
+    from rung import cli
+
+    _project(repo)
+    path = repo / "rung.toml"
+    path.write_text(path.read_text().replace('name = "demo"', 'name = "demo\\u001b[2JTitle"'))
+    assert cli.main(["-C", str(repo), "report", "--no-color"]) == 0
+    output = capsys.readouterr().out
+    assert "demoTitle" in output and "\x1b" not in output
+    assert output.startswith(report.COMMENT_MARKER + "\n")

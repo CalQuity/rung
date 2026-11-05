@@ -48,6 +48,13 @@ def cmd_laws(args, out: Output) -> int:
 def cmd_add(args, out: Output) -> int:
     cfg = load_config(args)
     options: dict[str, object] = {}
+    if args.verifies:
+        options["verifies"] = args.verifies
+    for option in ("structured", "isolate"):
+        if getattr(args, option):
+            if args.kind != "evidence" or not args.run:
+                raise ConfigError(f"--{option} requires a scripted evidence check")
+            options[option] = True
     if args.kind in ("command", "evidence"):
         if not args.run and args.kind == "command":
             raise ConfigError("`rung add command` needs --run")

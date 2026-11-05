@@ -6,7 +6,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   rung:
@@ -30,3 +29,6 @@ jobs:
           go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.7.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - uses: ./
+        with:
+          # Exercise this pull request's local action, including changes to Rung policy itself.
+          policy-changes: warn

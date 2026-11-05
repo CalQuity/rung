@@ -30,11 +30,12 @@ def _drift(root: Path, check: Check) -> tuple[dict[str, Any] | None, Outcome | N
 
 def _described(card: dict[str, Any] | None) -> list[str]:
     """Scope lines and the confirmed commit, for a check's output."""
-    if not card:
-        return []
     lines = [f"scope: {line}" for line in modelcard.scope_lines(card)]
-    if commit := (card.get("confirmed") or {}).get("commit"):
-        lines.append(f"model confirmed to describe the code at {commit[:7]}")
+    if modelcard.has_source_confirmation(card):
+        commit = (card or {})["confirmed"].get("commit")
+        lines.append(f"model confirmed to describe the code at {commit[:7] if commit else 'a local source state'}")
+    else:
+        lines.append("Model-only result. No implementation link has been confirmed.")
     return lines
 
 
@@ -50,7 +51,8 @@ class TLAChecker(Checker):
     summary = "Model-check a TLA+ spec with TLC"
 
     def specs(self, check: Check) -> list[str]:
-        files = [check.require("spec")]
+        spec = Path(check.require("spec"))
+        files = [*super().specs(check), spec.as_posix(), (spec.parent / "*.tla").as_posix()]
         if cfg := check.get("config"):
             files.append(cfg)
         return files
@@ -98,9 +100,9 @@ class TLAChecker(Checker):
                 directory, target = _write(directory, ctx.root, check.id, "state-graph.mmd", graph)
                 artifacts[target.relative_to(ctx.root).as_posix()] = ledger.file_digest(target)
                 lines.append(f"state graph: {target.relative_to(ctx.root).as_posix()}")
+        lines += _described(card)
         details: dict[str, Any] = {}
         if card is not None:
-            lines += _described(card)
             digest = tla_mutate.spec_digest(spec, config)
             if fa_line := modelcard.failability_line(card, digest):
                 lines.append(fa_line)
@@ -110,6 +112,7 @@ class TLAChecker(Checker):
         if result.trace:
             lines.append(f"next: replay the steps against the code (a step the code cannot take: rung maintain "
                          f"{check.id}); if every step is real, fix the code, then rung check {check.id}")  # fmt: skip
+        details["implementation_link"] = "source-confirmed" if modelcard.has_source_confirmation(card) else "model-only"
         return Outcome(result.verdict, result.reason, lines, artifacts, details=details)
 
 
@@ -118,8 +121,9 @@ class LeanChecker(Checker):
     summary = "Build a Lean project and audit its theorems' axioms"
 
     def specs(self, check: Check) -> list[str]:
-        project = check.require("project").rstrip("/")
-        return [f"{project}/**/*.lean", f"{project}/lakefile.*", f"{project}/lean-toolchain"]
+        project = Path(check.require("project"))
+        files = ("**/*.lean", "lakefile.*", "lean-toolchain", "lake-manifest.json")
+        return [*super().specs(check), *((project / name).as_posix() for name in files)]
 
     def run(self, ctx: Context, check: Check) -> Outcome:
         card, drifted = _drift(ctx.root, check)
@@ -137,6 +141,7 @@ class LeanChecker(Checker):
             lines.append(result.output.strip()[-1500:])
         lines += _described(card)
         details = {"scope": card.get("scope") or {}} if card else {}
+        details["implementation_link"] = "source-confirmed" if modelcard.has_source_confirmation(card) else "model-only"
         return Outcome(result.verdict, result.reason, lines, details=details)
 
 

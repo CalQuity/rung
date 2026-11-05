@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import shutil
 import tempfile
@@ -78,25 +79,28 @@ class ScanChecker(Checker):
         """Run the analyzer in `cwd` and parse its SARIF."""
         command = self._command(check)
         executable = shlex.split(command)[0]
-        if not shutil.which(executable):
-            preset = self._preset(check)
+        preset = self._preset(check)
+        workdir = cwd / str(check.get("cwd", "."))
+        executable_path = str(workdir / executable) if os.path.dirname(executable) else executable
+        if not shutil.which(executable_path):
             hint = f" Install: {preset.install}" if preset else ""
             raise ToolMissing(f"`{executable}` is not installed.{hint}")
         with tempfile.TemporaryDirectory(prefix="rung-scan-") as tmp:
             out = Path(tmp) / "result.sarif"
             argv = [part.replace("{out}", str(out)) for part in shlex.split(command)]
-            result = run_process(argv, cwd=cwd / str(check.get("cwd", ".")), timeout=timeout)
+            result = run_process(argv, cwd=workdir, timeout=timeout)
             raw = out.read_text() if "{out}" in command and out.exists() else result.stdout
         detail = (result.stderr or result.stdout).strip()[-800:]
-        preset = self._preset(check)
         default = str(check.get("default_level", preset.default_level if preset else "warning"))
         try:
-            found = sarif.parse(raw, cwd, default_level=default)
+            found = sarif.parse(raw, cwd, default_level=default, workdir=workdir)
         except (json.JSONDecodeError, sarif.SarifError, AttributeError, TypeError, KeyError) as exc:
             raise RungError(
                 f"`{command}` exited {result.returncode} without a valid SARIF result ({exc}): {detail}"
             ) from exc
-        # Scanners exit non-zero when they find something. Non-zero with nothing found means it failed.
+        codes = check.get("finding_exit_codes", preset.finding_exit_codes if preset and not check.get("run") else (1,))
+        if result.returncode != 0 and result.returncode not in codes:
+            raise RungError(f"`{command}` did not complete the scan (exit {result.returncode}): {detail}")
         if result.returncode != 0 and not found:
             raise RungError(
                 f"`{command}` exited {result.returncode} and reported no findings; it likely failed: {detail}"

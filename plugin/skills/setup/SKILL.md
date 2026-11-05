@@ -69,7 +69,6 @@ name: rung
 on: pull_request
 permissions:
   contents: read
-  pull-requests: write   # only for the report comment
 jobs:
   rung:
     runs-on: ubuntu-latest
@@ -82,8 +81,10 @@ jobs:
 ```
 
 Install whatever the checks need (language runtimes, scanners) in steps before `CalQuity/rung`.
-Locally the equivalent is `rung check --changed`, which runs only what a branch touches and blocks only
-what it introduces.
+Use `rung check --changed` for local iteration. With a build that provides `rung gate`, use
+`rung gate --base origin/main` to make the same merge decision from the CLI. Protect the workflow
+with repository-owner review. Keep PR jobs read-only and
+free of secrets. Upload evidence only when the developer has chosen to share synthetic recordings.
 
 ## 5. Teach the repository's agents
 
@@ -93,9 +94,10 @@ what it introduces.
 rung agents --hooks
 ```
 
-This writes Claude Code skills (`rung`, `rung-tla`, `rung-lean`), an AGENTS.md section for Codex,
-Cursor and others, and a Claude Code Stop hook that keeps an agent from finishing while checks covering
-its edits are not freshly passing. The hook needs `rung` on the PATH Claude Code sees.
+This installs shared `AGENTS.md` guidance and the Claude Code Stop hook. Run
+`rung check --changed` and `rung report --format json` to drive and report verification.
+Newer builds also install the Codex workflow and support `rung plan --changed --json`.
+The hook needs `rung` on the PATH Claude Code sees.
 
 ## 6. Optional: evidence and formal checks
 

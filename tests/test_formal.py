@@ -520,3 +520,18 @@ def test_a_provider_failure_mid_maintenance_leaves_the_model_as_it_was(shop: Pat
     code, _ = _maintain(shop, monkeypatch, [_maintain_reply(WEAKER)])
     assert code == 2 and "unexpected error" in capsys.readouterr().err
     assert (shop / "spec" / "Pay.tla").read_text() == SPEC
+
+
+def test_model_only_pass_cannot_satisfy_an_approved_implementation_law(shop, monkeypatch, capsys):
+    modelcard.path(shop, "pay").unlink()
+    monkeypatch.setattr(tla, "run", _passes)
+    assert cli.main(["-C", str(shop), "check", "pay", "--json"]) == 0
+    check = json.loads(capsys.readouterr().out)["results"][0]
+    assert check["verdict"] == "pass" and check["implementation_link"] == "model-only"
+    data = report.build(load(shop))
+    assert data["laws"][0]["state"] == "unproven"
+    assert "Confirm a source link" in data["laws"][0]["why"]
+    assert cli.main(["-C", str(shop), "gate", "--base", "main", "--json"]) == 1
+    gate = json.loads(capsys.readouterr().out)
+    assert gate["results"] == []
+    assert gate["blocked"] == ["approved law charge-once needs a confirmed source link or an implementation check"]

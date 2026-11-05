@@ -6,11 +6,36 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 ## Unreleased
 
 ### Added
+- `rung init --dry-run` previews file writes and commands. `--refresh` appends newly detected checks,
+  and `rung doctor --strict` checks the executables the kit declares.
+- `rung plan --path PATH` and `rung plan --changed` show which check scopes match a change.
+- `rung gate` reruns the merge checks, checks protected policy before running repository code, and
+  requires fresh evidence for every check enforcing an approved law.
+- Adopting repositories can opt in to running their PR gate in a private Daytona sandbox with a
+  reviewed snapshot and offline dependencies.
+- Structured runtime checks validate the seed, scenario names, and assertion outcomes on every run.
+- `rung agents` installs CLI workflows for Claude Code and Codex. Versioned JSON exposes scope
+  gaps, replay commands and artifact digests. Terminal runs group results and preserve plain-text
+  labels with `NO_COLOR`.
+- `rung agents --codex-hooks` installs a project-local Stop hook for review in Codex.
 - `examples/acme-store`: a small shop to try Rung on in a minute, built the way a team would build
   one today (FastAPI and SQLite behind a Next.js, TypeScript and Tailwind front end), with a few bugs
   planted for Rung to find. Spoilers are in its `SOLUTIONS.md`.
 
 ### Changed
+- Generated workspace checks use repository-wide coverage. The survey resolves workspace package
+  managers and records test suites for multiple ecosystems in the same directory.
+- The GitHub Action blocks policy changes by default. Evidence uploads and write-token comments
+  are opt-in. Verdicts with missing or modified artifacts now read as stale.
+- Pytest regression proofs reject setup failures and missing case reports. Other runners require
+  `--expect` to identify the failure on the merge base.
+- Scanners distinguish configured finding exit codes from failed analyses. Gitleaks fingerprints
+  ignore unstable SARIF column offsets. Review and regenerate Gitleaks baselines and waivers made
+  with earlier versions when you migrate.
+- Verdicts now cover executable permissions and symbolic links as well as bytes. Re-run checks
+  once after upgrading to refresh older verdicts.
+- Formal checks disclose when their result covers only a model. An approved law needs a confirmed
+  source link or an implementation check to hold and pass the merge gate.
 - `rung kit` no longer marks "Driving the app" ok when the feature map is approved but no drive
   script exists yet; it needs attention, and the next step is `rung draft runtime`.
 - `rung init` names the project by its folder when run from inside it, instead of printing the full path.

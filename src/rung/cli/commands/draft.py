@@ -13,7 +13,7 @@ from rung.cli.commands.common import GATE_FAILED, OK, add_check, load_config
 from rung.cli.commands.formal import accept_draft
 from rung.cli.output import Output
 from rung.core import laws
-from rung.core.config import Check, Config, ConfigError
+from rung.core.config import CHECK_ID, Check, Config, ConfigError, managed_path
 from rung.drafting import feature_map, providers, runtime, sql_context
 from rung.drafting import lean as lean_draft
 from rung.drafting import property as property_draft
@@ -60,6 +60,8 @@ def _draft_runtime(args, cfg: Config, out: Output) -> int:
                           "refresh and approve them again with `rung map --redraft`")  # fmt: skip
     provider = _provider(cfg, args)
     info = survey.survey(cfg.root)
+    if any(not (cfg.root / value).resolve().is_relative_to(cfg.root) for value in args.files):
+        raise ConfigError("runtime focus files must be inside the project")
     check_id = args.id or "runtime"
     out.line(
         f"Drafting a runtime verification script with {drafted_by(cfg, provider)}; Rung runs it until it proves itself."
@@ -72,15 +74,19 @@ def _draft_runtime(args, cfg: Config, out: Output) -> int:
         check_id=check_id,
         intent=args.intent or "",
         require=tuple(args.require or ()),
+        guarded=not getattr(args, "allow_unisolated", False),
+        require_source=True,
     )
     out.emit({"ok": result.ok, "message": result.message, "rounds": result.rounds, "covers": result.covers,
               "files": [str(f.relative_to(cfg.root)) for f in result.files], "evidence": result.evidence,
               "seed": result.seed, "scenarios": result.scenarios, "findings": result.findings,
-              "report": result.report})  # fmt: skip
+              "report": result.report, "sensitivity": result.sensitivity})  # fmt: skip
     out.line(f"{'OK' if result.ok else 'FAILED'} after {result.rounds} round(s): {result.message}")
     out.detail(f"drafted by {drafted_by(cfg, provider)}", indent=2)
     if result.seed is not None:
         out.detail(f"seed {result.seed} ran twice with the same outcomes", indent=2)
+    if result.sensitivity:
+        out.detail(f"Source canary: {result.sensitivity}", indent=2)
     if len(result.scenarios) <= MAX_LISTED_SCENARIOS:
         for sc in result.scenarios:
             out.detail(f"scenario {sc.get('name')} ({sc.get('category')}): {'pass' if sc.get('passed') else 'FAIL'}", 2)
@@ -99,22 +105,26 @@ def _draft_runtime(args, cfg: Config, out: Output) -> int:
         out.detail(f"... and {len(result.evidence) - MAX_LISTED_EVIDENCE} more evidence file(s); "
                    "the evidence page below shows them all", indent=2)  # fmt: skip
     if not result.ok:
-        out.line("The last script is kept for you to finish by hand; it is not registered as a check.")
+        if result.files:
+            out.line("Review the retained draft before registering it as a check.")
         return GATE_FAILED
     add_check(
         cfg,
         Check(
             check_id,
             "evidence",
-            result.covers,
+            [],  # a generated scope cannot account for every shared runtime input
             {
                 "run": result.run,
                 "timeout": 900,
                 "require": list(args.require or []),
+                "structured": True,
+                "specs": [p.relative_to(cfg.root).as_posix() for p in result.files if p.name == "drive.py"],
                 "drafted_by": drafted_by(cfg, provider),
             },
         ),
         out,
+        emit=False,
     )
     skill = agents.install_verify_skill(cfg.root, cfg.name, check_id)
     out.line(f"wrote {skill.relative_to(cfg.root)} so agents verify user-facing changes with `rung check {check_id}`.")
@@ -141,11 +151,18 @@ def _draft_property(args, cfg: Config, out: Output, sources: list[Path], rel: li
         "the code on purpose to see whether they notice ..."
     )
     result, target = property_draft.draft(
-        provider, root, sources, _slug(rel), intent=args.intent or "", out=args.out or ""
+        provider,
+        root,
+        sources,
+        _slug(rel),
+        intent=args.intent or "",
+        out=args.out or "",
+        guarded=not getattr(args, "allow_unisolated", False),
     )
     files = [f.relative_to(root).as_posix() for f in result.files]
-    out.emit({"ok": result.ok, "message": result.message, "rounds": result.rounds, "trace": result.trace,
-              "files": files, "warnings": result.warnings, "run": target.command})  # fmt: skip
+    data = {"ok": result.ok, "message": result.message, "rounds": result.rounds, "trace": result.trace,
+            "files": files, "warnings": result.warnings, "run": target.command,
+            "mutation": result.failability}  # fmt: skip
     out.line(f"{'OK' if result.ok else 'FAILED'} after {result.rounds} round(s): {result.message}")
     out.detail(f"drafted by {drafted_by(cfg, provider)}", indent=2)
     if result.notes:
@@ -156,6 +173,7 @@ def _draft_property(args, cfg: Config, out: Output, sources: list[Path], rel: li
     for w in result.warnings:
         out.detail(w, indent=2)
     if result.trace:
+        out.emit(data | {"registered": []})
         out.line("\nFailing example:")
         out.detail(result.trace, indent=2)
         out.line(
@@ -163,22 +181,25 @@ def _draft_property(args, cfg: Config, out: Output, sources: list[Path], rel: li
         )
         return GATE_FAILED
     if not result.ok:
+        out.emit(data | {"registered": []})
         return GATE_FAILED
-    # The verdict depends on the code under test, whatever it imports, and the runner's configuration:
-    # cover the whole project directory, and the test file itself.
-    covers = ["**/*"] if target.project == "." else [f"{target.project}/**"]
+    # Shared imports and workspace configuration can reach the runner from another package.
+    covers = ["**/*"]
     options = {"run": target.command, "drafted_by": drafted_by(cfg, provider), "specs": [target.test_file]}
     if target.project != ".":
         options["cwd"] = target.project
-    add_check(cfg, Check(check_id, "command", covers, options), out)
+    add_check(cfg, Check(check_id, "command", covers, options), out, emit=False)
     if added := laws.propose(root, result.laws, [check_id]):
         out.line(f"Proposed {len(added)} law(s) in {laws.LAWS_FILE}: {', '.join(added)}.")
         out.line("Read each one; approve with `rung laws --approve <id>` only if it says what you mean.")
+    out.emit(data | {"registered": [check_id]})
     return OK
 
 
 def cmd_draft(args, out: Output) -> int:
     cfg = load_config(args)
+    if args.id and not CHECK_ID.fullmatch(args.id):
+        raise ConfigError(f"invalid check id {args.id!r}; use letters, digits, `.`, `_` or `-`")
     if args.kind == "runtime":
         return _draft_runtime(args, cfg, out)
     if not args.files:
@@ -186,6 +207,8 @@ def cmd_draft(args, out: Output) -> int:
     provider = _provider(cfg, args)
     root = cfg.root
     sources = [(root / p).resolve() for p in args.files]
+    if any(not source.is_relative_to(root) for source in sources):
+        raise ConfigError("draft sources must be inside the project")
     missing = [str(s) for s in sources if not s.is_file()]
     if missing:
         raise ConfigError(f"not found: {', '.join(missing)}")
@@ -193,7 +216,7 @@ def cmd_draft(args, out: Output) -> int:
     if args.kind == "property":
         return _draft_property(args, cfg, out, sources, rel)
     check_id = args.id or f"{_slug(rel)}-{args.kind}"
-    target = root / (args.out or f"spec/{args.kind}/{_slug(rel)}")
+    target = managed_path(root, args.out or f"spec/{args.kind}/{_slug(rel)}")
     target.mkdir(parents=True, exist_ok=True)
     sql = sql_context.gather(root, sources)
     if sql.files:
@@ -235,7 +258,7 @@ def cmd_draft(args, out: Output) -> int:
         options = {"spec": spec.relative_to(root).as_posix(), "config": cfg_file.relative_to(root).as_posix(),
                    "drafted_by": drafted_by(cfg, provider)}  # fmt: skip
         check = Check(check_id, "tla", covered, options)
-        add_check(cfg, check, out)
+        add_check(cfg, check, out, emit=False)
     else:
         project = target.relative_to(root).as_posix()
         check = Check(
@@ -244,7 +267,7 @@ def cmd_draft(args, out: Output) -> int:
             [],
             {"project": project, "theorems": result.theorems, "drafted_by": drafted_by(cfg, provider)},
         )
-        add_check(cfg, check, out)
+        add_check(cfg, check, out, emit=False)
         exe = _lean_exe(target)
         if exe and result.alphabet and (target / "drt_adapter.py").exists():
             options = {
@@ -252,7 +275,7 @@ def cmd_draft(args, out: Output) -> int:
                 "impl": f"python3 {project}/drt_adapter.py", "alphabet": result.alphabet,
                 "cases": 2000, "max_len": 8, "specs": [f"{project}/**/*.lean", f"{project}/drt_adapter.py"],
             }  # fmt: skip
-            add_check(cfg, Check(f"{check_id}-drt", "drt", covered, options), out)
+            add_check(cfg, Check(f"{check_id}-drt", "drt", covered, options), out, emit=False)
     enforcing = [check_id] if args.kind == "tla" else [check_id, f"{check_id}-drt"]
     added = laws.propose(root, result.laws, enforcing)
     if added:

@@ -241,6 +241,23 @@ def test_captions_follow_the_step_names() -> None:
 # --- drafting -----------------------------------------------------------------------------------
 
 
+def test_draft_accepts_exact_managed_paths_and_explains_a_missing_file(tmp_path: Path) -> None:
+    prefixed = _drive()
+    for file in prefixed["files"]:
+        file["path"] = f".rung/verify/drives/refund/{file['path']}"
+    rejected = {"files": [{"path": "../drive.py", "content": "pass"}], "sources": [], "requirements": [], "notes": ""}
+    info = survey.survey(tmp_path)
+    result = runtime.draft_runtime(
+        ScriptedProvider([rejected]), tmp_path, info, focus=[], check_id="refund", max_rounds=1
+    )
+    assert not result.ok and not result.files
+    assert "did not include nonempty files named drive.py, FEATURES.md" in result.message
+    result = runtime.draft_runtime(
+        ScriptedProvider([prefixed]), tmp_path, info, focus=[], check_id="refund", max_rounds=1
+    )
+    assert result.ok and {file.name for file in result.files} == {"drive.py", "FEATURES.md"}
+
+
 def test_draft_rejects_a_script_that_only_drives_the_happy_path(tmp_path: Path) -> None:
     provider = ScriptedProvider([_drive(cats=["happy"]), _drive()])
     result = runtime.draft_runtime(provider, tmp_path, survey.survey(tmp_path), focus=[], max_rounds=2)
@@ -316,9 +333,16 @@ def test_draft_with_findings_registers_the_check_and_fails(tmp_path: Path, monke
     from rung.drafting import providers
 
     (tmp_path / "rung.toml").write_text('[project]\nname = "s"\n\n[llm]\nprovider = "none"\n')
-    monkeypatch.setattr(providers, "get", lambda llm: ScriptedProvider([_drive(fail=("state",))]))
+    (tmp_path / "app.py").write_text("print('app fixture')\n")
+    reply = _drive(fail=("state",))
+    reply["sources"] = ["app.py"]
+    reply["files"][0]["content"] = (
+        "import subprocess, sys\nsubprocess.run([sys.executable, 'app.py'], check=True)\n"
+        + reply["files"][0]["content"]
+    )
+    monkeypatch.setattr(providers, "get", lambda llm: ScriptedProvider([reply]))
     monkeypatch.setattr(draft_cmd.agents, "install_verify_skill", lambda root, name, cid: root / "SKILL.md")
-    assert rung(tmp_path, "draft", "runtime") == 1
+    assert rung(tmp_path, "draft", "runtime", "--allow-unisolated") == 1
     out = capsys.readouterr().out
     assert "The app failed 1 assertion(s)" in out and "state: state holds" in out
     assert config.load(tmp_path).check("runtime").kind == "evidence"
@@ -348,3 +372,103 @@ def test_a_failing_drive_script_reports_expected_and_observed_not_its_raw_output
     many = {"scenarios": [{"name": "s", "assertions": [{"name": f"a{i}", "passed": False} for i in range(20)]}]}
     lines = failure_details(many)
     assert len(lines) == 13 and lines[-1].startswith("... and 8 more")
+
+
+def test_full_runtime_does_not_inherit_replay_selection(shop: Path, monkeypatch) -> None:
+    (shop / "bad_seeds.txt").write_text("102\n")
+    monkeypatch.setenv("RUNG_SCENARIOS", "happy")
+    monkeypatch.setenv("RUNG_FAULTS", "happy")
+    assert rung(shop, "check", "runtime") == 1
+    assert _entry(shop)["details"]["failing_seed"] == 102
+
+
+def test_draft_rejects_a_drive_that_only_checks_source_presence(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("raise RuntimeError('cannot start')\n")
+    reply = _drive()
+    reply["sources"] = ["app.py"]
+    reply["files"][0]["content"] = (
+        "from pathlib import Path\nassert Path('app.py').exists()\n" + reply["files"][0]["content"]
+    )
+    result = runtime.draft_runtime(
+        ScriptedProvider([reply]),
+        tmp_path,
+        survey.survey(tmp_path),
+        focus=[],
+        max_rounds=1,
+    )
+    assert not result.ok and "still passes with deliberately broken" in result.message
+    assert (tmp_path / "app.py").is_file()
+    assert not (tmp_path / ".rung" / "verify" / "drive.py").exists()
+    assert result.files[0].is_relative_to(tmp_path / ".rung" / "cache" / "drafts")
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="requires the macOS write guard")
+def test_drafted_drive_replay_retains_evidence_with_the_write_guard(tmp_path, monkeypatch, capsys):
+    from rung.core import sandbox
+
+    sandbox.probe_write_guard(tmp_path)
+    monkeypatch.setenv("DATABASE_URL", "test-value")
+    root = tmp_path / "project"
+    root.mkdir()
+    outside = tmp_path / "escaped"
+    (root / "drive.py").write_text(
+        "import os\n"
+        "from pathlib import Path\n"
+        f"outside = Path({str(outside)!r})\n"
+        "try:\n"
+        "    outside.write_text('escaped')\n"
+        "except PermissionError:\n"
+        "    pass\n"
+        "assert not outside.exists()\n"
+        "assert 'DATABASE_URL' not in os.environ\n"
+        "out = Path(os.environ['RUNG_EVIDENCE_DIR'])\n"
+        "(out / 'observation.txt').write_text(os.environ['RUNG_SEED'])\n"
+    )
+    (root / "rung.toml").write_text(
+        f'[[check]]\nid = "drive"\nkind = "evidence"\nrun = "{PY} drive.py"\n'
+        'drafted_by = "example"\nrequire = [".txt"]\n'
+    )
+    assert rung(root, "check", "drive", "--json") == 0
+    result = json.loads(capsys.readouterr().out)["results"][0]
+    assert result["execution"] == "isolated"
+    assert not outside.exists()
+    assert (root / result["report"]).is_file()
+    assert all((root / path).is_file() for path in result["artifacts"])
+    assert rung(root, "status", "--require-fresh") == 0
+
+
+def test_drafted_drive_does_not_run_when_the_write_guard_is_unavailable(tmp_path, monkeypatch, capsys):
+    from rung.core import sandbox
+    from rung.core.errors import ToolMissing
+
+    marker = tmp_path / "ran"
+    (tmp_path / "drive.py").write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n")
+    (tmp_path / "rung.toml").write_text(
+        f'[[check]]\nid = "drive"\nkind = "evidence"\nrun = "{PY} drive.py"\ndrafted_by = "example"\n'
+    )
+
+    def unavailable(*args, **kwargs):
+        raise ToolMissing("write guard unavailable")
+
+    monkeypatch.setattr(sandbox, "write_guard", unavailable)
+    assert rung(tmp_path, "check", "drive", "--json") == 1
+    result = json.loads(capsys.readouterr().out)["results"][0]
+    assert result["verdict"] == "error" and "write guard unavailable" in result["summary"]
+    assert not marker.exists()
+
+
+def test_doctor_requires_write_guard_for_an_isolated_drive(tmp_path, monkeypatch, capsys):
+    from rung.core import sandbox
+    from rung.core.errors import ToolMissing
+
+    (tmp_path / "rung.toml").write_text(
+        f'[[check]]\nid = "drive"\nkind = "evidence"\nrun = "{PY} drive.py"\nisolate = true\n'
+    )
+
+    def unavailable(*args, **kwargs):
+        raise ToolMissing("write guard unavailable")
+
+    monkeypatch.setattr(sandbox, "probe_write_guard", unavailable)
+    assert rung(tmp_path, "doctor", "--strict", "--json") == 1
+    rows = json.loads(capsys.readouterr().out)
+    assert any(row["tool"] == "drive: write guard" and not row["ok"] for row in rows)

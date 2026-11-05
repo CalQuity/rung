@@ -23,13 +23,21 @@ each of those explicit and keeps them current; it cannot make a weak test strong
 
 ```console
 $ rung check --changed
-PASS  tests (command): `pytest -q` exited 0
-FAIL  secrets (scan): 1 new finding(s) at or above `warning`
+Verification checks
+  checkout · base 7b34e4ea8821 · 5 selected
+
+PASS  tests (command)
+      `pytest -q` exited 0
+FAIL  secrets (scan)
+      1 new finding(s) at or above `warning`
       NEW error   slack-bot-token  slack.py:1  [7a9fe0a79cbca79f]
-FAIL  deps (deps): 1 missing, 0 younger than 30 days
+FAIL  deps (deps)
+      1 missing, 0 younger than 30 days
       MISSING pypi:requests-toolbelt-turbo-pro: not on the registry (hallucinated or private?)
-PASS  runtime (evidence): 3 artifact(s) recorded
-FAIL  lease-protocol (tla): invariant ResultFromLeaseHolder is violated
+PASS  runtime (evidence)
+      3 artifact(s) recorded
+FAIL  lease-protocol (tla)
+      invariant ResultFromLeaseHolder is violated
       counterexample (5 states):
         2. Claim      owner = w1, valid = TRUE
         3. Expire     valid = FALSE
@@ -51,21 +59,35 @@ a change does what was meant. Rung's answer is three habits.
 
 ## Quick start
 
+Run the first line from a checkout of this repository. It installs the development CLI used
+in the examples below. `uv tool install rung-cli` installs the latest published release.
+
 ```bash
-uv tool install rung-cli          # or: pipx install rung-cli  (the command is `rung`)
+uv tool install .                 # run from the Rung source checkout
 cd your-repo
-rung init                         # build the kit: checks, agent skills and hook, drafted scenarios and models
-rung check                        # run everything and record verdicts
-rung kit                          # every part of the kit, how it stands, and the next command
+rung init --dry-run                # inspect commands and file writes
+rung init --no-drafts              # record existing checks and install agent guidance
+rung doctor --strict               # find missing executables for configured checks
+rung check                         # run checks and record verdicts
+rung kit                           # see evidence gaps and what to run next
 ```
 
 To try it on an app with a few bugs planted for it to find, run the same commands in
 [`examples/acme-store`](examples/acme-store).
 
-`rung init` asks before each part a model drafts and shows the candidate files it found, so you
-choose what gets modelled. `rung init --yes` drafts every part it can without asking;
-`--no-drafts` sets up the checks and agent skills only. Run it again later to fill the parts still
-missing.
+`rung init` in a terminal can also configure a model, show candidate files, and ask which
+parts to draft. To opt in unattended, pass `--yes --provider <provider>` or use a provider already
+configured in `rung.toml`. `--no-drafts` skips model login and model calls. Add `--no-agents` to
+leave agent configuration alone. Use `rung init --refresh --no-drafts` to append newly detected
+checks while retaining existing check definitions and comments. Setup adds ignore rules for local
+evidence and cache files, so those records stay out of ordinary commits.
+
+Plan a change with `rung plan --path src/payments.py` or inspect a branch with
+`rung plan --changed --base origin/main`. The plan offers focused checks for declared targets
+and the broader set of checks that may be affected through shared inputs. It also highlights paths
+without an execution check. Read each check's assertions to see which behavior it exercises.
+Use `rung check --changed --focused` for a quick pass over declared workspace targets.
+The output lists which checks it omitted. Use `rung gate` for the merge decision.
 
 Or let your coding agent do the setup. Rung ships a skill that installs the CLI, records your tests
 and scans, adds the CI gate and installs the agent rules, while leaving the decisions that are yours
@@ -88,6 +110,11 @@ Each drafted part can also be added on its own, for example a script that drives
 ```bash
 rung draft runtime --intent "create, list and delete a todo through the HTTP API"
 ```
+
+Runtime and property drafts run their trials in a disposable copy. Generated runtime checks keep
+that write guard on replay and copy their evidence back. On Linux, install Bubblewrap and enable
+unprivileged namespaces. On macOS, Rung uses sandbox-exec. Rung holds a runtime draft for review
+if it still passes after the application sources in the copy are deliberately broken.
 
 ## Your project's verification kit
 
@@ -327,11 +354,13 @@ three-step case only the differential test finds.
 
 ## In CI
 
+The example pins the current release tag. To use the development gate behavior below,
+pin a reviewed commit that includes it.
+
 ```yaml
 on: pull_request
 permissions:
   contents: read
-  pull-requests: write # only for the report comment; without it the gate still works
 jobs:
   rung:
     runs-on: ubuntu-latest
@@ -343,16 +372,67 @@ jobs:
       - uses: CalQuity/rung@v0.3.0
 ```
 
-The action runs the checks a pull request touches against its merge base. It keeps a single
-report comment up to date and fails only on what the pull request introduced. The pull request's
-own `rung.toml`, `LAWS.md`, waivers, baselines and scanner configs decide what it is checked
-against, so the action lists any edits to them in the report and as annotations (add other policy
-files, such as a semgrep rules file, with `policy-paths`); set
-`policy-changes: fail` to fail the gate on them until a reviewer accepts. It uploads `.rung/evidence/`
-(screenshots, videos, traces, HARs and each run's `index.html`) as the `rung-evidence` workflow
-artifact and links it from the report comment and the step summary, so a reviewer can watch what the
-drive script did; set `upload-evidence: false` to skip it. Without the action, use
-`rung check --changed` and `rung report`.
+Use `rung gate --base origin/main` to run the same merge decision locally or in another CI
+provider. The gate compares scans with the merge base and re-runs the declared checks, including
+the checks that enforce approved laws. Local verdicts and manual captures are receipts for review.
+A merge gate requires repeatable checks.
+
+The action runs the gate with policy preflight enabled. Changes to `rung.toml`, `LAWS.md`,
+waivers, baselines, generated drive files, formal models, declared `specs`, or GitHub workflow files block
+before checks execute. Use `policy-paths` for other rule files and trusted wrappers. Establish a
+review route for intentional policy changes with your repository owners. After review, a maintainer
+can use `--allow-policy-changes` locally or `policy-changes: warn` from a trusted workflow.
+The gate follows static Python scripts and modules through `uv run`, including launchers named
+by package scripts. It protects repository symlinks along those paths and their repository-local
+targets. List files used by dynamic wrappers in `policy-paths`.
+For Node checks the gate also protects `package.json` script definitions, package-manager
+selection, and directly invoked scripts. Use `--require-coverage 'src/**'` (or the Action's `require-coverage` input) to fail
+when a changed file in that scope has no matching declared target. Set `verifies` to declare
+the paths a check is intended to verify. Explicit `covers` globs also count. The default
+repo-wide freshness scope alone does not satisfy required coverage.
+
+Run the workflow on a disposable runner with read-only permissions and without repository secrets.
+Pin the action by commit SHA in a required workflow that contributors cannot replace. Enable
+`upload-evidence: true` only for runs using test accounts and synthetic data. Videos, HARs, traces,
+and screenshots may contain the data shown to the browser. The report goes to the job summary.
+To post a sticky PR comment, opt in with `comment: true` and grant `pull-requests: write`
+in the trusted workflow.
+
+### Run PR checks in Daytona
+
+For repositories that want to keep test execution off the GitHub runner, a trusted PR workflow can
+choose `executor: daytona`. Create a private, versioned Daytona snapshot with Git, Rung built from
+the same commit as the pinned action, and your project's offline toolchain and dependencies. Keep the
+snapshot credential-free. Set `DAYTONA_API_KEY` as a secret in the repository that uses Rung.
+
+```yaml
+# In the adopting repository's trusted PR workflow, after a full checkout.
+- uses: CalQuity/rung@<reviewed-commit-sha>
+  with:
+    executor: daytona
+    daytona-snapshot: my-project-verify-v1
+  env:
+    DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+```
+
+Use a clean checkout with `fetch-depth: 0` and `persist-credentials: false`. The coordinator
+transfers a Git bundle containing the commit and its reachable history, up to 100 MiB. Confirm that
+your repository can share that history with Daytona before enabling this. The sandbox has outbound
+network access blocked and expires after 20 minutes. Rung requests deletion at the end of the run.
+The job summary contains check verdicts and short summaries. Screenshots and other evidence files
+stay in the sandbox and expire with it. A provider or snapshot error fails the gate.
+Use offline tooling for checks that normally query a registry or scanner service, or run those
+checks in a separate required job.
+
+Keep the workflow, action pin, snapshot and secret under maintainer control. Run repository
+commands and dependency installation inside the sandbox. Ordinary fork PR workflows do not receive
+the secret. Use the standard read-only runner for that workflow, or arrange a separate
+maintainer-controlled run that pins the reviewed commit. See
+[GitHub's guidance on privileged pull request workflows](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target).
+
+To invoke the backend from another CI provider, install the optional SDK in Rung's tool environment
+with `uv tool install . --with daytona==0.227.3`, set `DAYTONA_API_KEY` on the coordinator, and run
+`rung gate --base origin/main --executor daytona --daytona-snapshot my-project-verify-v1`.
 
 To run the same check before every push, add Rung to `.pre-commit-config.yaml`:
 
@@ -365,13 +445,22 @@ To run the same check before every push, add Rung to `.pre-commit-config.yaml`:
 
 ## With coding agents
 
-`rung agents` writes a Claude Code skill and an `AGENTS.md` section, which Codex, Cursor and
-others read. With `--hooks` it also installs a Claude Code `Stop` hook. An agent whose edits
-touch a check that is not freshly passing is told which `rung check` to run, and cannot finish
-until it has. This is a best-effort local guard: it lets the agent stop on a second attempt (so it
-can never trap one), allows the stop if Rung itself cannot run, and looks at everything changed since the branch
-left its base, committed or not.
-CI with `rung check --changed` is the enforcement boundary.
+`rung agents` installs CLI workflows in `.claude/skills/` and `.agents/skills/` and adds a
+managed section to `AGENTS.md`. Ask Claude Code or Codex to run the Rung skill in the project.
+The skill walks through setup preview, change planning, checks, replay, and reporting using
+the same CLI you run in a terminal.
+
+```bash
+rung plan --changed --base origin/main --json
+rung check --changed --base origin/main --json
+rung report --json
+```
+
+`rung agents --hooks` installs the Claude Code Stop hook. For Codex, use
+`rung agents --codex-hooks` and review the project hook with `/hooks` in Codex.
+Both hooks point the agent to checks that still need to run and allow the second stop
+so a tool failure cannot trap the session. The merge workflow uses `rung gate` to execute
+the checks independently. See [Codex hook setup and trust](https://learn.chatgpt.com/docs/hooks).
 
 Drafting uses a model you already have. `rung init` reuses your `claude` or `codex` login, or
 any OpenAI-compatible endpoint, including local models. Rung never stores credentials.
@@ -380,16 +469,17 @@ any OpenAI-compatible endpoint, including local models. Rung never stores creden
 
 | Command | Does |
 |---|---|
-| `rung init [--yes] [--no-drafts] [--no-agents]` | Build the verification kit: survey the repo, add checks, install agent skills and the Stop hook, draft app scenarios, property tests and formal models with your approval |
+| `rung init [--dry-run] [--refresh] [--no-drafts] [--no-agents]` | Build the verification kit: survey the repo, add checks, install agent skills and the Stop hook, draft app scenarios, property tests and formal models with your approval |
 | `rung kit` | Every part of the kit, its checks and their state, and the next command to run |
 | `rung map [--approve F] [--not-built F] [--drop F] [--redraft]` | Draft the feature map, show it (terminal and HTML page), record your decision on each feature |
-| `rung plan` | Recommend checks, cheapest and most useful first |
+| `rung plan [--path PATH\|--changed]` | Recommend checks and show scopes for a proposed or actual change |
 | `rung check [ids] [--changed] [--base REF]` | Run checks and record verdicts |
 | `rung check <id> --seed N [--scenario NAME]` | Run one seed (or scenario) of a drive script again, without recording it |
 | `rung evidence <check> [--seed N] [--out DIR]` | Write the HTML evidence page of a drive script's newest run |
+| `rung gate [--base REF] [--executor local\|daytona]` | Re-run the merge checks after policy preflight |
 | `rung status [--ci]` | Fresh, stale, failing; `--ci` exits 1 unless all fresh |
 | `rung report [--format md\|json]` | Checks, laws, new findings and fix proofs |
-| `rung prove 'pytest tests/test_x.py'` | Show a new test fails without the fix and passes with it; under pytest, each new or changed test on its own |
+| `rung prove 'pytest tests/test_x.py'` | Show a test fails without the fix and passes with it. Pytest and Node can report individual cases. |
 | `rung laws [--approve ID]` | Which laws hold |
 | `rung add <kind> <id> ...` | Declare a `command`, `evidence`, `scan` or `deps` check |
 | `rung attest <check> <files> --by <tool>` | Record evidence an agent or person captured (Claude in Chrome, Codex, computer use) |
@@ -398,12 +488,15 @@ any OpenAI-compatible endpoint, including local models. Rung never stores creden
 | `rung draft tla\|lean\|property\|runtime` | Model-drafted spec, proof, property tests or drive script; a checker decides |
 | `rung maintain <check>` | Bring a TLA+ or Lean model back in line with code that changed since it was confirmed |
 | `rung confirm <check> --by NAME --reason TEXT` | Record that a person checked a TLA+ or Lean model still describes the code |
-| `rung agents [--hooks]` | Agent skill, AGENTS.md rules, enforcement hook |
-| `rung doctor` | Which tools and model CLIs are available |
+| `rung agents [--hooks] [--codex-hooks]` | Agent workflows, AGENTS.md rules, optional Stop hooks |
+| `rung doctor [--strict]` | Diagnose missing executables for the current kit |
 | `rung ledger [--prune]` | Check the verdict files for corruption |
 
-Every command takes `-C DIR` and `--json`. Exit codes: `0` ok, `1` a check or gate failed,
-`2` configuration or usage error, `3` a required tool is missing, `4` git error.
+Every command accepts `-C DIR` and `--json`. Human output uses color in a terminal. Use
+`--no-color` or set `NO_COLOR` for plain text. Exit codes are `0` for success, `1` for a failed
+check or gate, `2` for configuration or usage errors, `3` for a missing required tool, and
+`4` for a Git error. A missing dependency of an individual check is reported as a check error
+and exits `1`; `3` applies when the command itself cannot start without a prerequisite.
 
 Configuration lives in `rung.toml`; see [docs/CONFIG.md](https://github.com/CalQuity/rung/blob/main/docs/CONFIG.md).
 

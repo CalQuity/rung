@@ -53,6 +53,17 @@ def save(root: Path, card: dict[str, Any]) -> Path:
     return target
 
 
+def has_source_confirmation(card: dict[str, Any] | None) -> bool:
+    confirmed = (card or {}).get("confirmed")
+    if not isinstance(confirmed, dict) or not confirmed.get("digest"):
+        return False
+    files = confirmed.get("files")
+    return isinstance(files, dict) and any(
+        isinstance(value, str) and not value.endswith("missing") and not value.startswith("external-link:")
+        for value in files.values()
+    )
+
+
 def new(check_id: str, kind: str, sources: list[str]) -> dict[str, Any]:
     return {"check": check_id, "kind": kind, "sources": list(sources), "confirmed": {}, "scope": {}, "functions": [],
             "actions": {}, "invariants": {}, "failability": {}, "history": []}  # fmt: skip
@@ -123,8 +134,8 @@ def changed_files(root: Path, card: dict[str, Any]) -> list[str]:
 def drift(root: Path, check_id: str, card: dict[str, Any] | None = None) -> Drift | None:
     """How the covered sources moved since the model was confirmed, or None when they did not (or it never was)."""
     card = card if card is not None else load(root, check_id)
-    confirmed = (card or {}).get("confirmed") or {}
-    if not card or not confirmed.get("digest"):
+    confirmed = (card or {}).get("confirmed")
+    if not card or not isinstance(confirmed, dict) or not confirmed.get("digest"):
         return None
     if inputs_digest(snapshot(root, card.get("sources", []))) == confirmed["digest"]:
         return None

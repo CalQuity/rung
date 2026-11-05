@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rung verification kit design</title>
+<style>
+  body { font: 1rem/1.65 system-ui, sans-serif; max-width: 50rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1, h2 { line-height: 1.2; }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { text-align: left; vertical-align: top; padding: .6rem; border-bottom: 1px solid #8887; }
+  code { background: #8882; padding: .1rem .25rem; }
+  :root { color-scheme: light dark; }
+</style>
+<h1>Rung verification kit design</h1>
+<p>Rung gives a developer a way to assemble checks, see what they cover, and decide what to do
+when the evidence is weak or missing. The project keeps its local CLI, plain files, and adapters
+for existing tools. Each stage makes a different decision using the same kit.</p>
+<h2>Developer workflow</h2>
+<table>
+<thead><tr><th scope="col">Stage</th><th scope="col">Developer decision</th><th scope="col">Rung surface</th></tr></thead>
+<tbody>
+<tr><td>Adopt</td><td>Which existing commands will run, and what will setup write?</td><td><code>rung init --dry-run</code>, then an offline starter kit</td></tr>
+<tr><td>Before editing</td><td>Which behavior must stay true? Where should a regression test fail?</td><td><code>rung plan</code>, approved laws and feature maps</td></tr>
+<tr><td>During editing</td><td>Which checks should I run now?</td><td><code>rung check</code>, fresh verdicts, targeted replay and fix proofs</td></tr>
+<tr><td>Before merge</td><td>Did an independent execution support this change under reviewed policy?</td><td>A gate with policy preflight, a merge base, and fresh execution</td></tr>
+<tr><td>After merge</td><td>Can I inspect and replay the evidence used in CI?</td><td>Machine-readable reports and deliberate evidence export</td></tr>
+</tbody>
+</table>
+<h2>Decisions</h2>
+<ul>
+<li><strong>Keep setup and execution separate.</strong> The preview and initializer share check
+selection. A developer can inspect a repository without running its commands or contacting a model.
+Drafting with a selected provider remains a separate consent boundary because it can send code to
+a model and exercise generated scripts.</li>
+<li><strong>Preserve local iteration and tighten merge checks.</strong> A local ledger is a receipt
+that can be shared and inspected. The merge gate runs checks again and evaluates policy changes
+before running repository commands. Run the gate with an externally pinned CLI or action on a
+disposable runner. The workflow and additional rule inputs belong under repository-owner review.</li>
+<li><strong>Make artifact freshness observable.</strong> Artifact hashes are useful only when compared
+with the files a reviewer can actually open. Separate captures supplied by a person or agent from
+evidence a scripted check produced. Upload raw runtime evidence only when the project opts in.</li>
+<li><strong>Test the draft in a copy.</strong> A generated runtime script runs twice at one seed and
+then runs with the contents of the application sources deliberately broken. Rung keeps the candidate for review if it can still
+pass. The operating system write guard contains trial writes and masks common credential paths.
+Generated drives keep the guard on replay. A fresh copy gets the inputs and a filtered environment.
+The report and artifacts return to the developer's project. A reviewed check can opt out when
+its surrounding worker supplies the isolation or the check requires host access.</li>
+<li><strong>Escalate by risk.</strong> Start with existing checks, then choose the cheapest oracle
+that catches the regression. An HTTP contract, an accessibility assertion, a queue interleaving,
+and a pure pricing invariant need different tools. Each needs an explicit scope and a way to replay failures.</li>
+</ul>
+<h2>Trade-offs</h2>
+<p>A hosted reviewer could centralize execution and policy, at the cost of a new service and data
+boundary. A plugin-only approach would be easier to install inside one agent and harder to reproduce
+in a shell or CI. Rung keeps the CLI as the implementation and lets agents and CI call it.</p>
+<p>A preflight can detect changes to declared policy files and commands in configuration. Ordinary
+tests and scripts still execute code from the checkout. Use repository-owner rules for additional
+policy paths and a disposable runner without secrets for pull requests.</p>
+<h2>Implementation language</h2>
+<p>Keep Python for this iteration. The installed wheel is about 220 KiB and has no runtime Python
+dependencies. On the development Mac, seven runs gave a median of 213 ms for
+<code>rung --version</code> and 535 ms for the Acme workspace preview. Checker invocations depend
+on the project's tools and on Java, Lean or a browser where configured. A Rust binary could simplify
+standalone distribution and reduce startup overhead. It would still launch those tools, and the
+rewrite would need to preserve the verdict format and adapters. Measure adoption friction and
+large-workspace profiling before changing languages.</p>
+<h2>Agent and terminal interfaces</h2>
+<p>Claude Code and Codex receive the same project-local workflow. It runs CLI commands and interprets
+their exit codes and structured results. The terminal uses headings, status labels and summaries,
+with color when attached to a TTY and plain text when requested. Check output strips terminal control
+sequences before logging them.</p>
+<p>The two Stop hooks share a freshness decision and adapt it to each agent's protocol.
+Codex installation is explicit and leaves trust approval in Codex. The hook offers one retry
+and leaves the merge decision to the separate gate.</p>
+<h2>Optional remote PR execution</h2>
+<p>The adopting repository selects a reviewed Daytona snapshot and keeps its API key on a trusted
+GitHub coordinator. The coordinator applies policy preflight and transfers a Git bundle for the
+exact head. The sandbox has the same Rung version and applies the gate to the same base and head.
+Local execution remains the default and provider failures fail the remote gate.</p>
+<p>The private sandbox blocks outbound network access and uses both explicit cleanup and an expiry.
+The coordinator validates the remote receipt and imports status and short summaries. The workflow
+must trust the action, snapshot and check definitions. A Git bundle shares reachable history,
+which limits adoption to repositories that can transfer that history. The snapshot supplies the
+toolchain and dependencies before the PR arrives.</p>
+<h2>Verification</h2>
+<p>Exercise setup, checkout changes, policy bypasses, evidence mutation, and CI reporting through
+the installed command. Independently evaluate clean source snapshots against the developer workflows
+and failure cases in the <a href="docs/RUBRIC.md">evaluation rubric</a>.</p>
+<p>These independent scores describe the snapshots each reviewer tested. The latest changes need
+their own review. Review I ran the locked contributor workflow to completion: 375 passed, zero
+skipped, and 85% coverage. The previous provisional scores lacked a completed contributor run.</p>
+<table>
+<thead><tr><th scope="col">Dimension</th><th scope="col">Review F</th><th scope="col">Review G</th><th scope="col">Review H</th><th scope="col">Review I</th><th scope="col">Review K</th><th scope="col">Review L</th></tr></thead>
+<tbody>
+<tr><td>First run and CLI</td><td>7</td><td>8</td><td>7</td><td>8</td><td>9</td><td>8</td></tr>
+<tr><td>Project fit</td><td>7</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td></tr>
+<tr><td>Development lifecycle</td><td>7</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td></tr>
+<tr><td>Check quality</td><td>7</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td></tr>
+<tr><td>Evidence integrity</td><td>6</td><td>8</td><td>8</td><td>7</td><td>9</td><td>7</td></tr>
+<tr><td>Safe adoption and execution</td><td>6</td><td>7</td><td>6</td><td>7</td><td>7</td><td>6</td></tr>
+<tr><td>Agent and CI integration</td><td>5</td><td>7</td><td>6</td><td>6</td><td>7</td><td>7</td></tr>
+<tr><td>Agent-operated workflow</td><td>7</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td></tr>
+<tr><td>Terminal output and accessibility</td><td>7</td><td>8</td><td>8</td><td>7</td><td>9</td><td>8</td></tr>
+<tr><td>Open-source operability</td><td>8</td><td>8, provisional</td><td>8, provisional</td><td>9</td><td>9</td><td>9</td></tr>
+<tr><td>Value beyond model prompting</td><td>8</td><td>9</td><td>9</td><td>9</td><td>9</td><td>9</td></tr>
+<tr><td>Implementation language and distribution</td><td>8</td><td>9</td><td>8</td><td>8</td><td>9</td><td>9</td></tr>
+</tbody>
+</table>
+<h3>Changes from Review I</h3>
+<ul>
+<li>First run and project fit. Doctor names the locked npm install command when it finds a lockfile.
+Dependency installation remains explicit. The focused plan provides a quick workspace command,
+while the default check scope includes shared inputs.</li>
+<li>Lifecycle and checks. Node proofs examine cases in new files and accept named cases in edited
+files. Ordinary pytest checks require a passing case.</li>
+<li>Integrity and CI. Formal checks distinguish model-only results from source-confirmed results.
+The gate protects the local entry point behind a Python module command.</li>
+<li>Execution. Drafted drives retain the write guard on replay and return only the report and
+ordinary evidence files. Missing isolation fails the check before the drive can run. The installed
+wheel replayed a guarded drive on macOS and in a Linux container that permits Bubblewrap namespaces.</li>
+<li>Distribution and contributor experience. The source archive includes the Acme screenshots.
+The contributor instructions cover checker registration and the lint warning was removed.</li>
+<li>Agent and terminal output. JSON objects include a schema version and Markdown reports strip
+terminal controls. Hosted execution and live agent sessions require separate verification.</li>
+</ul>
+<h3>Changes from Review K</h3>
+<p>The independent contributor run passed 384 tests at 85% coverage. The review scored six
+dimensions at 9. A local verification script reached through a package runner could still
+be replaced on the branch and make the gate pass. The gate now protects scripts and modules
+launched through static <code>uv run</code> commands, and its regression test covers a
+committed wrapper change with declared application coverage.</p>
+<p><code>rung check --changed --focused</code> gives workspace developers a direct way to
+run declared targets. Its receipt reports omitted checks and records each result against
+the full declared inputs. The normal change check and merge gate account for shared inputs.</p>
+<p>The contributor smoke script runs an actual Codex client against a scripted local Responses
+endpoint. It verifies discovery from a nested directory and exercises preview, planning, a failed
+check, replay and reporting. The test covers the client integration and leaves model judgment
+outside the fixture.</p>
+<h3>Changes from Review L</h3>
+<p>The reviewer passed 386 contributor tests with zero skips and 85% coverage. They then
+reproduced a gate bypass through a launcher symlink, a false green in strict doctor for
+a missing tool delegated by <code>uv run</code>, and stale local reuse after that tool changed.</p>
+<ul>
+<li>Policy, doctor, and reuse share static launcher discovery. The gate protects intermediate
+links and repository targets. Strict doctor checks a delegated tool when it uses the host
+PATH. Reuse follows symlinks and runs a fresh check when a package runner owns tool resolution.</li>
+<li>The Acme survey omits a Make target when its sole recipe delegates to a child suite the
+survey already found. Custom recipes stay visible. The standard scope still includes shared
+inputs; developers can use focused mode for iteration in a workspace with declared targets.</li>
+<li>Terminal evidence paths wrap at component boundaries. Suggested commands retain a single
+logical line for copy and paste, and JSON retains complete paths.</li>
+<li>The guarded Chromium check clicked a real browser control, retained its screenshot, and
+replayed a structured failure at seed 41 after the amount changed from 100 to 150. The
+reviewer's external Gitleaks run caught a synthetic leak. The Chromium fixture exercised a
+hand-written drive; drafting acceptance is covered by separate tests.</li>
+<li>The installed Claude Code client loaded the project skill and ran preview, plan, a failing
+check, seed replay, and report against a loopback fixture. The contributor smoke scripts
+exercise the corresponding flows in both clients. The Claude smoke also observes the installed
+Stop hook. The GitHub composite's shell steps produced the expected pass, regression failure,
+and policy block on a disposable local checkout. Interactive trust prompts and hosted GitHub
+or Daytona runs still require those environments.</li>
+<li>A live Terra browser draft reached the retry limit with no files or reason. The drafter now
+names its accepted paths in the request, accepts the exact managed paths as well as bare
+filenames, and reports the last concrete rejection when no draft is registered. A retry with
+<code>codex-cli:gpt-6.1-terra</code> produced a drive that passed six scenarios in its first
+round, failed against Rung's source canary, and registered as a guarded check. The check passed
+on the unchanged app. A $50 refund regression failed on replay at seed 27623 with screenshots
+and assertion details. A real zizmor run also caught template injection in a synthetic
+pull request workflow.</li>
+</ul>
+<h2>References</h2>
+<ul>
+<li>Greptile documents how it follows codebase dependencies during PR review.
+<a href="https://www.greptile.com/docs/introduction">Greptile overview</a></li>
+<li>CodeRabbit describes collecting context and invoking analysis tools during PR review.
+<a href="https://www.coderabbit.ai/guides/agentic-code-review">CodeRabbit guide</a></li>
+<li>GitHub documents required checks and deployment gates, and distinguishes build provenance from
+an assessment of code safety. <a href="https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets">Rulesets</a>
+and <a href="https://docs.github.com/en/actions/concepts/security/artifact-attestations">artifact attestations</a></li>
+<li>OpenAI documents repository-local skill discovery. <a href="https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills">Codex skill locations</a></li>
+<li>Daytona documents sandbox egress restrictions and expiry.
+<a href="https://www.daytona.io/docs/en/network-limits/">Network limits</a> and
+<a href="https://www.daytona.io/docs/en/persistence/">Persistence</a></li>
+</ul>
+</html>

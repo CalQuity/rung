@@ -106,7 +106,11 @@ def agent_entries(root: Path) -> list[Entry]:
     skills = root / ".claude" / "skills"
     entries: list[Entry] = []
     if (skills / "rung" / "SKILL.md").exists():
-        entries.append(Entry("rung skills + AGENTS.md", "skill", "installed"))
+        entries.append(Entry("Claude Code skills", "skill", "installed"))
+    if (root / ".agents" / "skills" / "rung" / "SKILL.md").exists():
+        entries.append(Entry("Codex skills", "skill", "installed"))
+    if (root / "AGENTS.md").is_file() and "<!-- rung:begin -->" in (root / "AGENTS.md").read_text(errors="replace"):
+        entries.append(Entry("AGENTS.md guidance", "skill", "installed"))
     for path in sorted(skills.glob("verify-*/SKILL.md")) if skills.is_dir() else []:
         entries.append(Entry(path.parent.name, "skill", "installed", "project-specific verification skill"))
     settings = root / ".claude" / "settings.json"

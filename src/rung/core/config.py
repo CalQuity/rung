@@ -22,26 +22,26 @@ from typing import Any
 from rung.core.errors import RungError
 
 CONFIG_NAME = "rung.toml"
-CHECK_KINDS = ("command", "evidence", "scan", "shortcuts", "deps", "tla", "lean", "drt")
 CHECK_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 # A scenario name; scripts receive them comma-separated in RUNG_FAULTS and RUNG_SCENARIOS.
 SCENARIO_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 # Options that must be non-negative integers wherever they appear.
 INT_OPTIONS = ("timeout", "cases", "min_len", "max_len", "seed", "min_age_days", "runs")
 # Options that must be lists of strings wherever they appear.
-LIST_OPTIONS = ("specs", "require", "allow", "theorems", "alphabet", "faults", "scenarios")
+LIST_OPTIONS = ("specs", "verifies", "require", "allow", "theorems", "alphabet", "faults", "scenarios")
 # Every option each kind understands; anything else is a typo that would otherwise do nothing.
-COMMON_OPTIONS = ("timeout", "max_age_days", "specs", "drafted_by")
+COMMON_OPTIONS = ("timeout", "max_age_days", "specs", "verifies", "drafted_by")
 KIND_OPTIONS = {
     "command": ("run", "cwd"),
-    "evidence": ("run", "cwd", "require", "runs", "seed", "faults", "scenarios"),
-    "scan": ("tool", "run", "cwd", "fail_on", "default_level"),
+    "evidence": ("run", "cwd", "require", "runs", "seed", "faults", "scenarios", "structured", "isolate"),
+    "scan": ("tool", "run", "cwd", "fail_on", "default_level", "finding_exit_codes"),
     "shortcuts": ("allow", "fail_on"),
     "deps": ("allow", "min_age_days"),
     "tla": ("spec", "config"),
     "lean": ("project", "theorems"),
     "drt": ("model", "impl", "model_cwd", "impl_cwd", "alphabet", "cases", "min_len", "max_len", "seed"),
 }
+CHECK_KINDS = tuple(KIND_OPTIONS)
 
 
 class ConfigError(RungError, ValueError):
@@ -172,6 +172,15 @@ def _validate_check(check: Check) -> None:
             check.get_list(key)
     if "runs" in check.options and check.get_int("runs", 1) == 0:
         raise ConfigError(f"check {check.id!r}: `runs` must be at least 1")
+    for key in ("structured", "isolate"):
+        if key in check.options and not isinstance(check.get(key), bool):
+            raise ConfigError(f"check {check.id!r}: `{key}` must be a boolean")
+        if check.get(key) and not check.get("run"):
+            raise ConfigError(f"check {check.id!r}: `{key}` requires a drive script in `run`")
+    if "finding_exit_codes" in check.options:
+        codes = check.get("finding_exit_codes")
+        if not isinstance(codes, list) or any(type(code) is not int or not 1 <= code <= 255 for code in codes):
+            raise ConfigError(f"check {check.id!r}: `finding_exit_codes` must be a list of integers from 1 to 255")
     for key in ("faults", "scenarios"):
         if bad := [f for f in check.get_list(key) if not SCENARIO_NAME.match(f)]:
             raise ConfigError(f"check {check.id!r}: `{key}` names are letters, digits, `.`, `_` or `-`, not {bad[0]!r}")
@@ -185,7 +194,7 @@ def _validate_check(check: Check) -> None:
 
 
 def load(root: Path) -> Config:
-    path = root / CONFIG_NAME
+    path = managed_path(root, CONFIG_NAME)
     try:
         raw = tomllib.loads(path.read_text())
     except FileNotFoundError as exc:
@@ -204,6 +213,8 @@ def load(root: Path) -> Config:
     checks: list[Check] = []
     seen: set[str] = set()
     for i, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise ConfigError(f"check #{i + 1} must be a [[check]] table")
         entry = dict(entry)
         check_id = entry.pop("id", None)
         kind = entry.pop("kind", None)
@@ -241,15 +252,20 @@ def toml_value(value: Any) -> str:
     raise TypeError(f"cannot write {type(value).__name__} to TOML")
 
 
+def _check_lines(check: Check) -> list[str]:
+    return [
+        "[[check]]", f"id = {toml_value(check.id)}", f"kind = {toml_value(check.kind)}",
+        *(f"{key} = {toml_value(value)}" for key, value in check.options.items()),
+        f"covers = {toml_value(check.covers)}",
+    ]  # fmt: skip
+
+
 def dump(config: Config) -> str:
     lines = ["[project]", f"name = {toml_value(config.name)}", "", "[llm]"]
     for key in ("provider", "model", "base_url", "api_key_env"):
         lines.append(f"{key} = {toml_value(getattr(config.llm, key))}")
     for c in config.checks:
-        lines += ["", "[[check]]", f"id = {toml_value(c.id)}", f"kind = {toml_value(c.kind)}"]
-        for key, value in c.options.items():
-            lines.append(f"{key} = {toml_value(value)}")
-        lines.append(f"covers = {toml_value(c.covers)}")
+        lines += ["", *_check_lines(c)]
     return "\n".join(lines) + "\n"
 
 
@@ -268,6 +284,30 @@ def write_atomic(path: Path, text: str) -> None:
         raise
 
 
+def managed_path(root: Path, relative: str | Path) -> Path:
+    """A Rung-managed location with no links that could redirect a write."""
+    path = root / relative
+    resolved = path.resolve()
+    if resolved != root.resolve() / relative or not resolved.is_relative_to(root.resolve()):
+        raise ConfigError(f"refusing to write through a symlink or outside the project: {relative}")
+    return path
+
+
+def append_checks(config: Config, checks: list[Check]) -> None:
+    """Append detected checks while retaining the developer's existing TOML and comments."""
+    if not checks:
+        return
+    path = managed_path(config.root, CONFIG_NAME)
+    text = path.read_text()
+    for check in checks:
+        if not CHECK_ID.match(check.id):
+            raise ConfigError(f"invalid check id {check.id!r}; use letters, digits, `.`, `_` or `-`")
+        _validate_check(check)
+        text += "\n" + "\n".join(_check_lines(check)) + "\n"
+    tomllib.loads(text)
+    write_atomic(path, text)
+
+
 def save(config: Config) -> Path:
     """Write `rung.toml`. Comments are not preserved; the file is regenerated from the parsed config.
 
@@ -280,6 +320,6 @@ def save(config: Config) -> Path:
         _validate_check(check)
     text = dump(config)
     tomllib.loads(text)  # never write a file Rung itself could not read back
-    path = config.root / CONFIG_NAME
+    path = managed_path(config.root, CONFIG_NAME)
     write_atomic(path, text)
     return path

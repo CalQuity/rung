@@ -1,16 +1,16 @@
 name: Rung
-description: Run Rung checks on a pull request, gate on what it introduces, and post one sticky report comment.
+description: Re-run verification checks under reviewed policy and write a merge report.
 branding:
   icon: check-square
   color: green
 
 inputs:
   checks:
-    description: Space-separated check ids to run (default all checks touched by the change).
+    description: Space-separated check ids to run (default all declared checks).
     default: ""
   comment:
-    description: Post or update a pull request comment with the report.
-    default: "true"
+    description: Post or update a pull request comment with the report. Requires a write token.
+    default: "false"
   package:
     description: What to install with `uv tool install`. Empty installs the version of this action itself.
     default: ""
@@ -21,7 +21,7 @@ inputs:
     description: >-
       Upload .rung/evidence/ (screenshots, videos, traces, HARs and each run's index.html) as a workflow
       artifact, and link it from the report.
-    default: "true"
+    default: "false"
   policy-paths:
     description: >-
       More files that decide the gate, space-separated (e.g. a semgrep rules file a scan check uses).
@@ -30,8 +30,17 @@ inputs:
   policy-changes:
     description: >-
       What to do when the pull request edits what decides the gate (rung.toml, LAWS.md, waivers,
-      baselines, scanner configs): "warn" lists them in the report, "fail" also fails the gate.
-    default: "warn"
+      baselines, scanner configs, workflows): "fail" blocks before running checks, "warn" runs anyway.
+    default: "fail"
+  require-coverage:
+    description: Space-separated project-relative globs that require an execution check when changed.
+    default: ""
+  executor:
+    description: Where to run PR checks. Choose local or daytona.
+    default: "local"
+  daytona-snapshot:
+    description: Reviewed Daytona snapshot with Rung and the project's offline toolchain installed.
+    default: ""
 
 outputs:
   passed:
@@ -47,7 +56,31 @@ runs:
       env:
         PACKAGE: ${{ inputs.package }}
         ACTION_PATH: ${{ github.action_path }}
-      run: uv tool install "${PACKAGE:-$ACTION_PATH}"
+        EXECUTOR: ${{ inputs.executor }}
+        SNAPSHOT: ${{ inputs.daytona-snapshot }}
+        UPLOAD_EVIDENCE: ${{ inputs.upload-evidence }}
+        BASE_REF: ${{ github.base_ref }}
+        UV_NO_CONFIG: "1"
+      run: |
+        extra=()
+        case "$EXECUTOR" in
+          local)
+            if [ -n "$SNAPSHOT" ]; then
+              echo "daytona-snapshot requires executor: daytona" >&2; exit 2
+            fi
+            ;;
+          daytona)
+            if [ -z "$SNAPSHOT" ] || [ -z "$BASE_REF" ] || [ "$UPLOAD_EVIDENCE" = "true" ]; then
+              echo "Daytona requires a PR base and daytona-snapshot, with upload-evidence disabled" >&2
+              exit 2
+            fi
+            extra+=(--with daytona==0.227.3)
+            ;;
+          *) echo "executor must be local or daytona" >&2; exit 2 ;;
+        esac
+        unset DAYTONA_API_KEY
+        if [ "$EXECUTOR" = "daytona" ]; then cd "$RUNNER_TEMP"; fi
+        uv tool install "${PACKAGE:-$ACTION_PATH}" "${extra[@]}"
 
     - name: Run checks
       id: check
@@ -56,7 +89,17 @@ runs:
       env:
         BASE_REF: ${{ github.base_ref }}
         CHECKS: ${{ inputs.checks }}
+        POLICY_PATHS: ${{ inputs.policy-paths }}
+        POLICY_CHANGES: ${{ inputs.policy-changes }}
+        REQUIRE_COVERAGE: ${{ inputs.require-coverage }}
+        EXECUTOR: ${{ inputs.executor }}
+        SNAPSHOT: ${{ inputs.daytona-snapshot }}
       run: |
+        case "$POLICY_CHANGES" in
+          fail|warn) ;;
+          *) echo "policy-changes must be fail or warn" >&2; exit 2 ;;
+        esac
+        command=check
         args=()
         if [ -n "$BASE_REF" ]; then
           # Rung compares with the merge base, so the history back to it must be present. Never
@@ -67,14 +110,50 @@ runs:
           if ! git rev-parse --verify --quiet "origin/$BASE_REF" > /dev/null; then
             git fetch --no-tags origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
           fi
-          args+=(--changed --base "origin/$BASE_REF")
+          command=gate
+          args+=(--base "origin/$BASE_REF")
+          read -ra extra <<< "$POLICY_PATHS"
+          for path in "${extra[@]}"; do args+=("--policy-path=$path"); done
+          read -ra coverage <<< "$REQUIRE_COVERAGE"
+          for path in "${coverage[@]}"; do args+=("--require-coverage=$path"); done
+          if [ "$POLICY_CHANGES" = "warn" ]; then args+=(--allow-policy-changes); fi
+          if [ "$EXECUTOR" = "daytona" ]; then
+            args+=(--executor daytona "--daytona-snapshot=$SNAPSHOT")
+          fi
         fi
         read -ra ids <<< "$CHECKS"
-        set +e
-        rung check "${ids[@]}" "${args[@]}"
-        code=$?
+        # Repository commands do not need GitHub's file-command channels or step credentials.
+        if (
+          unset GITHUB_ENV GITHUB_PATH GITHUB_OUTPUT GITHUB_STEP_SUMMARY GITHUB_STATE
+          unset ACTIONS_RUNTIME_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL
+          unset GH_TOKEN GITHUB_TOKEN
+          if [ "$EXECUTOR" != "daytona" ]; then unset DAYTONA_API_KEY; fi
+          rung "$command" "${args[@]}" -- "${ids[@]}"
+        ) > "$RUNNER_TEMP/rung-gate.txt" 2>&1; then
+          code=0
+        else
+          code=$?
+        fi
+        token=$(python3 -I -c 'import secrets; print(secrets.token_hex(16))')
+        printf '::stop-commands::%s\n' "$token"
+        cat "$RUNNER_TEMP/rung-gate.txt"
+        printf '::%s::\n' "$token"
         if [ "$code" -eq 0 ]; then echo "passed=true" >> "$GITHUB_OUTPUT"; else echo "passed=false" >> "$GITHUB_OUTPUT"; fi
         echo "code=$code" >> "$GITHUB_OUTPUT"
+
+    - name: Reject symlinks in evidence before uploading
+      if: inputs.upload-evidence == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if [ -L .rung ] || [ -L .rung/evidence ]; then
+          echo "The evidence directory must be inside the project." >&2
+          exit 1
+        fi
+        if [ -d .rung/evidence ] && [ -n "$(find .rung/evidence -type l -print -quit)" ]; then
+          echo "Refusing to upload evidence containing symlinks." >&2
+          exit 1
+        fi
 
     - name: Upload evidence
       id: evidence
@@ -86,40 +165,27 @@ runs:
         if-no-files-found: ignore
         include-hidden-files: true
 
-    - name: Flag policy changes
-      id: policy
-      if: github.base_ref != ''
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      env:
-        BASE_REF: ${{ github.base_ref }}
-        POLICY_PATHS: ${{ inputs.policy-paths }}
-      run: |
-        # The PR's own rung.toml, waivers and baselines decide its gate, so a reviewer must see edits to them.
-        read -ra extra <<< "$POLICY_PATHS"
-        changed=$(git diff --name-only "origin/$BASE_REF...HEAD" -- rung.toml LAWS.md .rung/waivers.toml \
-          .rung/baselines .gitleaks.toml .gitleaksignore .semgrep.yml .semgrepignore "${extra[@]}")
-        if [ -n "$changed" ]; then
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-          while read -r file; do echo "::warning file=$file::This pull request changes what decides the Rung gate"; done <<< "$changed"
-          {
-            echo "### Policy files changed in this pull request"
-            echo
-            echo "These decide what the gate checks and accepts; review them like code:"
-            echo
-            while read -r file; do echo "- \`$file\`"; done <<< "$changed"
-            echo
-          } > "$RUNNER_TEMP/rung-policy.md"
-        fi
-
     - name: Write report
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
         EVIDENCE_URL: ${{ steps.evidence.outputs.artifact-url }}
+        EXECUTOR: ${{ inputs.executor }}
       run: |
-        rung report --evidence-url "$EVIDENCE_URL" > "$RUNNER_TEMP/rung-report.md"
-        if [ -f "$RUNNER_TEMP/rung-policy.md" ]; then cat "$RUNNER_TEMP/rung-policy.md" >> "$RUNNER_TEMP/rung-report.md"; fi
+        if [ "$EXECUTOR" = "daytona" ]; then
+          printf '<!-- rung-report -->\n## Rung merge gate · Daytona\n' > "$RUNNER_TEMP/rung-report.md"
+        else
+          unset DAYTONA_API_KEY
+          rung report --evidence-url "$EVIDENCE_URL" > "$RUNNER_TEMP/rung-report.md"
+        fi
+        if [ -s "$RUNNER_TEMP/rung-gate.txt" ]; then
+          {
+            echo
+            echo '### Gate execution'
+            echo
+            sed 's/^/    /' "$RUNNER_TEMP/rung-gate.txt"
+          } >> "$RUNNER_TEMP/rung-report.md"
+        fi
         cat "$RUNNER_TEMP/rung-report.md" >> "$GITHUB_STEP_SUMMARY"
 
     - name: Post or update the pull request comment
@@ -142,15 +208,10 @@ runs:
         fi
 
     - name: Gate
-      if: steps.check.outputs.passed != 'true' || (inputs.policy-changes == 'fail' && steps.policy.outputs.changed == 'true')
+      if: steps.check.outputs.passed != 'true'
       shell: bash
       env:
         CODE: ${{ steps.check.outputs.code }}
-        PASSED: ${{ steps.check.outputs.passed }}
       run: |
-        if [ "$PASSED" = "true" ]; then
-          echo "The pull request changes Rung policy files and policy-changes is \"fail\". See the report above."
-        else
-          echo "Rung checks failed (exit $CODE). See the report above."
-        fi
+        echo "Rung gate failed (exit $CODE). See the run output above."
         exit 1

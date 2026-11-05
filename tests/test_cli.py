@@ -140,7 +140,7 @@ def test_s1_init_registers_detected_test_suites(tmp_path: Path) -> None:
     from rung.core import config
 
     check = config.load(tmp_path).check("backend-tests")
-    assert check.get("cwd") == "backend" and check.covers == ["backend/**"]
+    assert check.get("cwd") == "backend" and check.covers == []
 
 
 def test_s4_add_emits_json(project: Path, capsys) -> None:

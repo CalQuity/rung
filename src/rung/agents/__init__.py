@@ -2,8 +2,7 @@
 
 Two layers. Guidance (`install`): Claude Code skills and an AGENTS.md section saying how to use
 Rung, how to write TLA+ and Lean, and which shortcuts are off limits. Enforcement (`hooks`): a
-Claude Code `Stop` hook that keeps an agent from finishing while its edits are unverified.
-Guidance can be ignored; the hook cannot.
+optional Claude Code and Codex Stop hooks that ask for another pass when evidence is stale.
 """
 
 from rung.agents.hooks import HOOK_COMMAND, main_stop_hook, stop_hook
