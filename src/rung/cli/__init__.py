@@ -179,6 +179,7 @@ def build_parser(*, json_errors: bool = False) -> argparse.ArgumentParser:
     s.add_argument("--min-age-days", type=int, default=30, help="youngest acceptable new package (deps)")
     s.add_argument("--covers", nargs="*", help="files whose change stales the verdict (globs)")
     s.add_argument("--verifies", nargs="+", metavar="GLOB", help="declare which changed paths this check verifies")
+    s.add_argument("--specs", nargs="+", metavar="GLOB", help="declare verifier inputs protected in the merge gate")
     s = add("attest", "cmd_attest", "record evidence an agent or person captured (evidence checks without `run`)")
     s.add_argument("check")
     s.add_argument("files", nargs="+", help="recordings, screenshots, transcripts")

@@ -65,6 +65,12 @@ command, runtime, or formal check. The path must also be among the check's fresh
 Use `verifies` when the input scope includes shared configuration or dependencies that the
 check does not directly exercise.
 
+For a custom check with declared verification targets, list the files that implement the
+verifier under `specs`. Include indirect helpers that the command loads. `rung add --specs`
+sets these paths at registration. The merge gate also accepts policy paths declared by the
+trusted workflow. A custom check needs this declaration to claim changed targets or satisfy
+required coverage.
+
 ### `command`
 
 | Field | Default | |

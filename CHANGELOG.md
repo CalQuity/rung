@@ -32,6 +32,8 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
   failure on the merge base.
 - Change plans recommend proofs in the affected workspace. Inferred Cargo tests use the
   lockfile and require at least one passing case.
+- Custom checks with declared coverage name their verifier files in `specs` or trusted workflow
+  policy paths before the merge gate runs. Use `rung add --specs` to register those files.
 - Runtime evidence receipts include the generated HTML page. Draft acceptance can verify
   that a named assertion catches changes to Python return values or inline browser behavior.
 - Scanners distinguish configured finding exit codes from failed analyses. Gitleaks fingerprints

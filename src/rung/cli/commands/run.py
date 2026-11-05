@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import tomllib
 from collections import Counter
@@ -10,7 +11,7 @@ from pathlib import Path
 
 from rung.analysis import plan, report
 from rung.checks import daytona, prove, runner
-from rung.checks.command import is_attested, package_script_commands
+from rung.checks.command import cargo_test, is_attested, package_script_commands
 from rung.cli.commands.common import GATE_FAILED, OK, load_config, resolve_base
 from rung.cli.output import STATE_STYLE, VERDICT_STYLE, Output
 from rung.core import git, launch, laws, ledger, modelcard
@@ -46,7 +47,13 @@ def _print_result(result: runner.Result, out: Output) -> None:
     for line in redact_lines(o.lines):
         if not (o.details.get("reproduce") and line.startswith("reproduce: ")):
             label, separator, path = line.partition(": ")
-            if separator and (path in o.evidence or path == o.details.get("report")):
+            location = re.match(r'^\s*File "([^"]+)", line (\d+)(?:, in (.*))?$', line)
+            if out.columns and location:
+                file, number, frame = location.groups()
+                out.location(f"{file}:{number}", label="at ")
+                if frame and frame != "<module>":
+                    out.detail(f"in {frame}", indent=8)
+            elif separator and (path in o.evidence or path == o.details.get("report")):
                 out.location(path, label=label + separator)
             else:
                 out.detail(line)
@@ -177,6 +184,85 @@ def _launch_scripts(repo: Path, config_root: Path, checks: list[Check]) -> set[s
     return scripts
 
 
+_STANDARD_CHECKS = {
+    "go": {"test", "vet"},
+    "cargo": {"clippy"},
+    "node": {"--test"},
+    "mvn": {"test"},
+    "mvnw": {"test"},
+    "gradle": {"test"},
+    "gradlew": {"test"},
+    "mix": {"test"},
+    "swift": {"test"},
+    "rake": {"test"},
+    "ruff": {"check", "format"},
+    "next": {"typegen"},
+}
+
+
+def _standard_runner(argv: list[str], cwd: Path, *, package_scripts: bool = True) -> bool:
+    if prove.runs_pytest(argv) or cargo_test(argv):
+        return True
+    while inner := launch.delegated(argv, cwd):
+        argv, cwd = inner.argv, inner.cwd
+    if not argv:
+        return False
+    tool = Path(argv[0]).name
+    if tool == "npx" and argv[1:2] == ["--no-install"]:
+        return _standard_runner(argv[2:], cwd, package_scripts=False)
+    if tool in {"pnpm", "yarn", "bun", "bundle"} and argv[1:2] == ["exec"]:
+        return _standard_runner(argv[2:], cwd, package_scripts=False)
+    if tool in {"vitest", "jest", "mocha", "ava", "eslint", "tsc", "pyright", "mypy", "lint-imports"}:
+        return True
+    if tool == "node" and any(Path(arg).suffix in {".js", ".mjs", ".cjs", ".ts"} for arg in argv[1:]):
+        return False
+    if len(argv) > 1 and argv[1] in _STANDARD_CHECKS.get(tool, set()):
+        return True
+    if launch.python_entrypoint(argv) in {("module", "unittest"), ("module", "ruff"), ("module", "mypy")}:
+        return True
+    scripts = package_script_commands(cwd, argv) if package_scripts else []
+    return bool(scripts) and all(_standard_package_script(script, cwd) for script in scripts)
+
+
+def _standard_package_script(script: list[str], cwd: Path) -> bool:
+    commands: list[list[str]] = [[]]
+    for token in script:
+        if token == "&&":
+            commands.append([])
+        elif any(operator in token for operator in (";", "|", "&", "`", "$(", ">", "<")):
+            return False
+        else:
+            commands[-1].append(token)
+    return all(_standard_runner(command, cwd, package_scripts=False) for command in commands)
+
+
+def _unmapped_policy(
+    repo: Path,
+    config: Config,
+    checks: list[Check],
+    paths: set[str],
+    required: set[str],
+    extra: list[str],
+) -> list[str]:
+    """Require a reviewable verifier scope before a custom check can claim changed targets."""
+    if any((repo / path).is_file() for path in git.expand(repo, extra)):
+        return []
+    required_checks = {check.id for check in plan.focused_checks(checks, required)}
+    missing = []
+    for check in plan.focused_checks(checks, paths):
+        if "verifies" not in check.options and check.id not in required_checks:
+            continue
+        if check.kind not in {"command", "evidence"} or not (command := check.get("run")):
+            continue
+        cwd = config.root / check.get("cwd", ".")
+        declared = git.expand(config.root, check.get_list("specs"))
+        if not any((config.root / path).is_file() for path in declared) and not _standard_runner(
+            shlex.split(command), cwd
+        ):
+            missing.append(check.id)
+    return missing
+
+
 def cmd_gate(args, out: Output) -> int:
     """Run a fresh merge gate under policy that was reviewed on the base."""
     if (args.executor == "daytona") != bool(args.daytona_snapshot):
@@ -209,6 +295,8 @@ def cmd_gate(args, out: Output) -> int:
     }
     missing_coverage = plan.uncovered_paths(selected, required, declared=True)
     blocked += [f"required coverage missing: {path}" for path in missing_coverage]
+    unmapped = _unmapped_policy(repo, cfg, selected, scoped_changes, required, args.policy_path)
+    blocked += [f"{check}: declare custom verifier files with specs or --policy-path" for check in unmapped]
     blocked += [
         f"{check.id}: external capture cannot be re-run in a merge gate" for check in selected if is_attested(check)
     ]
@@ -253,6 +341,7 @@ def cmd_gate(args, out: Output) -> int:
         "policy_changes": policy_paths,
         "uncovered_paths": uncovered,
         "required_coverage_missing": missing_coverage,
+        "verifier_policy_missing": unmapped,
         "blocked": blocked,
         "stale": {},
         "selected": [check.id for check in selected],

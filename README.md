@@ -385,6 +385,15 @@ can use `--allow-policy-changes` locally or `policy-changes: warn` from a truste
 The gate follows static Python scripts and modules through `uv run`, including launchers named
 by package scripts. It protects repository symlinks along those paths and their repository-local
 targets. List files used by dynamic wrappers in `policy-paths`.
+When a custom command claims a changed path through `verifies` or required coverage,
+the gate also requires a policy declaration. Include every verifier script and helper in
+`specs`, or supply the corresponding `--policy-path` globs from a trusted workflow.
+
+```bash
+rung add command refund --run 'python3 verify_refund.py' \
+  --verifies 'app/**' --specs verify_refund.py 'verification/**'
+```
+
 For Node checks the gate also protects `package.json` script definitions, package-manager
 selection, and directly invoked scripts. Use `--require-coverage 'src/**'` (or the Action's `require-coverage` input) to fail
 when a changed file in that scope has no matching declared target. Set `verifies` to declare

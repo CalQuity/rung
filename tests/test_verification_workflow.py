@@ -388,6 +388,36 @@ def test_gate_requires_declared_coverage_beyond_wide_freshness_inputs(repo, caps
     assert data["required_coverage_missing"] == ["ops/migration.sql"] and data["results"] == []
 
 
+def test_scoped_custom_gate_requires_real_reviewed_policy_paths(repo, capsys) -> None:
+    (repo / "app.py").write_text("refund = 100\n")
+    (repo / "verify.py").write_text("from app import refund\nassert refund <= 100\n")
+    (repo / "rung.toml").write_text('[project]\nname = "fixture"\n')
+    assert rung(repo, "add", "command", "verify", "--run", "python3 verify.py", "--verifies", "app.py") == 0
+    commit_all(repo, "application and declared check")
+    (repo / "app.py").write_text("refund = 50\n")
+    capsys.readouterr()
+    for options in ((), ("--policy-path", "missing.py")):
+        assert rung(repo, "gate", "--base", "main", *options, "--json") == 1
+        gate = json.loads(capsys.readouterr().out)
+        assert gate["verifier_policy_missing"] == ["verify"] and gate["results"] == []
+    assert rung(repo, "gate", "--base", "main", "--policy-path", "verify.py", "--json") == 0
+    assert json.loads(capsys.readouterr().out)["verifier_policy_missing"] == []
+    (repo / "verify.py").write_text("from app import refund\nassert 0 < refund <= 100\n")
+    assert rung(repo, "gate", "--base", "main", "--policy-path", "verify.py", "--json") == 1
+    gate = json.loads(capsys.readouterr().out)
+    assert gate["policy_changes"] == ["verify.py"] and gate["results"] == []
+
+
+def test_add_persists_explicit_verifier_inputs(repo, capsys) -> None:
+    from rung.core.config import load
+
+    (repo / "rung.toml").write_text('[project]\nname = "fixture"\n')
+    assert (
+        rung(repo, "add", "command", "verify", "--run", "python3 verify.py", "--specs", "verify.py", "helpers/**") == 0
+    )
+    assert load(repo).check("verify").get_list("specs") == ["verify.py", "helpers/**"]
+
+
 def test_gate_protects_direct_launch_scripts(repo, capsys) -> None:
     (repo / "test_runner.py").write_text("raise SystemExit(1)\n")
     (repo / "rung.toml").write_text('[[check]]\nid = "test"\nkind = "command"\nrun = "python3 test_runner.py"\n')
@@ -490,6 +520,30 @@ def test_terminal_wrapping_respects_cjk_cells(capsys):
     label, *lines = capsys.readouterr().out.splitlines()
     assert label.strip() == "evidence:" and all(_width(line) <= 32 for line in lines)
     assert "".join(line.strip() for line in lines) == path
+
+
+def test_narrow_replay_command_and_traceback_preserve_the_copyable_location(capsys):
+    from rung.checks.base import Outcome
+    from rung.checks.runner import Result
+    from rung.cli.commands.run import _print_result
+    from rung.cli.output import Output, _width
+    from rung.core.config import Check
+
+    output = Output(color=False)
+    output.columns = 32
+    command = "rung check drive --seed 101"
+    output.command(command, prefix="reproduce: ")
+    result = Result(
+        Check("drive", "evidence", [], {}),
+        Outcome(
+            "fail", "one assertion failed", ['  File "/tmp/project-with-long-name/drive.py", line 17, in <module>']
+        ),
+    )
+    _print_result(result, output)
+    lines = capsys.readouterr().out.splitlines()
+    assert any(line.strip() == command for line in lines)
+    assert any("drive.py:17" in line for line in lines)
+    assert all(_width(line) <= 32 for line in lines)
 
 
 @pytest.mark.parametrize(("command", "file"), [

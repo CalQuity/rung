@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -72,6 +73,16 @@ def _env_command(argv: list[str], cwd: Path) -> Delegation | None:
                 cwd /= value
             elif value == "PATH":
                 host_path = False
+        elif flag in {"-S", "--split-string"}:
+            value = value or next(args, "")
+            if "$" in value or "\\" in value:
+                return None
+            try:
+                command = shlex.split(value)
+            except ValueError:
+                return None
+            inner = _env_command([*command, *args], cwd)
+            return Delegation(inner.argv, inner.cwd, host_path=False) if inner else None
         elif flag == "--":
             continue
         elif flag.startswith("-"):
@@ -91,6 +102,9 @@ def delegated(argv: list[str], cwd: Path) -> Delegation | None:
     name = Path(argv[0]).name
     if name == "env":
         return _env_command(argv[1:], cwd)
+    if name == "time":
+        args = argv[2:] if argv[1:2] == ["-p"] else argv[1:]
+        return Delegation(args, cwd, host_path=True) if args and not args[0].startswith("-") else None
     if name in {"poetry", "pipenv", "pdm", "rye", "hatch"} and argv[1:2] == ["run"]:
         args = argv[3:] if argv[2:3] == ["--"] else argv[2:]
         return Delegation(args, cwd) if args else None

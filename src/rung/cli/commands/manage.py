@@ -50,6 +50,8 @@ def cmd_add(args, out: Output) -> int:
     options: dict[str, object] = {}
     if args.verifies:
         options["verifies"] = args.verifies
+    if args.specs:
+        options["specs"] = args.specs
     for option in ("structured", "isolate"):
         if getattr(args, option):
             if args.kind != "evidence" or not args.run:

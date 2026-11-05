@@ -106,8 +106,13 @@ class Output:
 
     def command(self, text: str, *, indent: int = 2, prefix: str = "") -> None:
         """Keep a suggested command on one logical line for copy and paste."""
-        if not self.json_mode:
-            _write(" " * indent + prefix + self.style(text, "blue"), sys.stdout, flush=self.interactive)
+        if self.json_mode:
+            return
+        if prefix and self.columns and indent + _width(prefix + text) > self.columns:
+            self.detail(prefix.rstrip(), indent=indent)
+            indent = min(indent + 2, max(0, self.columns - _width(text)))
+            prefix = ""
+        _write(" " * indent + prefix + self.style(text, "blue"), sys.stdout, flush=self.interactive)
 
     def location(self, path: str, *, label: str, indent: int = 6) -> None:
         """Wrap a displayed path between components and preserve the complete value in JSON."""
