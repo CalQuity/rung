@@ -184,6 +184,8 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 - The Action installs Bubblewrap only when `rung.toml` has an `isolate = true` check, and only on
   GitHub-hosted runners unless the new `install-bubblewrap: true` input asks for it on a self-hosted
   runner. `install-bubblewrap: false` never installs it.
+- A Daytona provider or snapshot error names the snapshot it tried, so a misspelled or inactive
+  snapshot is easy to spot.
 - A required workflow or ruleset is still the only way to stop a pull request from editing the
   workflow that runs the gate, because GitHub runs the pull request's copy of a `pull_request`
   workflow.

@@ -189,4 +189,7 @@ def execute(request: GateRequest, snapshot: str) -> dict:
             raise
         except Exception:
             # SDK exceptions may include headers, URLs, or captured output.
-            raise SandboxError(f"Daytona failed while {stage}. Check credentials and snapshot availability.") from None
+            raise SandboxError(
+                f"Daytona failed while {stage} (snapshot {snapshot!r}). Check credentials and that the snapshot "
+                "exists and is active."
+            ) from None
