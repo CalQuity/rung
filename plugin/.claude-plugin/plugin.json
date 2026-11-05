@@ -17,8 +17,5 @@
     "tla+",
     "lean",
     "coding-agents"
-  ],
-  "displayName": "Rung",
-  "documentationUrl": "https://github.com/CalQuity/rung#readme",
-  "supportUrl": "https://github.com/CalQuity/rung/issues"
+  ]
 }
