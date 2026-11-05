@@ -11,6 +11,7 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
   planted for Rung to find. Spoilers are in its `SOLUTIONS.md`.
 
 ### Changed
+- Reviewing the feature map, `A` approves the current feature and every one after it.
 - `rung init` shows the drafted feature map in three lines per feature (what it does and its
   sub-feature IDs) and points to the full map and its page before asking for decisions; `rung map
   --brief` does the same. A drive-script draft with more than 12 scenarios prints the counts and the

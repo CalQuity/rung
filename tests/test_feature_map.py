@@ -321,3 +321,17 @@ def test_the_brief_map_shows_each_feature_in_three_lines(shop: Path, monkeypatch
     text = capsys.readouterr().out
     assert "2 sub-features: coupon-apply, coupon-unknown" in text
     assert "reached by:" not in text and "gotcha:" not in text
+
+
+def test_review_approves_one_feature_at_a_time_or_all_the_rest(shop: Path, monkeypatch) -> None:
+    from rung.cli.commands import featuremap
+    from rung.cli.output import Output
+
+    feature_map.draft(MapProvider([_reply(index=INDEX, coupons=COUPONS, pay=PAY)]), shop, survey.survey(shop),
+                      context="ctx")  # fmt: skip
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    answers = iter(["A"])
+    monkeypatch.setattr(featuremap, "ask", lambda q, default="": next(answers))
+    assert featuremap.review(load(shop), Output()) == 2
+    state = feature_map.load_state(shop)
+    assert state is not None and state.with_status("approved") == ["coupons", "pay"]

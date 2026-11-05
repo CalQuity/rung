@@ -100,12 +100,20 @@ def review(cfg: Config, out: Output) -> int:
     if not pending:
         return 0
     who = git.user_name(cfg.root) or "a person"
-    print("\nFor each feature: [a]pprove, [n]ot built yet, [d]rop, or Enter to decide later.", file=sys.stderr)
+    print("\nFor each feature: [a]pprove, [n]ot built yet, [d]rop, Enter to decide later, "
+          "or [A] to approve it and every feature after it.", file=sys.stderr)  # fmt: skip
     decided = 0
+    approve_rest = False
     for slug in pending:
         title = features[slug].title or slug
         why = " (changed since approval)" if slug in drift else ""
-        choice = ask(f"  {title}{why}", "").lower()[:1]
+        if approve_rest:
+            print(f"  {title}{why}: a", file=sys.stderr)
+            choice = "a"
+        else:
+            raw = ask(f"  {title}{why}", "")[:1]
+            approve_rest = raw == "A"
+            choice = raw.lower()
         if choice in _CHOICES:
             feature_map.set_status(cfg.root, state, slug, _CHOICES[choice], by=who)
             decided += 1
