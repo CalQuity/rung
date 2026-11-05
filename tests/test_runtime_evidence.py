@@ -360,8 +360,9 @@ def test_draft_with_findings_registers_the_check_and_fails(tmp_path: Path, monke
     reply = _drive()
     reply["sources"] = ["app.py"]
     script = reply["files"][0]
+    # The robustness scenario only shows the app loads, so a changed `observation` leaves it passing.
     script["content"] = "import runpy\nobserve = runpy.run_path('app.py')['observation']\n" + script["content"].replace(
-        "cat not in FAIL", "observe(cat) == 'app fixture'"
+        "cat not in FAIL", "(cat == 'robustness' or observe(cat) == 'app fixture')"
     )
     monkeypatch.setattr(providers, "get", lambda llm: ScriptedProvider([reply]))
     monkeypatch.setattr(draft_cmd.agents, "install_verify_skill", lambda root, name, cid: root / "SKILL.md")
@@ -438,7 +439,7 @@ def test_draft_requires_an_assertion_to_catch_a_behavior_mutation(tmp_path: Path
     real["sources"] = ["app.py"]
     code = real["files"][0]["content"]
     real["files"][0]["content"] = "import runpy\nactual = runpy.run_path('app.py')['calculate']()\n" + code.replace(
-        "ok = cat", "ok = actual == 42 and cat"
+        "ok = cat", "ok = (actual == 42 or cat != 'happy') and cat"
     )
     accepted = runtime.draft_runtime(ScriptedProvider([real]), tmp_path, info, focus=[], max_rounds=1)
     assert accepted.ok and "detected behavior mutation" in accepted.sensitivity
@@ -466,7 +467,7 @@ def test_runtime_draft_can_catch_a_javascript_arithmetic_mutation(tmp_path: Path
     reply["files"][0]["content"] = (
         "import subprocess\n"
         "actual = subprocess.check_output(['node', '-p', \"require('./app.js').total(1)\"], text=True).strip()\n"
-        + code.replace("ok = cat", "ok = actual == '2' and cat")
+        + code.replace("ok = cat", "ok = (actual == '2' or cat != 'happy') and cat")
     )
     result = runtime.draft_runtime(
         ScriptedProvider([reply]), tmp_path, survey.survey(tmp_path), focus=[], max_rounds=1, require_source=True
@@ -575,3 +576,81 @@ def test_a_drafted_check_without_isolate_keeps_running_unisolated(tmp_path, monk
     assert rung(tmp_path, "check", "drive", "--json") == 0
     result = json.loads(capsys.readouterr().out)["results"][0]
     assert result["verdict"] == "pass" and result.get("execution") != "isolated"
+
+
+# --- behavior controls ---------------------------------------------------------------------------
+
+FACTORY_APP = """class App:
+    def __init__(self, prices):
+        self.prices = prices
+
+    def total(self, items):
+        return sum(self.prices[item] for item in items)
+
+
+def load_config():
+    return {"apple": 3, "pear": 5}
+
+
+def create_app():
+    return App(load_config())
+
+
+app = create_app()
+"""
+
+
+def _factory_drive(check: str) -> dict:
+    reply = _drive()
+    reply["sources"] = ["app.py"]
+    code = reply["files"][0]["content"]
+    reply["files"][0]["content"] = "import runpy\napp = runpy.run_path('app.py')['app']\n" + code.replace(
+        "ok = cat", f"ok = ({check}) and cat"
+    )
+    return reply
+
+
+def test_behavior_variants_change_one_function_and_leave_startup_code_alone(tmp_path: Path) -> None:
+    source = tmp_path / "app.py"
+    source.write_text(FACTORY_APP)
+    variants = runtime._behavior_variants([source])
+    assert [v.label for v in variants] == ["total() in app.py returns None"]
+    assert "return App(load_config())" in variants[0].content and "return None" in variants[0].content
+
+
+def test_a_drive_that_only_asserts_startup_is_rejected(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text(FACTORY_APP)
+    startup_only = _factory_drive("app is not None")
+    result = runtime.draft_runtime(
+        ScriptedProvider([startup_only]), tmp_path, survey.survey(tmp_path), focus=[], max_rounds=1
+    )
+    assert not result.ok and "did not detect the behavior mutation" in result.message
+
+
+def test_a_drive_that_asserts_behavior_is_accepted(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text(FACTORY_APP)
+    behavioral = _factory_drive("app is not None and (cat != 'happy' or app.total(['apple', 'pear']) == 8)")
+    result = runtime.draft_runtime(
+        ScriptedProvider([behavioral]), tmp_path, survey.survey(tmp_path), focus=[], max_rounds=1, require_source=True
+    )
+    assert result.ok, result.message
+    assert "detected behavior mutation" in result.sensitivity and "total()" in result.sensitivity
+
+
+def test_control_runs_scale_with_the_accepted_run_and_report_a_timeout(tmp_path: Path, monkeypatch) -> None:
+    check = config.Check("runtime", "evidence", [], {"run": "x", "timeout": 900})
+    assert runtime.control_timeout(check, 1.0) == runtime.CONTROL_TIMEOUT_FLOOR
+    assert runtime.control_timeout(check, 100.0) == 300
+    assert runtime.control_timeout(check, 500.0) == 900
+    (tmp_path / "app.py").write_text("def calculate():\n    return 42\n")
+    hangs = _drive()
+    hangs["sources"] = ["app.py"]
+    code = hangs["files"][0]["content"]
+    hangs["files"][0]["content"] = (
+        "import runpy, time\nactual = runpy.run_path('app.py')['calculate']()\n"
+        "if actual != 42:\n    time.sleep(30)\n" + code
+    )
+    monkeypatch.setattr(runtime, "CONTROL_TIMEOUT_FLOOR", 1)
+    result = runtime.draft_runtime(ScriptedProvider([hangs]), tmp_path, survey.survey(tmp_path), focus=[], max_rounds=1)
+    assert not result.ok and "timed out after 1s" in result.message
+    assert "did not detect" not in result.message

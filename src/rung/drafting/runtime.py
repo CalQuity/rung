@@ -17,10 +17,12 @@ from __future__ import annotations
 
 import ast
 import json
+import math
 import os
 import re
 import shlex
 import shutil
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -343,41 +345,209 @@ def _trial_context(root: Path, *, seed: int | None, guarded: bool, network: bool
     return Context(root=root, seed=seed, command_prefix=prefix, environment=sandbox.trial_environment(root))
 
 
-def _behavior_variant(source: Path) -> str | None:
-    """Change observable behavior without preventing the application from loading."""
-    if source.suffix == ".py":
-        try:
-            tree = ast.parse(source.read_bytes())
-        except SyntaxError:
-            return None
+# A function named like startup code (an app factory, a config loader, an entry point) is never
+# mutated: breaking it stops the app from starting, which any startup-only drive notices.
+BOOTSTRAP_NAME = re.compile(
+    r"^(?:main|run|serve|app|application|wsgi|asgi|create_\w+|make_app|get_app|build_app|lifespan)$"
+    r"|(?:^|_)(?:config|configure|settings|setup|bootstrap|factory|init|load_env|startup)(?:_|$)"
+    r"|^__\w+__$",
+    re.I,
+)
+# How many single-function or single-script variants one sensitivity check may run.
+MAX_BEHAVIOR_VARIANTS = 8
+# The control runs get a multiple of the accepted run's duration, never less than the floor.
+CONTROL_TIMEOUT_FACTOR = 3
+CONTROL_TIMEOUT_FLOOR = 60
+
+
+@dataclass
+class Variant:
+    """One deliberate change to one application file: a function's return values, or one script."""
+
+    source: Path
+    content: str
+    label: str
+    hinted: bool = False  # the drive script names it, so it is tried first
+
+
+@dataclass
+class Sensitivity:
+    """Whether the drive noticed a deliberate change to the app, and which control showed it."""
+
+    detected: bool
+    control: str
+    problem: str = ""  # why a control could not decide (a timeout), instead of "did not detect"
+
+
+def _own_nodes(function: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.AST]:
+    """The nodes of `function`'s own body, not those of the functions, lambdas or classes nested in it."""
+    found: list[ast.AST] = []
+    pending: list[ast.AST] = list(function.body)
+    while pending:
+        node = pending.pop()
+        found.append(node)
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda | ast.ClassDef):
+            pending.extend(ast.iter_child_nodes(node))
+    return found
+
+
+def _called_names(nodes: list[ast.AST]) -> set[str]:
+    """Names of what `nodes` call (`f()`, `obj.f()`) or apply as decorators."""
+    names: set[str] = set()
+    for node in nodes:
+        targets = [node.func] if isinstance(node, ast.Call) else []
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            targets += [d.func if isinstance(d, ast.Call) else d for d in node.decorator_list]
+        for target in targets:
+            if isinstance(target, ast.Name):
+                names.add(target.id)
+            elif isinstance(target, ast.Attribute):
+                names.add(target.attr)
+    return names
+
+
+def _main_guard(node: ast.stmt) -> bool:
+    test = node.test if isinstance(node, ast.If) else None
+    return (
+        isinstance(test, ast.Compare)
+        and isinstance(test.left, ast.Name)
+        and test.left.id == "__name__"
+        and any(isinstance(c, ast.Constant) and c.value == "__main__" for c in test.comparators)
+    )
+
+
+def _import_time_names(tree: ast.Module) -> set[str]:
+    """Functions that run while the module loads, and the functions they call, transitively.
+
+    Module and class bodies run at import (the `if __name__ == "__main__":` block does not), and
+    so do decorators. Startup-named functions count too: an app factory runs when the app starts.
+    """
+    loading: list[ast.AST] = []
+    pending: list[ast.AST] = [stmt for stmt in tree.body if not _main_guard(stmt)]
+    while pending:
+        node = pending.pop()
+        loading.append(node)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+            continue  # its body runs when called, not when defined; its decorators are in `loading`
+        pending.extend(ast.iter_child_nodes(node))
+    functions = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]
+    names = _called_names(loading) | {f.name for f in functions if BOOTSTRAP_NAME.search(f.name)}
+    while True:
+        reached = set().union(*(_called_names(_own_nodes(f)) for f in functions if f.name in names)) - names
+        if not reached:
+            return names
+        names |= reached
+
+
+def _python_variants(source: Path, hints: str) -> list[Variant]:
+    """One variant per application function: that function alone returns None.
+
+    Startup code is left alone (see `_import_time_names`), so a variant changes what the app
+    does, not whether it starts.
+    """
+    try:
+        text = source.read_bytes()
+        tree = ast.parse(text)
+    except (OSError, SyntaxError, ValueError):
+        return []
+    startup = _import_time_names(tree)
+    functions = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]
+    variants = []
+    for index, function in enumerate(functions):
+        if function.name in startup:
+            continue
         returns = [
             node
-            for node in ast.walk(tree)
+            for node in _own_nodes(function)
             if isinstance(node, ast.Return)
             and node.value is not None
             and not (isinstance(node.value, ast.Constant) and node.value.value is None)
         ]
-        if returns:
-            for node in returns:
+        if not returns:
+            continue
+        copy = ast.parse(text)
+        target = [n for n in ast.walk(copy) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)][index]
+        for node in _own_nodes(target):
+            if isinstance(node, ast.Return) and node.value is not None:
                 node.value = ast.Constant(None)
-            return ast.unparse(tree) + "\n"
-    if source.suffix == ".html":
-        content = source.read_text(errors="replace")
-        variant = re.sub(
-            r"(<script\b[^>]*>).*?(</script\s*>)",
-            r"\1\2",
-            content,
-            flags=re.I | re.S,
-        )
-        if variant != content:
-            return variant
-    if source.suffix in mutate.JS and (variants := mutate.mutants(source, limit=1)):
-        candidate = variants[0]
+        hinted = re.search(rf"\b{re.escape(function.name)}\b", hints) is not None
+        label = f"{function.name}() in {source.name} returns None"
+        variants.append(Variant(source, ast.unparse(copy) + "\n", label, hinted))
+    return variants
+
+
+_SCRIPT = re.compile(r"(<script\b[^>]*>)(.*?)(</script\s*>)", re.I | re.S)
+
+
+def _html_variants(source: Path) -> list[Variant]:
+    """One variant per inline script: that script alone is emptied."""
+    content = source.read_text(errors="replace")
+    variants = []
+    for number, match in enumerate(_SCRIPT.finditer(content), 1):
+        if not match.group(2).strip():
+            continue
+        changed = content[: match.start(2)] + content[match.end(2) :]
+        variants.append(Variant(source, changed, f"inline script {number} in {source.name} removed"))
+    return variants
+
+
+def _js_variants(source: Path) -> list[Variant]:
+    """One-token mutants of a script, each on its own."""
+    variants = []
+    for candidate in mutate.mutants(source, limit=3):
         lines = source.read_text().splitlines(keepends=True)
         line = lines[candidate.line - 1]
         lines[candidate.line - 1] = candidate.mutated + line[len(line.rstrip("\r\n")) :]
-        return "".join(lines)
-    return None
+        variants.append(Variant(source, "".join(lines), f"mutant {candidate.describe}"))
+    return variants
+
+
+def _behavior_variants(sources: list[Path], hints: str = "") -> list[Variant]:
+    """Changes to observable behavior that leave the application able to start, one change each.
+
+    Functions the drive script names come first, then the rest in file order, up to
+    `MAX_BEHAVIOR_VARIANTS`.
+    """
+    found: list[Variant] = []
+    for source in sources:
+        if source.suffix == ".py":
+            found += _python_variants(source, hints)
+        elif source.suffix == ".html":
+            found += _html_variants(source)
+        elif source.suffix in mutate.JS:
+            found += _js_variants(source)
+    return sorted(found, key=lambda v: not v.hinted)[:MAX_BEHAVIOR_VARIANTS]
+
+
+def control_timeout(check: Check, baseline_seconds: float) -> int:
+    """How long a control run may take: a multiple of the accepted run, at least the floor, at most the check's."""
+    limit = check.get_int("timeout", 1800)
+    return max(1, min(limit, max(CONTROL_TIMEOUT_FLOOR, math.ceil(baseline_seconds * CONTROL_TIMEOUT_FACTOR))))
+
+
+def _timed_out(outcome: Outcome) -> bool:
+    return any(
+        r.get("verdict") == "error" and "timed out after" in r.get("summary", "")
+        for r in outcome.details.get("runs", [])
+    )
+
+
+def _swap(context: Context, source: Path, content: str) -> Path:
+    """Put `content` in place of `source`, keeping the original in the trial's stash; return the stash path."""
+    stash = context.root / ".rung" / "cache" / "trial" / "source-canary" / source.relative_to(context.root)
+    stash.parent.mkdir(parents=True, exist_ok=True)
+    source.rename(stash)
+    source.write_text(content)
+    source.chmod(stash.stat().st_mode & 0o777)
+    return stash
+
+
+STARTUP_FAILURE = {
+    ".py": "raise RuntimeError('RUNG_SOURCE_CANARY')\n",
+    ".sh": "#!/bin/sh\nexit 97\n",
+    ".js": "throw new Error('RUNG_SOURCE_CANARY');\n",
+    ".ts": "throw new Error('RUNG_SOURCE_CANARY');\n",
+}
 
 
 def _source_sensitivity(
@@ -386,45 +556,56 @@ def _source_sensitivity(
     context: Context,
     paths: list[str],
     baseline: dict | None,
-) -> tuple[bool, str]:
-    """Run a behavior mutation where possible and distinguish it from a startup control."""
-    stash = context.root / ".rung" / "cache" / "trial" / "source-canary"
+    *,
+    hints: str = "",
+    timeout: int = CONTROL_TIMEOUT_FLOOR,
+) -> Sensitivity:
+    """Change the app one function (or script) at a time, and see whether the drive notices.
+
+    A variant counts only when the app still starts under it, shown by an assertion that passed on
+    the real app still passing, and an assertion that passed on the real app now fails. Without
+    any variant to make, every source is broken outright: a startup control.
+    """
     files = [context.root / name for name in paths]
     files = [source for source in files if source.is_file() and not source.is_symlink()]
-    variants = {source: changed for source in files if (changed := _behavior_variant(source)) is not None}
-    moved = []
-    try:
-        for source in variants or files:
-            destination = stash / source.relative_to(context.root)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            source.rename(destination)
-            moved.append((destination, source))
-            failure = {
-                ".py": "raise RuntimeError('RUNG_SOURCE_CANARY')\n",
-                ".sh": "#!/bin/sh\nexit 97\n",
-                ".js": "throw new Error('RUNG_SOURCE_CANARY');\n",
-                ".ts": "throw new Error('RUNG_SOURCE_CANARY');\n",
-            }.get(source.suffix, "RUNG_SOURCE_CANARY: intentionally unusable application input\n")
-            source.write_text(variants.get(source, failure))
-            source.chmod(destination.stat().st_mode & 0o777)
-        options = {**check.options, "timeout": 30}
-        negative = Check(check.id, check.kind, check.covers, options)
-        if not moved:
-            return False, "no regular application source files could be changed"
-        outcome = checker.run(context, negative)
-        if not variants:
-            return outcome.verdict == "fail", f"startup control with {len(moved)} deliberately broken source file(s)"
-        run = outcome.details["runs"][0]
-        observed = read_result(context.root / run["evidence_dir"])
-        passed = {(scenario, name) for scenario, name, ok in assertion_outcomes(baseline) if ok}
-        caught = any((scenario, name) in passed and not ok for scenario, name, ok in assertion_outcomes(observed))
-        return (
-            outcome.verdict == "fail" and caught,
-            f"behavior mutation in {len(moved)} application source file(s)",
-        )
-    finally:
-        for destination, source in reversed(moved):
-            destination.replace(source)
+    if not files:
+        return Sensitivity(False, "startup control (no regular application source file could be changed)")
+    negative = Check(check.id, check.kind, check.covers, {**check.options, "timeout": timeout})
+    variants = _behavior_variants(files, hints)
+    if not variants:
+        moved = []
+        try:
+            for source in files:
+                failure = STARTUP_FAILURE.get(source.suffix, "RUNG_SOURCE_CANARY: intentionally unusable input\n")
+                moved.append((_swap(context, source, failure), source))
+            outcome = checker.run(context, negative)
+        finally:
+            for stash, source in reversed(moved):
+                stash.replace(source)
+        control = f"startup control with {len(moved)} deliberately broken source file(s)"
+        if _timed_out(outcome):
+            return Sensitivity(False, control, f"the {control} timed out after {timeout}s")
+        return Sensitivity(outcome.verdict == "fail", control)
+    passed = {(scenario, name) for scenario, name, ok in assertion_outcomes(baseline) if ok}
+    timed_out: list[str] = []
+    for variant in variants:
+        stash = _swap(context, variant.source, variant.content)
+        try:
+            outcome = checker.run(context, negative)
+        finally:
+            stash.replace(variant.source)
+        if _timed_out(outcome):
+            timed_out.append(variant.label)
+            continue
+        observed = assertion_outcomes(read_result(context.root / outcome.details["runs"][0]["evidence_dir"]))
+        caught = any((scenario, name) in passed and not ok for scenario, name, ok in observed)
+        started = any((scenario, name) in passed and ok for scenario, name, ok in observed)
+        if outcome.verdict == "fail" and caught and started:
+            return Sensitivity(True, f"behavior mutation ({variant.label})")
+    control = f"behavior mutation ({len(variants)} single-function or single-script change(s) tried)"
+    if timed_out and len(timed_out) == len(variants):
+        return Sensitivity(False, control, f"every behavior mutation run timed out after {timeout}s")
+    return Sensitivity(False, control)
 
 
 def draft_runtime(
@@ -515,7 +696,9 @@ def _draft_in_copy(
         context = _trial_context(trial, seed=None, guarded=guarded, network=bool(requirements))
         drive_inputs = [*covers, script]
         before = ledger.snapshot(trial, drive_inputs)
+        started = time.monotonic()
         outcome = checker.run(context, check)
+        baseline_seconds = time.monotonic() - started
         if ledger.snapshot(trial, drive_inputs) != before:
             last_failure = "the drive modified a covered source or its own script"
             break
@@ -579,20 +762,33 @@ def _draft_in_copy(
         )
         sensitivity = "no application inputs identified"
         if app_sources:
-            sensitive, control = _source_sensitivity(checker, check, context, app_sources, result)
-            if not sensitive:
-                last_failure = f"the drive did not detect the {control}"
+            found = _source_sensitivity(
+                checker, check, context, app_sources, result,
+                hints=produced["drive.py"], timeout=control_timeout(check, baseline_seconds),
+            )  # fmt: skip
+            if found.problem:
+                last_failure = found.problem
                 prompt += (
-                    f"\n\nThe drive did not detect the {control}. Exercise the real app boundary and record a named "
-                    "assertion with the expected and observed behavior, including when the observed result is wrong."
+                    f"\n\nRung could not check that the drive notices a change to the app: {found.problem}. "
+                    "Bound every wait in the drive and record a failed assertion instead of hanging."
                 )
                 continue
-            if (guarded or require_source) and control.startswith("startup control"):
+            if not found.detected:
+                last_failure = f"the drive did not detect the {found.control}"
+                prompt += (
+                    f"\n\nThe drive did not detect the {found.control}. Rung changes one application function "
+                    "or script at a time, leaving startup code alone, and expects an assertion that passed on the "
+                    "real app to fail while another one, showing the app still runs, keeps passing. Exercise the "
+                    "real app boundary and record a named assertion with the expected and observed behavior, "
+                    "including when the observed result is wrong."
+                )
+                continue
+            if (guarded or require_source) and found.control.startswith("startup control"):
                 last_failure = (
                     "the drive passed a startup control but needs a behavioral assertion control before registration"
                 )
                 break
-            sensitivity = f"detected {control}"
+            sensitivity = f"detected {found.control}"
         elif guarded or require_source:
             last_failure = sensitivity
             prompt += "\n\nName the actual application files this drive depends on in the sources list."

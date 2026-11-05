@@ -102,6 +102,15 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 - A tracked symbolic link that points outside the project no longer makes every whole-project check
   an error. The verdict records where the link points, without following it, so pointing the link
   somewhere else stales the verdict.
+- `rung draft runtime` checks that a drive notices a change to the app by changing one function's
+  return values (or one inline script) at a time, leaving startup code such as app factories,
+  config loaders and entry points alone. A variant counts only when one assertion that passed on the
+  real app fails while another keeps passing, so a drive that only shows the app started is no
+  longer accepted. Drives whose every assertion depends on one function need a separate assertion
+  that shows the app is running.
+- The control runs of `rung draft runtime` get three times the accepted run's duration (at least
+  60 seconds, at most the check's timeout) instead of a fixed 30 seconds, and a control run that
+  times out is reported as a timeout rather than as an undetected change.
 
 ## 0.3.0 (2026-11-04)
 
