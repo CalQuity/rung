@@ -86,12 +86,69 @@ class LLMConfig:
     api_key_env: str = "RUNG_API_KEY"
 
 
+POLICY_MODES = ("fail", "warn")
+DEFAULT_APPROVAL_LABEL = "rung-policy-approved"
+GATE_KEYS = ("policy_changes", "policy_paths", "require_coverage", "approval_label")
+
+
+@dataclass
+class GateConfig:
+    """Merge-gate settings from the `[gate]` table. The gate reads them from the base revision.
+
+    Each field is None when the table does not set it, so a trusted workflow's inputs apply instead.
+    """
+
+    policy_changes: str | None = None
+    policy_paths: list[str] | None = None
+    require_coverage: list[str] | None = None
+    approval_label: str | None = None
+
+
+def parse_gate(raw: dict[str, Any]) -> GateConfig:
+    """Validate the `[gate]` table of a parsed `rung.toml`.
+
+    Args:
+        raw: The whole parsed `rung.toml` document.
+
+    Returns:
+        The settings the table declares; unset keys are None.
+
+    Raises:
+        ConfigError: The table, a key, or a value is invalid.
+    """
+    table = raw.get("gate", {})
+    if not isinstance(table, dict):
+        raise ConfigError("[gate] must be a table")
+    for key in table:
+        if key not in GATE_KEYS:
+            close = difflib.get_close_matches(key, GATE_KEYS, n=1)
+            hint = f"; did you mean `{close[0]}`?" if close else f"; [gate] takes {', '.join(GATE_KEYS)}"
+            raise ConfigError(f"[gate]: unknown option `{key}`{hint}")
+    mode = table.get("policy_changes")
+    if mode is not None and mode not in POLICY_MODES:
+        raise ConfigError('[gate]: `policy_changes` must be "fail" or "warn"')
+    for key in ("policy_paths", "require_coverage"):
+        value = table.get(key)
+        if value is not None and (not isinstance(value, list) or not all(isinstance(v, str) for v in value)):
+            raise ConfigError(f"[gate]: `{key}` must be a list of glob strings")
+    label = table.get("approval_label")
+    if label is not None and (not isinstance(label, str) or not label.strip()):
+        raise ConfigError("[gate]: `approval_label` must be a non-empty string")
+    return GateConfig(
+        policy_changes=mode,
+        policy_paths=table.get("policy_paths"),
+        require_coverage=table.get("require_coverage"),
+        approval_label=label,
+    )
+
+
 @dataclass
 class Config:
     root: Path
     name: str
     llm: LLMConfig
     checks: list[Check]
+    gate: GateConfig = field(default_factory=GateConfig)
 
     def check(self, check_id: str) -> Check:
         for c in self.checks:
@@ -236,7 +293,7 @@ def load(root: Path) -> Config:
 
     project = raw.get("project", {})
     name = (project.get("name") if isinstance(project, dict) else None) or root.name
-    return Config(root=root, name=str(name), llm=llm, checks=checks)
+    return Config(root=root, name=str(name), llm=llm, checks=checks, gate=parse_gate(raw))
 
 
 def toml_value(value: Any) -> str:
@@ -264,6 +321,9 @@ def dump(config: Config) -> str:
     lines = ["[project]", f"name = {toml_value(config.name)}", "", "[llm]"]
     for key in ("provider", "model", "base_url", "api_key_env"):
         lines.append(f"{key} = {toml_value(getattr(config.llm, key))}")
+    gate = [f"{key} = {toml_value(value)}" for key in GATE_KEYS if (value := getattr(config.gate, key)) is not None]
+    if gate:
+        lines += ["", "[gate]", *gate]
     for c in config.checks:
         lines += ["", *_check_lines(c)]
     return "\n".join(lines) + "\n"

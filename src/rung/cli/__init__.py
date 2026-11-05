@@ -135,11 +135,19 @@ def build_parser(*, json_errors: bool = False) -> argparse.ArgumentParser:
     s.add_argument("ids", nargs="*", help="checks to run (default: all declared checks)")
     s.add_argument("--base", help="target branch (default: the repository's default branch)")
     s.add_argument("--policy-path", action="append", default=[], metavar="GLOB",
-                   help="protect an additional repository-relative policy path (repeatable)")  # fmt: skip
+                   help="protect an additional project-relative policy path (repeatable; "
+                        "ignored when the base [gate] table sets policy_paths)")  # fmt: skip
     s.add_argument("--require-coverage", action="append", default=[], metavar="GLOB",
-                   help="block changed project paths matching this glob without an execution check")  # fmt: skip
+                   help="block changed project paths matching this glob without an execution check "
+                        "(ignored when the base [gate] table sets require_coverage)")  # fmt: skip
     s.add_argument("--allow-policy-changes", action="store_true",
-                   help="run even when the change edits protected policy paths")  # fmt: skip
+                   help="run even when the change edits protected policy paths "
+                        "(ignored when the base [gate] table sets policy_changes)")  # fmt: skip
+    s.add_argument("--pr-label", action="append", default=[], metavar="LABEL",
+                   help="a label a maintainer applied to the pull request; the base [gate] approval_label "
+                        "approves policy changes (repeatable)")  # fmt: skip
+    s.add_argument("--pr-head", metavar="SHA",
+                   help="block unless HEAD is this pull request head commit or a merge commit of it")  # fmt: skip
     s.add_argument("--executor", choices=["local", "daytona"], default="local",
                    help="where to run checks (default: local)")  # fmt: skip
     s.add_argument("--daytona-snapshot", metavar="NAME",

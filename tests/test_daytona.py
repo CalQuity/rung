@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from rung import __version__
+from rung.checks import daytona
 
 from .conftest import commit_all, run_git
 from .test_verification_workflow import _configure, rung
@@ -33,7 +34,7 @@ def sdk(checkout, monkeypatch):
     head = run_git(checkout, "rev-parse", "HEAD").strip()
 
     def exec_command(command, *, timeout):
-        assert 0 < timeout <= 900
+        assert 0 < timeout <= daytona.STAGE_TIMEOUTS["gate"]
         assert "example-api-key" not in command
         state.commands.append(command)
         if command.startswith("rung --version"):
@@ -71,13 +72,18 @@ def sdk(checkout, monkeypatch):
     class Client:
         def __init__(self, config):
             assert config.api_key == "example-api-key"
+            self.snapshot = SimpleNamespace(get=self.resolve)
+
+        def resolve(self, name):
+            assert name == "reviewed"
+            return SimpleNamespace(id="snap-0123", name=name)
 
         def create(self, params, *, timeout):
             state.created = True
             assert vars(params) == {
                 "snapshot": "reviewed",
                 "ephemeral": True,
-                "ttl_minutes": 20,
+                "ttl_minutes": daytona.TTL_MINUTES,
                 "public": False,
                 "network_block_all": True,
             }
@@ -86,7 +92,7 @@ def sdk(checkout, monkeypatch):
             return sandbox
 
         def delete(self, target, *, timeout, wait):
-            assert target is sandbox and wait and timeout == 30
+            assert target is sandbox and wait and timeout == daytona.STAGE_TIMEOUTS["delete"]
             state.deleted = True
             if state.result == "cleanup":
                 raise RuntimeError("example-api-key")
@@ -138,6 +144,7 @@ def test_remote_gate_never_runs_checks_on_coordinator(checkout, sdk, result, mon
         assert data["executor_error"] and not data["results"]
     else:
         assert data["results"] == [{"id": "unit", "verdict": result, "summary": "remote check"}]
+        assert data["snapshot"] == "reviewed" and data["snapshot_id"] == "snap-0123"
     assert "example-api-key" not in output.out + output.err
     assert not (checkout / ".rung").exists()
 
@@ -156,15 +163,42 @@ def test_remote_rejects_uncommitted_source(checkout, sdk, capsys):
     assert not sdk.created
 
 
-@pytest.mark.parametrize("result, uploaded", [("mismatch", False), ("cleanup", True)])
-def test_remote_infrastructure_failures_close_the_gate(checkout, sdk, result, uploaded, capsys):
-    sdk.result = result
+def test_remote_infrastructure_failures_close_the_gate(checkout, sdk, capsys):
+    sdk.result = "mismatch"
     assert remote(checkout) == 1
     output = capsys.readouterr()
     data = json.loads(output.out)
     assert not data["passed"] and data["executor_error"]
-    assert sdk.deleted and sdk.uploaded is uploaded
+    assert sdk.deleted and not sdk.uploaded
     assert "example-api-key" not in output.out + output.err
+
+
+def test_cleanup_failure_warns_without_replacing_a_validated_result(checkout, sdk, capsys, caplog):
+    sdk.result = "cleanup"
+    assert remote(checkout) == 0
+    output = capsys.readouterr()
+    data = json.loads(output.out)
+    assert data["passed"] and "executor_error" not in data
+    assert data["results"] == [{"id": "unit", "verdict": "pass", "summary": "remote check"}]
+    assert "Daytona cleanup failed" in data["cleanup_warning"] and "Daytona cleanup failed" in caplog.text
+    assert sdk.deleted and "example-api-key" not in output.out + output.err + caplog.text
+
+
+def test_sandbox_lifetime_outlasts_every_stage_with_a_margin():
+    worst = daytona.CREATE_TIMEOUT + sum(daytona.STAGE_TIMEOUTS.values())
+    assert worst + daytona.TTL_MARGIN_MINUTES * 60 <= daytona.TTL_MINUTES * 60
+
+
+def test_remote_gate_forwards_approval_and_head_to_the_sandbox(checkout, sdk, capsys):
+    head = run_git(checkout, "rev-parse", "HEAD").strip()
+    assert remote(checkout, "--pr-label", "rung-policy-approved", "--pr-head", head) == 0
+    argv = shlex.split(sdk.commands[-1])
+    assert "--pr-label=rung-policy-approved" in argv and f"--pr-head={head}" in argv
+
+
+def test_human_output_names_the_resolved_snapshot(checkout, sdk, capsys):
+    assert rung(checkout, "gate", "--base", "main", "--executor", "daytona", "--daytona-snapshot", "reviewed") == 0
+    assert "id snap-0123" in capsys.readouterr().out
 
 
 def test_remote_without_credential_fails_without_contacting_provider(checkout, sdk, monkeypatch, capsys):

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import shlex
 import tomllib
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 
 from rung.analysis import plan, report
@@ -15,7 +17,16 @@ from rung.checks.command import cargo_test, is_attested, package_script_commands
 from rung.cli.commands.common import GATE_FAILED, OK, load_config, resolve_base
 from rung.cli.output import STATE_STYLE, VERDICT_STYLE, Output
 from rung.core import git, launch, laws, ledger, modelcard
-from rung.core.config import CONFIG_NAME, Check, Config, ConfigError, find_root
+from rung.core.config import (
+    CONFIG_NAME,
+    DEFAULT_APPROVAL_LABEL,
+    GATE_KEYS,
+    Check,
+    Config,
+    ConfigError,
+    find_root,
+    parse_gate,
+)
 from rung.core.redact import redact, redact_lines
 
 POLICY_PATHS = (
@@ -256,9 +267,21 @@ def _unmapped_policy(
     required: set[str],
     extra: list[str],
 ) -> list[str]:
-    """Require a reviewable verifier scope before a custom check can claim changed targets."""
-    if any((repo / path).is_file() for path in git.expand(repo, extra)):
-        return []
+    """Require a reviewable verifier scope before a custom check can claim changed targets.
+
+    Args:
+        repo: The repository root.
+        config: The project configuration.
+        checks: The checks selected for the gate.
+        paths: Changed project-relative paths.
+        required: Changed project-relative paths that require coverage.
+        extra: Repository-relative policy globs from the base `[gate]` table or the trusted workflow.
+
+    Returns:
+        The ids of checks whose verifier files are neither declared in `specs` nor protected by
+        policy globs. Each check is decided on its own: a policy glob exempts only the checks whose
+        launch files it matches.
+    """
     required_checks = {check.id for check in plan.focused_checks(checks, required)}
     missing = []
     for check in plan.focused_checks(checks, paths):
@@ -268,11 +291,90 @@ def _unmapped_policy(
             continue
         cwd = config.root / check.get("cwd", ".")
         declared = git.expand(config.root, check.get_list("specs"))
-        if not any((config.root / path).is_file() for path in declared) and not _standard_runner(
-            shlex.split(command), cwd
-        ):
+        if any((config.root / path).is_file() for path in declared) or _standard_runner(shlex.split(command), cwd):
+            continue
+        if not _policy_covers_verifier(repo, config.root, check, extra):
             missing.append(check.id)
     return missing
+
+
+def _policy_covers_verifier(repo: Path, config_root: Path, check: Check, extra: list[str]) -> bool:
+    """Whether policy globs protect every launch file of this check's own command.
+
+    A policy glob that matches some other file says nothing about this check's verifier, so it
+    never exempts the check.
+    """
+    if not extra:
+        return False
+    launched = sorted(path for path in _launch_scripts(repo, config_root, [check]) if (repo / path).is_file())
+    return bool(launched) and all(any(git.glob_match(glob, path) for glob in extra) for path in launched)
+
+
+def _project_globs(prefix: Path, globs: list[str]) -> list[str]:
+    """Turn project-relative globs into repository-relative ones (`..` may name repository files)."""
+    return [posixpath.normpath((prefix / glob).as_posix()) for glob in globs]
+
+
+@dataclass(frozen=True)
+class _GateSettings:
+    policy_changes: str
+    policy_paths: list[str]
+    require_coverage: list[str]
+    approval_label: str
+    source: str
+
+
+def _gate_settings(cfg: Config, base: str, args) -> tuple[_GateSettings, bool]:
+    """Read the `[gate]` table from the base revision; trusted workflow inputs fill unset keys.
+
+    Args:
+        cfg: The configuration under review (its `[gate]` table is compared, never applied).
+        base: The merge-base commit.
+        args: Parsed `rung gate` arguments.
+
+    Returns:
+        The effective settings, and whether the change edits the `[gate]` table.
+
+    Raises:
+        ConfigError: The base revision's `rung.toml` has an invalid `[gate]` table.
+    """
+    try:
+        raw = tomllib.loads(git.show(cfg.root, base, CONFIG_NAME))
+    except (git.GitError, tomllib.TOMLDecodeError):
+        raw = {}
+    try:
+        reviewed = parse_gate(raw)
+    except ConfigError as exc:
+        raise ConfigError(f"{CONFIG_NAME} on the merge base: {exc}") from None
+    declared = any(getattr(reviewed, key) is not None for key in GATE_KEYS)
+    settings = _GateSettings(
+        policy_changes=reviewed.policy_changes or ("warn" if args.allow_policy_changes else "fail"),
+        policy_paths=reviewed.policy_paths if reviewed.policy_paths is not None else list(args.policy_path),
+        require_coverage=(
+            reviewed.require_coverage if reviewed.require_coverage is not None else list(args.require_coverage)
+        ),
+        approval_label=reviewed.approval_label or DEFAULT_APPROVAL_LABEL,
+        source="base" if declared else "options",
+    )
+    return settings, reviewed != cfg.gate
+
+
+def _head_mismatch(root: Path, head: str, pr_head: str) -> str:
+    """Explain why HEAD is not the pull request head or a merge commit of it ("" when it is)."""
+    expected = pr_head.strip().lower()
+    if head and head == expected:
+        return ""
+    try:
+        # Parents of HEAD, one per line; a pull_request checkout is a merge of the base and the head.
+        parents = git._git(root, "rev-parse", f"{head}^@").split() if head else []
+    except git.GitError:
+        parents = []
+    if len(parents) >= 2 and expected in parents:
+        return ""
+    return (
+        f"HEAD {head[:12] or '(none)'} is not the pull request head {expected[:12]} or a merge commit of it. "
+        "Check out the pull request head (with pull_request_target, set the checkout ref to the head SHA)."
+    )
 
 
 def cmd_gate(args, out: Output) -> int:
@@ -284,14 +386,19 @@ def cmd_gate(args, out: Output) -> int:
     repo = cfg.root
     for _ in Path(git.prefix(cfg.root)).parts:
         repo = repo.parent
+    settings, gate_changed = _gate_settings(cfg, base, args)
+    approved = settings.approval_label in args.pr_label
+    allow_policy = settings.policy_changes == "warn" or approved
     changed = git.changed_files(repo, base)
     prefix = cfg.root.relative_to(repo)
+    # Policy globs are project-relative, like every other path in rung.toml.
+    policy_globs = _project_globs(prefix, settings.policy_paths)
     configured = {str(prefix / pattern) for check in cfg.checks for pattern in runner.specs(check)}
     selected = [cfg.check(check_id) for check_id in args.ids] if args.ids else cfg.checks
     protected = {
         path
         for path in changed
-        if any(git.glob_match(pattern, path) for pattern in (*POLICY_PATHS, *args.policy_path, *configured))
+        if any(git.glob_match(pattern, path) for pattern in (*POLICY_PATHS, *policy_globs, *configured))
     }
     protected |= _runner_policy_changes(repo, base, changed, selected)
     protected |= changed & _launch_scripts(repo, cfg.root, selected)
@@ -301,14 +408,20 @@ def cmd_gate(args, out: Output) -> int:
     uncovered = plan.uncovered_paths(selected, {
         path for path in scoped_changes if not git.is_rung_output(path)
     })  # fmt: skip
-    blocked = [f"policy changed: {path}" for path in policy_paths if not args.allow_policy_changes]
+    head = git.head(cfg.root)
+    blocked = []
+    if args.pr_head and (mismatch := _head_mismatch(cfg.root, head, args.pr_head)):
+        blocked.append(mismatch)
+    blocked += [f"policy changed: {path}" for path in policy_paths if not allow_policy]
+    if gate_changed and not approved:
+        blocked.append(f"the [gate] table in {CONFIG_NAME} changed; it needs the {settings.approval_label!r} approval")
     required = {
-        path for path in scoped_changes if any(git.glob_match(pattern, path) for pattern in args.require_coverage)
+        path for path in scoped_changes if any(git.glob_match(pattern, path) for pattern in settings.require_coverage)
     }
     missing_coverage = plan.uncovered_paths(selected, required, declared=True)
     blocked += [f"required coverage missing: {path}" for path in missing_coverage]
-    unmapped = _unmapped_policy(repo, cfg, selected, scoped_changes, required, args.policy_path)
-    blocked += [f"{check}: declare custom verifier files with specs or --policy-path" for check in unmapped]
+    unmapped = _unmapped_policy(repo, cfg, selected, scoped_changes, required, policy_globs)
+    blocked += [f"{check}: declare custom verifier files with specs or policy_paths" for check in unmapped]
     blocked += [
         f"{check.id}: external capture cannot be re-run in a merge gate" for check in selected if is_attested(check)
     ]
@@ -327,7 +440,8 @@ def cmd_gate(args, out: Output) -> int:
             blocked.append(f"approved law {law.id} needs a confirmed source link or an implementation check")
     out.heading("Merge gate", f"{cfg.name} · target {base[:12]} · {len(selected)} selected")
     if protected:
-        out.line(out.style(f"Policy changes ({len(protected)})", "yellow"))
+        note = " · approved" if approved else " · reported only" if allow_policy else ""
+        out.line(out.style(f"Policy changes ({len(protected)}){note}", "yellow"))
         for path in policy_paths[:8]:
             out.detail(path, indent=2)
     if uncovered:
@@ -341,9 +455,11 @@ def cmd_gate(args, out: Output) -> int:
         for reason in blocked:
             if not reason.startswith("policy changed: "):
                 out.detail(reason, indent=2)
-        if protected and not args.allow_policy_changes:
-            out.detail("Have a maintainer review the policy edits before running the gate.", indent=2)
-    head = git.head(cfg.root)
+        if (protected and not allow_policy) or (gate_changed and not approved):
+            out.detail(
+                f"Have a maintainer review the policy edits, then apply the {settings.approval_label!r} label.",
+                indent=2,
+            )
     receipt = {
         "schema_version": 1,
         "executor": args.executor,
@@ -351,6 +467,14 @@ def cmd_gate(args, out: Output) -> int:
         "head": head,
         "passed": False,
         "policy_changes": policy_paths,
+        "policy_approved": approved,
+        "gate_settings": {
+            "source": settings.source,
+            "policy_changes": settings.policy_changes,
+            "policy_paths": settings.policy_paths,
+            "require_coverage": settings.require_coverage,
+            "approval_label": settings.approval_label,
+        },
         "uncovered_paths": uncovered,
         "required_coverage_missing": missing_coverage,
         "verifier_policy_missing": unmapped,
@@ -363,8 +487,12 @@ def cmd_gate(args, out: Output) -> int:
         out.emit(receipt)
         return GATE_FAILED
     if args.executor == "daytona":
+        # The sandbox repeats the preflight from the same history, so it reads the same base [gate] table.
         options = [f"--policy-path={path}" for path in args.policy_path]
         options += [f"--require-coverage={path}" for path in args.require_coverage]
+        options += [f"--pr-label={label}" for label in args.pr_label]
+        if args.pr_head:
+            options.append(f"--pr-head={args.pr_head}")
         if args.allow_policy_changes:
             options.append("--allow-policy-changes")
         request = daytona.GateRequest(repo, prefix, base, head, tuple(receipt["selected"]), tuple(options))
@@ -377,6 +505,7 @@ def cmd_gate(args, out: Output) -> int:
             out.error(str(exc))
             return GATE_FAILED
         out.emit(receipt)
+        out.detail(f"Snapshot {receipt['snapshot']} · id {receipt['snapshot_id']}")
         for row in receipt["results"]:
             out.line(f"{out.badge(row['verdict'], VERDICT_STYLE, 6)}{row['id']}")
             out.detail(redact(row["summary"]))

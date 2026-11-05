@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shlex
 import subprocess
@@ -16,6 +17,14 @@ from rung import __version__
 
 BUNDLE_LIMIT = 100 * 1024 * 1024
 RECEIPT_LIMIT = 1024 * 1024
+# Per-stage limits, in seconds, for the calls made after the sandbox exists.
+STAGE_TIMEOUTS = {"version": 15, "workspace": 15, "upload": 90, "checkout": 90, "gate": 900, "delete": 30}
+CREATE_TIMEOUT = 90
+# The sandbox outlives the slowest possible run by a margin, so it never expires while still in use.
+TTL_MARGIN_MINUTES = 5
+TTL_MINUTES = -(-(CREATE_TIMEOUT + sum(STAGE_TIMEOUTS.values())) // 60) + TTL_MARGIN_MINUTES
+
+logger = logging.getLogger(__name__)
 
 
 class SandboxError(ValueError):
@@ -114,36 +123,43 @@ def execute(request: GateRequest, snapshot: str) -> dict:
         _git(request.repo, "bundle", "create", str(bundle), "HEAD")
         if bundle.stat().st_size > BUNDLE_LIMIT:
             raise SandboxError("the checkout bundle exceeds Daytona's 100 MiB transfer limit for this gate")
-        stage = "creating the sandbox"
+        stage = "resolving the snapshot"
+        outcome: dict = {}
         try:
             client = sdk.Daytona(sdk.DaytonaConfig(api_key=key, api_url="https://app.daytona.io/api"))
+            # Record exactly which snapshot ran the checks: a name can be re-pointed later.
+            resolved = client.snapshot.get(snapshot)
+            snapshot_id = str(resolved.id)
+            stage = "creating the sandbox"
             sandbox = client.create(
                 sdk.CreateSandboxFromSnapshotParams(
                     snapshot=snapshot,
                     ephemeral=True,
-                    ttl_minutes=20,
+                    ttl_minutes=TTL_MINUTES,
                     public=False,
                     network_block_all=True,
                 ),
-                timeout=90,
+                timeout=CREATE_TIMEOUT,
             )
             try:
                 stage = "checking the snapshot"
-                version = sandbox.process.exec("rung --version", timeout=15)
+                version = sandbox.process.exec("rung --version", timeout=STAGE_TIMEOUTS["version"])
                 if version.exit_code or version.result.strip() != f"rung {__version__}":
                     raise SandboxError(f"the Daytona snapshot must have rung {__version__} on PATH")
                 stage = "uploading Git history"
                 work = f"/tmp/rung-{uuid4().hex}"
                 remote_bundle = f"{work}/checkout.bundle"
-                setup = sandbox.process.exec(shlex.join(["mkdir", "-m", "700", work]), timeout=15)
+                setup = sandbox.process.exec(
+                    shlex.join(["mkdir", "-m", "700", work]), timeout=STAGE_TIMEOUTS["workspace"]
+                )
                 if setup.exit_code:
                     raise SandboxError("could not prepare the Daytona workspace")
-                sandbox.fs.upload_file(str(bundle), remote_bundle, timeout=90)
+                sandbox.fs.upload_file(str(bundle), remote_bundle, timeout=STAGE_TIMEOUTS["upload"])
                 stage = "checking out the commit"
                 repo = f"{work}/repo"
                 clone = shlex.join(["git", "clone", "--no-checkout", "--template=", remote_bundle, repo])
                 checkout = shlex.join(["git", "-C", repo, "checkout", "--detach", request.head])
-                if sandbox.process.exec(f"{clone} && {checkout}", timeout=90).exit_code:
+                if sandbox.process.exec(f"{clone} && {checkout}", timeout=STAGE_TIMEOUTS["checkout"]).exit_code:
                     raise SandboxError("could not check out the exact PR revision in Daytona")
                 stage = "running the remote gate"
                 argv = [
@@ -158,12 +174,17 @@ def execute(request: GateRequest, snapshot: str) -> dict:
                     "--",
                     *request.ids,
                 ]
-                return _receipt(sandbox.process.exec(shlex.join(argv), timeout=900), request)
+                response = sandbox.process.exec(shlex.join(argv), timeout=STAGE_TIMEOUTS["gate"])
+                outcome.update(_receipt(response, request), snapshot=snapshot, snapshot_id=snapshot_id)
+                return outcome
             finally:
                 try:
-                    client.delete(sandbox, timeout=30, wait=True)
+                    client.delete(sandbox, timeout=STAGE_TIMEOUTS["delete"], wait=True)
                 except Exception:
-                    raise SandboxError("Daytona cleanup failed. The sandbox has a 20-minute expiry.") from None
+                    # A validated result stands; the sandbox still expires on its own. Never log SDK text.
+                    warning = f"Daytona cleanup failed. The sandbox expires within {TTL_MINUTES} minutes."
+                    logger.warning(warning)
+                    outcome["cleanup_warning"] = warning
         except SandboxError:
             raise
         except Exception:

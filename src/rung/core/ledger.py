@@ -111,8 +111,34 @@ def _self_hash(entry: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
 
 
+# Variables that choose which tools run and how they behave. Session noise (terminal, shell history,
+# timestamps, agent and CI bookkeeping) is left out, so an unchanged toolchain can reuse a verdict.
+ENVIRONMENT_NAMES = frozenset({"PATH", "VIRTUAL_ENV", "CONDA_PREFIX", "LANG", "LANGUAGE", "TZ", "CI", "NODE_ENV"})
+ENVIRONMENT_PREFIXES = (
+    "PYTHON", "UV_", "PIP_", "NODE", "NPM_CONFIG_", "YARN_", "PNPM_", "BUN_", "DENO_", "GO", "CGO_",
+    "CARGO", "RUST", "JAVA", "JDK_", "MAVEN_", "GRADLE_", "LC_", "RUNG_",
+)  # fmt: skip
+
+
+def tool_environment(environ: dict[str, str] | None = None) -> list[tuple[str, str]]:
+    """The environment variables that can change what a check runs, sorted.
+
+    Args:
+        environ: The variables to filter (default: the current process environment).
+
+    Returns:
+        (name, value) pairs for the toolchain, interpreter, package-manager and locale variables.
+    """
+    source = os.environ if environ is None else environ
+    return sorted(
+        (name, value)
+        for name, value in source.items()
+        if name in ENVIRONMENT_NAMES or (name.startswith(ENVIRONMENT_PREFIXES) and not name.startswith("GOOGLE"))
+    )
+
+
 def _environment_hash(entry: dict[str, Any], tools: dict[str, tuple[int, ...]]) -> str:
-    body = json.dumps([__version__, entry["hash"], sorted(os.environ.items()), tools], sort_keys=True)
+    body = json.dumps([__version__, entry["hash"], tool_environment(), tools], sort_keys=True)
     return hashlib.sha256(body.encode()).hexdigest()
 
 
