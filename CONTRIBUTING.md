@@ -71,9 +71,10 @@ To change what models or agents are told, edit the Markdown in `src/rung/guides/
 
 ## Releasing
 
-Source builds use a Python `.dev0` version and the corresponding plugin `-dev.0` version
-while the changelog has unreleased work. Documentation keeps the latest published action tag
-until the next release.
+Source builds use a Python `.dev0` version while the changelog has unreleased work. The plugin
+installs from the default branch, so `plugin/.claude-plugin/plugin.json` keeps the latest released
+version (the top `## X.Y.Z (date)` heading in CHANGELOG.md), and documentation keeps the latest
+published action tag, until the next release.
 
 1. Move the CHANGELOG.md entries out of "unreleased". Bump the version in `pyproject.toml`, `src/rung/__init__.py` and `plugin/.claude-plugin/plugin.json`, and the
    `CalQuity/rung@v…` references in `README.md` and `plugin/skills/setup/SKILL.md`.

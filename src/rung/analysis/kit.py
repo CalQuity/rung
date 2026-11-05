@@ -9,6 +9,7 @@ enforces. `rung kit` shows it; `rung init` builds it.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -31,6 +32,16 @@ PARTS = (
 _PLAN_PART = {"tests": "tests", "security": "security", "architecture": "static", "runtime": "app",
               "protocol": "formal", "model": "formal"}  # fmt: skip
 _STATIC_WORDS = ("lint", "type", "format", "check", "fmt", "vet", "clippy", "mypy", "pyright", "ruff", "eslint")
+# A command that runs one of these is a test suite, whatever its id (`unit`, `e2e`, ...).
+_TEST_RUNNER = re.compile(
+    r"(?:^|[\s/])(?:pytest|py\.test|vitest|jest|mocha|ava)(?:\s|$)"
+    r"|(?:^|\s)-m\s+(?:pytest|unittest)\b"
+    r"|(?:^|[\s/])(?:go|cargo|mvn|mvnw|gradle|gradlew|mix|swift|make|rake)\s+(?:test|nextest)\b"
+    r"|(?:^|[\s/])(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b"
+    r"|(?:^|[\s/])node\s+--test\b"
+)
+# A suggestion with a placeholder is something to fill in, not a command to run.
+_PLACEHOLDER = "<your test command>"
 # The order in which a check's state calls for attention.
 _URGENCY = {"failing": 0, "drifted": 1, "stale": 2, "never": 3}
 
@@ -49,6 +60,8 @@ def part_of(check: Check) -> str:
     if check.get("drafted_by") and name.endswith("properties"):
         return "properties"
     if "test" in name or "spec" in name:
+        return "tests"
+    if check.kind == "command" and _TEST_RUNNER.search(str(check.get("run", ""))):
         return "tests"
     if any(w in name for w in _STATIC_WORDS):
         return "static"
@@ -146,7 +159,7 @@ def _suggestions(info: Inspection, existing: set[str]) -> dict[str, tuple[str, s
             found[part] = (rec.command, rec.title)
     found.setdefault(
         "tests",
-        ("rung add command tests --run '<your test command>'", "No test suite detected. Register your test command."),
+        (f"rung add command tests --run '{_PLACEHOLDER}'", "No test suite detected. Register your test command."),
     )
     if info.model_candidates:
         target = info.model_candidates[0].path
@@ -221,7 +234,7 @@ def _next_steps(parts: list[Part], law_states: dict[str, int]) -> list[tuple[str
         steps.append((2, "rung check", f"{len(unrun)} check(s) stale or never run: {', '.join(unrun[:4])}"
                       + (" ..." if len(unrun) > 4 else "")))  # fmt: skip
     for part in parts:
-        if part.state == "missing":
+        if part.state == "missing" and _PLACEHOLDER not in part.suggest:
             steps.append((3, part.suggest, f"{part.title}: {part.missing}"))
     if law_states.get("proposed"):
         steps.append((4, "rung laws", f"{law_states['proposed']} proposed law(s) wait for a person to approve them"))

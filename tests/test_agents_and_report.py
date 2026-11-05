@@ -113,3 +113,41 @@ def test_cli_markdown_report_removes_terminal_controls(repo, capsys):
     output = capsys.readouterr().out
     assert "demoTitle" in output and "\x1b" not in output
     assert output.startswith(report.COMMENT_MARKER + "\n")
+
+
+def _workspace(repo: Path) -> None:
+    for name in ("api", "web"):
+        (repo / name).mkdir()
+        (repo / name / "app.py").write_text("x = 1\n")
+    (repo / "shared.py").write_text("x = 1\n")
+    (repo / "rung.toml").write_text(
+        "\n".join(
+            f'[[check]]\nid = "{name}"\nkind = "command"\nrun = "true"\ncwd = "{name}"\nverifies = ["{name}/**"]\n'
+            for name in ("api", "web")
+        )
+    )
+    commit_all(repo, "workspace")
+
+
+def test_stop_hook_asks_for_the_focused_workspace_checks_first(repo: Path) -> None:
+    _workspace(repo)
+    (repo / "api" / "app.py").write_text("x = 2\n")
+    code, message = agents.stop_hook(repo, "{}")
+    assert code == 2 and "`rung check api`" in message
+    assert "1 check(s) for other declared targets" in message
+
+    (repo / "shared.py").write_text("x = 2\n")  # shared code: every touched check
+    code, message = agents.stop_hook(repo, "{}")
+    assert code == 2 and "`rung check api web`" in message
+
+
+def test_codex_stop_hook_allows_the_second_consecutive_stop_without_stop_hook_active(repo: Path) -> None:
+    _project(repo)
+    (repo / "src" / "core.py").write_text("x = 2\n")
+    first = json.dumps({"session_id": "s1"})
+    assert agents.stop_hook(repo, first, agent="codex")[0] == 2
+    assert agents.stop_hook(repo, json.dumps({"session_id": "s2"}), agent="codex")[0] == 2  # another session
+    assert agents.stop_hook(repo, first, agent="codex") == (0, "")
+    assert agents.stop_hook(repo, first, agent="codex")[0] == 2  # the next turn is checked again
+    assert agents.stop_hook(repo, "{}", agent="claude")[0] == 2  # Claude relies on stop_hook_active
+    assert agents.stop_hook(repo, "{}", agent="claude")[0] == 2

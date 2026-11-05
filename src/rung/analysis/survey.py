@@ -273,9 +273,9 @@ def _detect_project(root: Path, rel: str) -> Project | None:
     project = Project(path=rel)
     pyproject = _read(d / "pyproject.toml")
     pkg = _package_json(d)
-    if any(re.search(r"^test\s*:", _read(d / name), re.M) for name in ("GNUmakefile", "makefile", "Makefile")):
+    make_test = any(re.search(r"^test\s*:", _read(d / name), re.M) for name in ("GNUmakefile", "makefile", "Makefile"))
+    if make_test:
         project.ecosystems.append("make")
-        project.add_test("make", "make test")
 
     requirements = [_read(d / name) for name in PY_REQUIREMENTS]
     if pyproject or any(requirements) or any((d / n).exists() for n in ("setup.py", "pytest.ini", *PY_TOOL_CONFIGS)):
@@ -292,7 +292,7 @@ def _detect_project(root: Path, rel: str) -> Project | None:
                 project.add_test("python", "python -m unittest discover -s tests")
             elif any(re.search(r"^(?:async )?def test_\w+\s*\(", text, re.M) for text in tests):
                 project.add_test("python", "uv run pytest" if uv else "python -m pytest")
-            else:
+            elif not make_test:
                 project.unrecorded.append("tests (test directory found; configure its runner in rung.toml)")
         if any(k in pyproject for k in ("fastapi", "flask", "django", "starlette", "aiohttp")):
             project.surfaces.append("HTTP API")
@@ -372,6 +372,9 @@ def _detect_project(root: Path, rel: str) -> Project | None:
     if (d / "Package.swift").is_file():
         project.ecosystems.append("swift")
         project.add_test("swift", "swift test")
+    if make_test and not project.test_command:
+        # A native runner reports each case, which `rung prove` needs; `make test` is the fallback.
+        project.add_test("make", "make test")
     project.lint += [name for name in LINT_FILES if (d / name).exists()]
     return project if project.ecosystems else None
 

@@ -549,7 +549,7 @@ def test_doctor_requires_write_guard_for_an_isolated_drive(tmp_path, monkeypatch
 
     monkeypatch.setattr(sandbox, "probe_write_guard", unavailable)
     assert rung(tmp_path, "doctor", "--strict", "--json") == 1
-    rows = json.loads(capsys.readouterr().out)
+    rows = json.loads(capsys.readouterr().out)["tools"]
     assert any(row["tool"] == "drive: write guard" and not row["ok"] for row in rows)
 
 

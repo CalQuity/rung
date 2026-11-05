@@ -110,7 +110,14 @@ def cmd_init(args, out: Output) -> int:
         cfg.llm.model = args.model
     current = {check.id: check for check in cfg.checks}
     detected = _starter_checks(root, info) if not existing or args.refresh else []
-    new = [check for check in detected if check.id not in current]
+    # A command already recorded under another id (same run and cwd) is the same check; do not add it twice.
+    recorded = {(c.get("run"), c.get("cwd", ".")) for c in cfg.checks if c.kind == "command"}
+    new = [
+        check
+        for check in detected
+        if check.id not in current
+        and not (check.kind == "command" and (check.get("run"), check.get("cwd", ".")) in recorded)
+    ]
     changed_commands = [
         {"id": check.id, "configured": current[check.id].get("run"), "detected": check.get("run")}
         for check in detected
@@ -407,6 +414,8 @@ def _print_kit(built: kit.Kit, out: Output) -> None:
         out.line()
         out.command(cmd, indent=0, prefix="Next: ")
         out.detail(why, indent=2)
+    elif any(part.state in ("missing", "attention") for part in built.parts):
+        out.line("\nRegister the missing parts above with the commands they show.")
     else:
         out.line(f"\n{out.style('Every part of the kit is in place and fresh.', 'green')}")
 
@@ -452,15 +461,18 @@ def cmd_plan(args, out: Output) -> int:
     if args.changed or args.path:
         base = resolve_base(root, args.base) if args.changed else None
         paths = git.changed_files(root, base) if base else set()
+        outside: list[str] = []
         for value in args.path or []:
-            path = Path(value)
-            if path.is_absolute() or ".." in path.parts or path == Path("."):
-                raise ConfigError(f"--path must name a project-relative file: {value!r}")
-            paths.add(path.as_posix())
+            for path in _plan_paths(root, value):
+                paths.add(path)
+                if not any(Path(path).is_relative_to(p.path) for p in info.projects):
+                    outside.append(path)
         paths = {path for path in paths if not git.is_rung_output(path)}
         scope = plan.change_plan(info, checks, paths, base=base)
-        payload["change"] = {"base": base, **scope}
+        payload["change"] = {"base": base, **scope, "outside_projects": sorted(set(outside))}
         out.line(f"Verification plan for {len(paths)} path(s)")
+        for path in sorted(set(outside)):
+            out.detail(f"{path} is outside every detected project; no test suite is recommended for it", indent=2)
         if scope["focused_run"]:
             out.detail("Focused checks for declared targets", indent=2)
             out.command(scope["focused_run"], indent=4)
@@ -478,6 +490,21 @@ def cmd_plan(args, out: Output) -> int:
     out.emit(payload)
     _print_plan(recs, out)
     return OK
+
+
+def _plan_paths(root: Path, value: str) -> list[str]:
+    """Project-relative paths for one `--path`: relative to the working directory when run inside the
+    project (else to the project root), and a directory stands for the tracked files under it."""
+    cwd = Path.cwd().resolve()
+    base = cwd if cwd.is_relative_to(root) else root
+    resolved = (base / value).resolve()
+    if not resolved.is_relative_to(root):
+        raise ConfigError(f"--path must name a path inside the project: {value!r}")
+    rel = resolved.relative_to(root).as_posix()
+    if not resolved.is_dir():
+        return [rel]
+    prefix = "" if rel == "." else rel + "/"
+    return [name for name in git.list_files(root) if name.startswith(prefix)] or [rel]
 
 
 def cmd_doctor(args, out: Output) -> int:
@@ -514,11 +541,14 @@ def cmd_doctor(args, out: Output) -> int:
     else:
         required = _configured_tools(load(root), rows)
     rows.extend(required)
-    out.emit([{"tool": label, "ok": ok, "detail": detail} for label, ok, detail in rows])
+    # `strict_failures` names the configured tools `--strict` fails on, whether or not it was passed.
+    failures = [label for label, ok, _ in required if not ok]
+    out.emit({"tools": [{"tool": label, "ok": ok, "detail": detail} for label, ok, detail in rows],
+              "strict_failures": failures})  # fmt: skip
     for label, ok, detail in rows:
         mark = out.style("ok ", "green") if ok else out.style("-- ", "dim")
         out.line(f"{mark} {label:14} {detail}")
-    return GATE_FAILED if args.strict and any(not ok for _, ok, _ in required) else OK
+    return GATE_FAILED if args.strict and failures else OK
 
 
 def _configured_tools(cfg: Config, probes: list[tuple[str, bool, str]]) -> list[tuple[str, bool, str]]:
