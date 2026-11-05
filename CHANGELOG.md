@@ -96,6 +96,9 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 - Proofs cover the project's files except documentation (`*.md`, `*.rst` and `docs/`): editing a
   README no longer stales every proof, while code, configuration and fixture changes still do.
   Proofs recorded before upgrading keep their old whole-project coverage until you run them again.
+- Formal model records confirmed by an earlier version no longer read as drifted after upgrading:
+  a confirmation that stored file digests without their mode still holds while the file contents
+  match. No action is needed; the next `rung confirm` or `rung maintain` stores the new form.
 
 ## 0.3.0 (2026-11-04)
 

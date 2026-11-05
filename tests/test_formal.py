@@ -149,6 +149,24 @@ def test_drift_names_the_changed_files_and_clears_when_confirmed(shop: Path) -> 
     assert modelcard.drift(shop, "pay") is None
 
 
+def test_a_card_confirmed_before_file_modes_were_recorded_does_not_drift(shop: Path) -> None:
+    import hashlib
+
+    from rung.core.ledger import inputs_digest
+
+    card = modelcard.load(shop, "pay")
+    assert card
+    # Before 0.4 a snapshot value was the file's sha256 alone, without its mode.
+    legacy = {"shop/payments.py": hashlib.sha256(PAYMENTS.encode()).hexdigest()}
+    card["confirmed"] |= {"files": legacy, "digest": inputs_digest(legacy)}
+    modelcard.save(shop, card)
+    assert modelcard.drift(shop, "pay") is None
+    assert runner.status(load(shop), load(shop).check("pay")).state != "drifted"
+    _change_code(shop)
+    drift = modelcard.drift(shop, "pay")
+    assert drift and drift.changed == ["shop/payments.py"]
+
+
 def test_a_drifted_tla_check_is_an_error_and_never_reruns_tlc_on_the_old_spec(shop: Path, monkeypatch) -> None:
     def never(*_a: object, **_k: object) -> tla.TLCResult:
         raise AssertionError("TLC must not run on a model that may not describe the code")
