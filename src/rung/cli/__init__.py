@@ -84,6 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--approve", nargs="+", metavar="FEATURE", help="approve features (or `all`)")
     s.add_argument("--not-built", nargs="+", metavar="FEATURE", help="mark features not built yet: never driven")
     s.add_argument("--drop", nargs="+", metavar="FEATURE", help="leave features out of the drive script")
+    s.add_argument("--brief", action="store_true", help="three lines per feature instead of the full map")
     s.add_argument("--by", help="who decides (default: git user.name)")
     s.add_argument("--intent", help="what to focus the map on, e.g. 'checkout and coupons'")
     s.add_argument("--model", help="model for this draft only (default: [llm] model in rung.toml, else the CLI's)")

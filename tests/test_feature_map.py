@@ -233,6 +233,8 @@ def test_the_kit_shows_the_map_and_asks_for_approval_then_a_script(shop: Path) -
     _approve(shop, "coupons")
     built = kit.build(load(shop), survey.survey(shop))
     assert built.next_steps[0][0] == "rung draft runtime"
+    app = next(p for p in built.parts if p.key == "app")
+    assert app.state == "attention"  # an approved plan is not yet a check
 
 
 def test_the_page_shows_each_sub_features_latest_result_and_screenshots(shop: Path) -> None:
@@ -312,3 +314,26 @@ def test_app_focus_follows_python_and_typescript_imports_into_sub_projects(repo:
     assert {"backend/app/routes.py", "backend/app/pricing.py", "backend/app/carts.py", "frontend/app/cart/page.tsx",
             "frontend/components/cart-view.tsx", "frontend/components/coupon-form.tsx"} <= set(focus)  # fmt: skip
     assert "frontend/components/ui/button.tsx" not in focus and "backend/app/__init__.py" not in focus
+
+
+def test_the_brief_map_shows_each_feature_in_three_lines(shop: Path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr("rung.drafting.providers.get",
+                        lambda llm: MapProvider([_reply(index=INDEX, coupons=COUPONS, pay=PAY)]))  # fmt: skip
+    assert cli.main(["-C", str(shop), "map", "--brief", "--no-color"]) == 0
+    text = capsys.readouterr().out
+    assert "2 sub-features: coupon-apply, coupon-unknown" in text
+    assert "reached by:" not in text and "gotcha:" not in text
+
+
+def test_review_approves_one_feature_at_a_time_or_all_the_rest(shop: Path, monkeypatch) -> None:
+    from rung.cli.commands import featuremap
+    from rung.cli.output import Output
+
+    feature_map.draft(MapProvider([_reply(index=INDEX, coupons=COUPONS, pay=PAY)]), shop, survey.survey(shop),
+                      context="ctx")  # fmt: skip
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    answers = iter(["A"])
+    monkeypatch.setattr(featuremap, "ask", lambda q, default="": next(answers))
+    assert featuremap.review(load(shop), Output()) == 2
+    state = feature_map.load_state(shop)
+    assert state is not None and state.with_status("approved") == ["coupons", "pay"]

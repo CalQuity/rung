@@ -75,6 +75,12 @@ class Part:
     def state(self) -> str:
         """`ok`, `attention` (a check is failing, stale, drifted or never ran), `missing`, or `n/a`."""
         if self.entries:
+            # An approved feature map with no drive script yet has a plan, not a check.
+            planned_only = any(e.kind == "map" for e in self.entries) and not any(
+                e.kind == "evidence" for e in self.entries
+            )
+            if planned_only:
+                return "attention"
             return "ok" if all(e.state in ("fresh", "installed", "approved") for e in self.entries) else "attention"
         return "missing" if self.suggest else "n/a"
 

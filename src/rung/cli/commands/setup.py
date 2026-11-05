@@ -99,7 +99,7 @@ def cmd_init(args, out: Output) -> int:
         (root / laws.LAWS_FILE).write_text(laws.TEMPLATE)
 
     langs = ", ".join(f"{k} ({v})" for k, v in list(info.languages.items())[:4]) or "none found"
-    out.line(f"Surveyed {root}")
+    out.line(f"Surveyed {_shown(root)}")
     out.line(f"  languages: {langs}")
     out.line(f"  surfaces:  {', '.join(info.surfaces) or 'none found'}")
     out.line(f"  tests:     {', '.join(info.test_commands) or 'none found'}")
@@ -248,13 +248,16 @@ def _map_first(args, root: Path, out: Output) -> str:
     """
     from rung.cli.commands import featuremap
     from rung.drafting import feature_map
+    from rung.engines import map_page
 
     cfg = load(root)
     out.line("\n$ rung map")
     if not featuremap.has_map(root) and not featuremap.draft_map(cfg, out):
         return "feature map: no draft met the contract (above)"
     out.line("")
-    featuremap.print_map(cfg, out)
+    featuremap.print_map(cfg, out, brief=True)
+    page = map_page.write(root, check_ids=featuremap.evidence_check_ids(cfg))
+    out.line(f"\nEach feature in full: {(feature_map.MAP_DIR / 'README.md').as_posix()} and {page.relative_to(root)}")
     if not args.yes:
         featuremap.review(cfg, out)
     state = feature_map.load_state(root)
@@ -308,6 +311,14 @@ def cmd_kit(args, out: Output) -> int:
     out.emit(built.to_dict())
     _print_kit(built, out)
     return OK
+
+
+def _shown(root: Path) -> str:
+    """The project as a person would name it: its folder name when run from inside it, else `~/...` or the path."""
+    if root == Path.cwd().resolve():
+        return root.name
+    home = Path.home().resolve()
+    return f"~/{root.relative_to(home)}" if root.is_relative_to(home) else str(root)
 
 
 def _print_plan(recs: list[plan.Recommendation], out: Output) -> None:

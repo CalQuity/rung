@@ -20,6 +20,7 @@ from rung.drafting import property as property_draft
 from rung.drafting import tla as tla_draft
 
 MAX_LISTED_EVIDENCE = 8
+MAX_LISTED_SCENARIOS = 12
 
 
 def drafted_by(cfg: Config, provider: providers.Provider | None = None) -> str:
@@ -80,8 +81,13 @@ def _draft_runtime(args, cfg: Config, out: Output) -> int:
     out.detail(f"drafted by {drafted_by(cfg, provider)}", indent=2)
     if result.seed is not None:
         out.detail(f"seed {result.seed} ran twice with the same outcomes", indent=2)
-    for sc in result.scenarios:
-        out.detail(f"scenario {sc.get('name')} ({sc.get('category')}): {'pass' if sc.get('passed') else 'FAIL'}", 2)
+    if len(result.scenarios) <= MAX_LISTED_SCENARIOS:
+        for sc in result.scenarios:
+            out.detail(f"scenario {sc.get('name')} ({sc.get('category')}): {'pass' if sc.get('passed') else 'FAIL'}", 2)
+    else:  # a long list buries the result; the evidence page lists them all
+        failing = [str(sc.get("name")) for sc in result.scenarios if not sc.get("passed")]
+        out.detail(f"{len(result.scenarios)} scenarios: {len(result.scenarios) - len(failing)} pass, "
+                   f"{len(failing)} fail" + (f" ({', '.join(failing)})" if failing else ""), indent=2)  # fmt: skip
     if result.notes:
         out.line("Notes from the model:")
         out.detail(result.notes, indent=2)

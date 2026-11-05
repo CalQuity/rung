@@ -48,8 +48,17 @@ def draft_map(cfg: Config, out: Output, *, model: str | None = None, intent: str
     return result.ok
 
 
-def print_map(cfg: Config, out: Output) -> dict:
-    """The map as a tree in the terminal; returns the same as data for `--json`."""
+def _first_sentence(text: str, limit: int = 110) -> str:
+    sentence = " ".join(text.split()).split(". ")[0].rstrip(".")
+    return sentence if len(sentence) <= limit else sentence[: limit - 3].rstrip() + "..."
+
+
+def print_map(cfg: Config, out: Output, *, brief: bool = False) -> dict:
+    """The map as a tree in the terminal; returns the same as data for `--json`.
+
+    `brief` shows each feature in three lines (its status and title, what it does, its sub-feature IDs),
+    enough to decide on it; the full map is in the feature files and on the map page.
+    """
     state = feature_map.load_state(cfg.root) or feature_map.MapState()
     features = feature_map.load_features(cfg.root)
     drift = feature_map.drifted(cfg.root, state)
@@ -62,6 +71,10 @@ def print_map(cfg: Config, out: Output) -> dict:
                      "subfeatures": [i for i, _ in f.subfeatures], "entry_points": f.entry_points,
                      "problems": f.problems})  # fmt: skip
         out.line(f"\n{out.badge(shown, MAP_STYLE, 10)} {out.style(f.title or slug, 'bold')}  {out.style(slug, 'dim')}")
+        if brief:
+            out.detail(_first_sentence(f.summary), indent=11)
+            out.detail(f"{len(f.subfeatures)} sub-features: " + ", ".join(i for i, _ in f.subfeatures), indent=11)
+            continue
         out.detail(f.summary, indent=11)
         for sub_id, text in f.subfeatures:
             out.line(f"           - {out.style(sub_id, 'blue')} {text}")
@@ -87,12 +100,20 @@ def review(cfg: Config, out: Output) -> int:
     if not pending:
         return 0
     who = git.user_name(cfg.root) or "a person"
-    print("\nFor each feature: [a]pprove, [n]ot built yet, [d]rop, or Enter to decide later.", file=sys.stderr)
+    print("\nFor each feature: [a]pprove, [n]ot built yet, [d]rop, Enter to decide later, "
+          "or [A] to approve it and every feature after it.", file=sys.stderr)  # fmt: skip
     decided = 0
+    approve_rest = False
     for slug in pending:
         title = features[slug].title or slug
         why = " (changed since approval)" if slug in drift else ""
-        choice = ask(f"  {title}{why}", "").lower()[:1]
+        if approve_rest:
+            print(f"  {title}{why}: a", file=sys.stderr)
+            choice = "a"
+        else:
+            raw = ask(f"  {title}{why}", "")[:1]
+            approve_rest = raw == "A"
+            choice = raw.lower()
         if choice in _CHOICES:
             feature_map.set_status(cfg.root, state, slug, _CHOICES[choice], by=who)
             decided += 1
@@ -141,10 +162,10 @@ def cmd_map(args, out: Output) -> int:
             done = decide(cfg, flag, status, by)
             out.line(f"Marked {', '.join(done)} {status.replace('-', ' ')}.")
     out.line("")
-    data = print_map(cfg, out)
+    data = print_map(cfg, out, brief=args.brief)
     if review(cfg, out):
         out.line("")
-        data = print_map(cfg, out)
+        data = print_map(cfg, out, brief=True)
     page = map_page.write(cfg.root, check_ids=evidence_check_ids(cfg))
     cmd, why = next_step(cfg)
     out.emit({**data, "page": str(page.relative_to(cfg.root)), "next": {"command": cmd, "why": why}})
