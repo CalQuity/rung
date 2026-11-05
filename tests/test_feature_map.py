@@ -233,6 +233,8 @@ def test_the_kit_shows_the_map_and_asks_for_approval_then_a_script(shop: Path) -
     _approve(shop, "coupons")
     built = kit.build(load(shop), survey.survey(shop))
     assert built.next_steps[0][0] == "rung draft runtime"
+    app = next(p for p in built.parts if p.key == "app")
+    assert app.state == "attention"  # an approved plan is not yet a check
 
 
 def test_the_page_shows_each_sub_features_latest_result_and_screenshots(shop: Path) -> None:

@@ -11,6 +11,8 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
   planted for Rung to find. Spoilers are in its `SOLUTIONS.md`.
 
 ### Changed
+- `rung kit` no longer marks "Driving the app" ok when the feature map is approved but no drive
+  script exists yet; it needs attention, and the next step is `rung draft runtime`.
 - `rung init` names the project by its folder when run from inside it, instead of printing the full path.
 - Reviewing the feature map, `A` approves the current feature and every one after it.
 - `rung init` shows the drafted feature map in three lines per feature (what it does and its
