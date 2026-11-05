@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shlex
 import subprocess
 import tempfile
@@ -78,6 +79,13 @@ def _run(
     )
 
 
+def cargo_test(argv: list[str]) -> bool:
+    if not argv or Path(argv[0]).name not in {"cargo", "cargo.exe"}:
+        return False
+    args = argv[2:] if len(argv) > 1 and argv[1].startswith("+") else argv[1:]
+    return args[:1] == ["test"]
+
+
 class CommandChecker(Checker):
     kind = "command"
     summary = "Run a command; exit status 0 passes"
@@ -91,6 +99,13 @@ class CommandChecker(Checker):
         if prove.runs_pytest(argv) and (ctx.merge_gate or not collect_only):
             return self._run_pytest(ctx, check, argv)
         result = _run(ctx, check, argv=argv)
+        if (
+            cargo_test(argv)
+            and (ctx.merge_gate or "--no-run" not in argv)
+            and not result.returncode
+            and not re.search(r"^test result: ok\. [1-9]\d* passed;", result.stdout, re.M)
+        ):
+            return Outcome("fail", "Cargo reported no passing test cases", tail(result))
         verdict = "pass" if result.returncode == 0 else "fail"
         return Outcome(verdict, f"`{check.require('run')}` exited {result.returncode}", tail(result))
 
@@ -488,6 +503,7 @@ class EvidenceChecker(Checker):
             summary=redact(outcome.summary), reproduce=details.get("reproduce", ""),
         )  # fmt: skip
         details["report"] = page.relative_to(ctx.root).as_posix()
+        outcome.evidence[details["report"]] = ledger.file_digest(page)
         outcome.lines.append(f"evidence page: {details['report']}")
         if "reproduce" in details:  # a failure ends with the one command to run next
             outcome.lines.append(f"reproduce: {details['reproduce']}")

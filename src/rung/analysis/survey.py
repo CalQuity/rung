@@ -353,7 +353,7 @@ def _detect_project(root: Path, rel: str) -> Project | None:
             project.surfaces.append("CLI")
     if (d / "Cargo.toml").exists():
         project.ecosystems.append("rust")
-        project.add_test("rust", "cargo test")
+        project.add_test("rust", "cargo test --locked")
         project.static.append(("lint", "cargo clippy --all-targets -- -D warnings"))
     if (d / "pom.xml").is_file():
         project.ecosystems.append("maven")

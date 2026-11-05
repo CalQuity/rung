@@ -275,11 +275,12 @@ Linux and macOS are exercised by CI.
 
 ### Draft trial controls
 
-A runtime draft runs twice at one seed. Rung then replaces the contents of application sources in the copy
-and runs the same drive again. A script that still passes is kept under `.rung/cache/drafts/`.
-This rejects a drive whose results are independent of the application. The source canary does
-not establish that every assertion checks the intended behavior. Only an accepted draft replaces
-the configured script and publishes its evidence.
+A runtime draft runs twice at one seed. Rung then changes application sources in the copy
+and reruns the same drive. For Python return values and scripts embedded in HTML, the control
+preserves loading and requires a previously passing named assertion to fail. Other sources
+use a startup control, which Rung identifies separately. A drive that misses its control
+is kept under `.rung/cache/drafts/`. Review accepted assertions against the intended behavior.
+An accepted draft replaces the configured script and publishes its evidence.
 
 `rung check --reuse-local` can reuse an unchanged verdict only with a local environment receipt.
 The receipt hashes the environment and resolved launcher identities, with no environment variables

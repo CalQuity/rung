@@ -233,6 +233,17 @@ def test_report_shows_seeds_the_failing_scenario_and_the_page(shop: Path) -> Non
     assert "evidence page: `.rung/evidence/runtime/" in md
 
 
+def test_modified_evidence_page_stales_the_receipt_and_hides_the_link(shop: Path) -> None:
+    assert rung(shop, "check", "runtime") == 0
+    entry = _entry(shop)
+    path = entry["details"]["report"]
+    assert any(row.startswith(f"{path} sha256:") for row in entry["evidence"])
+    (shop / path).write_text("<h1>Fabricated result</h1>")
+    data = report.build(config.load(shop))["checks"][0]
+    assert data["state"] == "stale" and any(path in item for item in data["changed"])
+    assert data["runtime"]["report"] == ""
+
+
 def test_captions_follow_the_step_names() -> None:
     assert evidence_page.caption("03-coupon-applied-total-32.png") == "3. coupon applied total 32"
     assert evidence_page.caption("home.png") == "home"
@@ -396,32 +407,57 @@ def test_draft_rejects_a_drive_that_only_checks_source_presence(tmp_path: Path) 
         focus=[],
         max_rounds=1,
     )
-    assert not result.ok and "still passes with deliberately broken" in result.message
+    assert not result.ok and "did not detect the startup control" in result.message
     assert (tmp_path / "app.py").is_file()
     assert not (tmp_path / ".rung" / "verify" / "drive.py").exists()
     assert result.files[0].is_relative_to(tmp_path / ".rung" / "cache" / "drafts")
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="requires the macOS write guard")
+def test_draft_requires_an_assertion_to_catch_a_behavior_mutation(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("def calculate():\n    return 42\n")
+    false_proof = _drive()
+    false_proof["sources"] = ["app.py"]
+    false_proof["files"][0]["content"] = "import runpy\nrunpy.run_path('app.py')\n" + false_proof["files"][0]["content"]
+    info = survey.survey(tmp_path)
+    held = runtime.draft_runtime(ScriptedProvider([false_proof]), tmp_path, info, focus=[], max_rounds=1)
+    assert not held.ok and "did not detect the behavior mutation" in held.message
+    real = _drive()
+    real["sources"] = ["app.py"]
+    code = real["files"][0]["content"]
+    real["files"][0]["content"] = "import runpy\nactual = runpy.run_path('app.py')['calculate']()\n" + code.replace(
+        "ok = cat", "ok = actual == 42 and cat"
+    )
+    accepted = runtime.draft_runtime(ScriptedProvider([real]), tmp_path, info, focus=[], max_rounds=1)
+    assert accepted.ok and "detected behavior mutation" in accepted.sensitivity
+
+
 def test_drafted_drive_replay_retains_evidence_with_the_write_guard(tmp_path, monkeypatch, capsys):
     from rung.core import sandbox
 
-    sandbox.probe_write_guard(tmp_path)
     monkeypatch.setenv("DATABASE_URL", "test-value")
     root = tmp_path / "project"
     root.mkdir()
     outside = tmp_path / "escaped"
-    (root / "drive.py").write_text(
-        "import os\n"
-        "from pathlib import Path\n"
-        f"outside = Path({str(outside)!r})\n"
-        "try:\n"
-        "    outside.write_text('escaped')\n"
-        "except PermissionError:\n"
-        "    pass\n"
-        "assert not outside.exists()\n"
+    guard_assertions = (
+        "import os\nfrom pathlib import Path\n"
+        f"assert Path.cwd() != Path({str(root.resolve())!r})\n"
         "assert 'DATABASE_URL' not in os.environ\n"
-        "out = Path(os.environ['RUNG_EVIDENCE_DIR'])\n"
+    )
+    if sys.platform == "darwin":
+        sandbox.probe_write_guard(tmp_path)
+        guard_assertions += (
+            f"outside = Path({str(outside)!r})\n"
+            "try:\n"
+            "    outside.write_text('escaped')\n"
+            "except PermissionError:\n"
+            "    pass\n"
+            "assert not outside.exists()\n"
+        )
+    else:
+        monkeypatch.setattr(sandbox, "validated_write_guard", lambda *_a, **_kw: ("env", "RUNG_TEST_GUARD=1"))
+        guard_assertions += "assert os.environ['RUNG_TEST_GUARD'] == '1'\n"
+    (root / "drive.py").write_text(
+        guard_assertions + "out = Path(os.environ['RUNG_EVIDENCE_DIR'])\n"
         "(out / 'observation.txt').write_text(os.environ['RUNG_SEED'])\n"
     )
     (root / "rung.toml").write_text(

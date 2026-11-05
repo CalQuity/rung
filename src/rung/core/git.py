@@ -76,7 +76,7 @@ def head(root: Path) -> str:
 
 def prefix(root: Path) -> str:
     """Where `root` sits inside its repository, e.g. `backend/` (empty at the top)."""
-    return _git(root, "rev-parse", "--show-prefix").strip()
+    return _git(root, "rev-parse", "--show-prefix").removesuffix("\n")
 
 
 def merge_base(root: Path, base: str) -> str:

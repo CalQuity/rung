@@ -22,7 +22,7 @@ STATE_ICON = {"fresh": "✅", "stale": "🟡", "failing": "❌", "never": "⚪",
 LAW_ICON = {"held": "✅", "unproven": "🟡", "broken": "❌", "proposed": "📝", "unenforced": "⚪"}
 
 
-def _runtime(check: Check, details: dict[str, Any]) -> dict[str, Any] | None:
+def _runtime(root: Path, check: Check, details: dict[str, Any], evidence: list[str]) -> dict[str, Any] | None:
     """What an evidence check's latest verdict says about its runs: seeds, outcomes, how to reproduce."""
     runs = details.get("runs")
     if check.kind != "evidence" or not isinstance(runs, list) or not runs:
@@ -30,13 +30,15 @@ def _runtime(check: Check, details: dict[str, Any]) -> dict[str, Any] | None:
     na: dict[str, str] = {}
     for r in runs:
         na.update(r.get("not_applicable") or {})
+    report = details.get("report", "")
+    receipt = ledger.report_artifact(report, evidence)
     return {
         "runs": [{"seed": r.get("seed"), "verdict": r.get("verdict"), "summary": r.get("summary", ""),
                   "scenarios": r.get("scenarios", []), "failed": r.get("failed", [])} for r in runs],
         "failing_seed": details.get("failing_seed"),
         "failing_scenario": details.get("failing_scenario", ""),
         "reproduce": details.get("reproduce", ""),
-        "report": details.get("report", ""),
+        "report": report if receipt and not ledger.artifact_issues(root, [receipt]) else "",
         "not_applicable": na,
     }  # fmt: skip
 
@@ -66,7 +68,7 @@ def build(config: Config, *, evidence_url: str = "") -> dict[str, Any]:
             "checked_commit": latest.get("commit") or None,
             "comparison_base": latest.get("context") or None,
             "source": source if latest and "invalid" not in latest else None,
-            "runtime": _runtime(check, details),
+            "runtime": _runtime(config.root, check, details, latest.get("evidence", [])),
         })  # fmt: skip
         for f in details.get("findings", []):
             if f.get("status") == "new":

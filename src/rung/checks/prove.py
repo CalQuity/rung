@@ -20,7 +20,7 @@ and lets the caller name cases in edited files. Other runners are judged by the 
 from __future__ import annotations
 
 import ast
-import itertools
+import json
 import re
 import shlex
 import shutil
@@ -29,7 +29,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
-from rung.core import git, ledger
+from rung.core import git, launch, ledger
 from rung.core.config import check_command
 from rung.core.errors import RungError
 from rung.core.proc import run as run_process
@@ -83,19 +83,12 @@ def _run(argv: list[str], cwd: Path, timeout: int) -> Run:
 
 def runs_pytest(argv: list[str]) -> bool:
     """Whether a command runs pytest: `pytest ...`, `uv run pytest ...`, `python -m pytest ...`."""
-    if not argv:
-        return False
-    names = [PurePosixPath(a.replace("\\", "/")).name for a in argv]
-    pytest_names = {"pytest", "py.test", "pytest.exe"}
-    if names[0] in pytest_names:
-        return True
-    if names[0] not in {"uv", "poetry", "pipenv", "pdm", "hatch", "rye"} and not names[0].startswith("python"):
-        return False
-    if any(a == "-m" and b == "pytest" for a, b in itertools.pairwise(argv)):
-        return True
-    return "run" in argv and any(
-        name in pytest_names and before not in {"--with", "--with-editable", "--from"}
-        for before, name in zip(argv, names[1:], strict=False)
+    cwd = Path(".")
+    while inner := launch.delegated(argv, cwd):
+        argv, cwd = inner.argv, inner.cwd
+    return bool(argv) and (
+        Path(argv[0]).name in {"pytest", "py.test", "pytest.exe"}
+        or launch.python_entrypoint(argv) == ("module", "pytest")
     )
 
 
@@ -105,27 +98,16 @@ def _runs_node(argv: list[str]) -> bool:
 
 def _node_outcomes(path: Path, root: Path) -> dict[tuple[str, str], str]:
     try:
-        tree = ET.parse(path)
-    except (OSError, ET.ParseError):
+        records = [json.loads(line) for line in path.read_text().splitlines()]
+    except (OSError, ValueError):
         return {}
     outcomes = {}
-    for case in tree.iter("testcase"):
-        name, file = case.get("name"), case.get("file")
-        if not name or not file or name == file:
-            continue
-        source = (root / file).resolve()
+    for case in records:
+        source = (root / case["file"]).resolve()
         if not source.is_relative_to(root):
             continue
-        key = (source.relative_to(root).as_posix(), name)
-        failure = case.find("failure")
-        if key in outcomes or case.find("error") is not None:
-            outcomes[key] = "error"
-        elif case.find("skipped") is not None:
-            outcomes[key] = "skipped"
-        elif failure is not None:
-            outcomes[key] = "failed" if failure.get("type") == "testCodeFailure" else "error"
-        else:
-            outcomes[key] = "passed"
+        key = (source.relative_to(root).as_posix(), case["name"])
+        outcomes[key] = "error" if key in outcomes else case["status"]
     return outcomes
 
 
@@ -272,11 +254,13 @@ def prove(
             return Proof("error", "name cases in edited Node test files with --case FILE::NAME: " + ", ".join(unnamed),
                          chosen)  # fmt: skip
     with tempfile.TemporaryDirectory(prefix="rung-prove-") as tmp:
-        report = {side: Path(tmp) / f"{side}.xml" for side in ("base", "head")}
+        suffix = ".jsonl" if node_run else ".xml"
+        report = {side: Path(tmp) / f"{side}{suffix}" for side in ("base", "head")}
         extra = {side: [f"--junitxml={path}"] if wanted else [] for side, path in report.items()}
         if node_run:
+            reporter = Path(__file__).with_name("node_reporter.mjs").resolve().as_uri()
             extra = {
-                side: ["--test-reporter=spec", "--test-reporter=junit", "--test-reporter-destination=stdout",
+                side: ["--test-reporter=spec", f"--test-reporter={reporter}", "--test-reporter-destination=stdout",
                        f"--test-reporter-destination={path}"]
                 for side, path in report.items()
             }  # fmt: skip

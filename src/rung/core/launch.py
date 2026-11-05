@@ -28,6 +28,60 @@ _UV_VALUES = _UV_FILES | {
     "--upgrade-package", "-P", "--upgrade-group", "--prerelease-package", "--no-sources-package",
     "--config-setting", "-C", "--config-settings-package", "--no-build-isolation-package",
 }  # fmt: skip
+_PYTHON = re.compile(r"python(?:\d+(?:\.\d+)?)?(?:\.exe)?")
+
+
+def python_entrypoint(argv: list[str]) -> tuple[str, str] | None:
+    """Identify CPython's script or module, including bundled short options."""
+    if not argv or not _PYTHON.fullmatch(Path(argv[0]).name):
+        return None
+    args = iter(argv[1:])
+    for arg in args:
+        if arg == "-":
+            return None
+        if arg == "--":
+            return ("script", script) if (script := next(args, "")) else None
+        if not arg.startswith("-"):
+            return "script", arg
+        if arg.startswith("--"):
+            if arg == "--check-hash-based-pycs":
+                next(args, None)
+            continue
+        for i, flag in enumerate(arg[1:], start=1):
+            if flag == "c":
+                return None
+            if flag == "m":
+                return ("module", module) if (module := arg[i + 1 :] or next(args, "")) else None
+            if flag in "WX":
+                if i == len(arg) - 1:
+                    next(args, None)
+                break
+    return None
+
+
+def _env_command(argv: list[str], cwd: Path) -> Delegation | None:
+    args = iter(argv)
+    host_path = True
+    for arg in args:
+        flag, _, value = arg.partition("=")
+        if flag in {"-i", "--ignore-environment", "-"}:
+            host_path = False
+        elif flag in {"-u", "--unset", "-C", "--chdir"}:
+            value = value or next(args, "")
+            if flag in {"-C", "--chdir"}:
+                cwd /= value
+            elif value == "PATH":
+                host_path = False
+        elif flag == "--":
+            continue
+        elif flag.startswith("-"):
+            return None
+        elif "=" in arg:
+            if flag == "PATH":
+                host_path = False
+        else:
+            return Delegation([arg, *args], cwd, host_path=host_path)
+    return None
 
 
 def delegated(argv: list[str], cwd: Path) -> Delegation | None:
@@ -35,6 +89,8 @@ def delegated(argv: list[str], cwd: Path) -> Delegation | None:
     if not argv:
         return None
     name = Path(argv[0]).name
+    if name == "env":
+        return _env_command(argv[1:], cwd)
     if name in {"poetry", "pipenv", "pdm", "rye", "hatch"} and argv[1:2] == ["run"]:
         args = argv[3:] if argv[2:3] == ["--"] else argv[2:]
         return Delegation(args, cwd) if args else None
@@ -96,20 +152,22 @@ def file_inputs(argv: list[str], cwd: Path) -> list[Path]:
     if inner := delegated(argv, cwd):
         return [*files, *inner.files, *file_inputs(inner.argv, inner.cwd)]
     executable = Path(argv[0]).name
-    python = bool(re.fullmatch(r"python(?:\d+(?:\.\d+)?)?(?:\.exe)?", executable))
-    if not python and executable not in {"node", "bash", "sh", "zsh"}:
+    if target := python_entrypoint(argv):
+        kind, name = target
+        if kind == "script":
+            return [*files, cwd / name]
+        parts = name.split(".")
+        if all(part.isidentifier() for part in parts):
+            directory = Path(*parts)
+            candidates = [directory.with_suffix(".py"), directory / "__main__.py"]
+            candidates.extend(parent / "__init__.py" for parent in (directory, *directory.parents) if parent.parts)
+            files.extend(root / candidate for root in (cwd, cwd / "src") for candidate in candidates)
         return files
-    for index, arg in enumerate(argv[1:], start=1):
+    if executable not in {"node", "node.exe", "bash", "sh", "zsh"}:
+        return files
+    for arg in argv[1:]:
         flag = arg.split("=", 1)[0]
-        if python and flag == "-m" and index + 1 < len(argv):
-            parts = argv[index + 1].split(".")
-            if all(part.isidentifier() for part in parts):
-                directory = Path(*parts)
-                candidates = [directory.with_suffix(".py"), directory / "__main__.py"]
-                candidates.extend(parent / "__init__.py" for parent in (directory, *directory.parents) if parent.parts)
-                files.extend(root / candidate for root in (cwd, cwd / "src") for candidate in candidates)
-            break
-        if flag in {"-c", "--eval", "-e", "-p", "--print", "--test"}:
+        if flag in {"-c", "--eval", "-e", "-p", "--print"}:
             break
         if arg and not arg.startswith("-"):
             files.append(cwd / arg)

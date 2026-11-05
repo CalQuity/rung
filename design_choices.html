@@ -90,20 +90,20 @@ and failure cases in the <a href="docs/RUBRIC.md">evaluation rubric</a>.</p>
 their own review. Review I ran the locked contributor workflow to completion: 375 passed, zero
 skipped, and 85% coverage. The previous provisional scores lacked a completed contributor run.</p>
 <table>
-<thead><tr><th scope="col">Dimension</th><th scope="col">Review F</th><th scope="col">Review G</th><th scope="col">Review H</th><th scope="col">Review I</th><th scope="col">Review K</th><th scope="col">Review L</th></tr></thead>
+<thead><tr><th scope="col">Dimension</th><th scope="col">Review F</th><th scope="col">Review G</th><th scope="col">Review H</th><th scope="col">Review I</th><th scope="col">Review K</th><th scope="col">Review L</th><th scope="col">Review M</th></tr></thead>
 <tbody>
-<tr><td>First run and CLI</td><td>7</td><td>8</td><td>7</td><td>8</td><td>9</td><td>8</td></tr>
-<tr><td>Project fit</td><td>7</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td></tr>
-<tr><td>Development lifecycle</td><td>7</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td></tr>
-<tr><td>Check quality</td><td>7</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td></tr>
-<tr><td>Evidence integrity</td><td>6</td><td>8</td><td>8</td><td>7</td><td>9</td><td>7</td></tr>
-<tr><td>Safe adoption and execution</td><td>6</td><td>7</td><td>6</td><td>7</td><td>7</td><td>6</td></tr>
-<tr><td>Agent and CI integration</td><td>5</td><td>7</td><td>6</td><td>6</td><td>7</td><td>7</td></tr>
-<tr><td>Agent-operated workflow</td><td>7</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td></tr>
-<tr><td>Terminal output and accessibility</td><td>7</td><td>8</td><td>8</td><td>7</td><td>9</td><td>8</td></tr>
-<tr><td>Open-source operability</td><td>8</td><td>8, provisional</td><td>8, provisional</td><td>9</td><td>9</td><td>9</td></tr>
-<tr><td>Value beyond model prompting</td><td>8</td><td>9</td><td>9</td><td>9</td><td>9</td><td>9</td></tr>
-<tr><td>Implementation language and distribution</td><td>8</td><td>9</td><td>8</td><td>8</td><td>9</td><td>9</td></tr>
+<tr><td>First run and CLI</td><td>7</td><td>8</td><td>7</td><td>8</td><td>9</td><td>8</td><td>9</td></tr>
+<tr><td>Project fit</td><td>7</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td></tr>
+<tr><td>Development lifecycle</td><td>7</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td></tr>
+<tr><td>Check quality</td><td>7</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td><td>7</td></tr>
+<tr><td>Evidence integrity</td><td>6</td><td>8</td><td>8</td><td>7</td><td>9</td><td>7</td><td>8</td></tr>
+<tr><td>Safe adoption and execution</td><td>6</td><td>7</td><td>6</td><td>7</td><td>7</td><td>6</td><td>5</td></tr>
+<tr><td>Agent and CI integration</td><td>5</td><td>7</td><td>6</td><td>6</td><td>7</td><td>7</td><td>8</td></tr>
+<tr><td>Agent-operated workflow</td><td>7</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td><td>9</td></tr>
+<tr><td>Terminal output and accessibility</td><td>7</td><td>8</td><td>8</td><td>7</td><td>9</td><td>8</td><td>7</td></tr>
+<tr><td>Open-source operability</td><td>8</td><td>8, provisional</td><td>8, provisional</td><td>9</td><td>9</td><td>9</td><td>9</td></tr>
+<tr><td>Value beyond model prompting</td><td>8</td><td>9</td><td>9</td><td>9</td><td>9</td><td>9</td><td>7</td></tr>
+<tr><td>Implementation language and distribution</td><td>8</td><td>9</td><td>8</td><td>8</td><td>9</td><td>9</td><td>8</td></tr>
 </tbody>
 </table>
 <h3>Changes from Review I</h3>
@@ -167,6 +167,32 @@ round, failed against Rung's source canary, and registered as a guarded check. T
 on the unchanged app. A $50 refund regression failed on replay at seed 27623 with screenshots
 and assertion details. A real zizmor run also caught template injection in a synthetic
 pull request workflow.</li>
+</ul>
+<h3>Changes from Review M</h3>
+<ul>
+<li>Merge preflight and pytest proof detection share a parser for Python module switches.
+Static environment wrappers and explicit Node test scripts are included in policy checks.
+Dynamic wrappers remain an explicit policy-path decision.</li>
+<li>Regression proofs preserve the exact Git workspace prefix, including leading whitespace.
+Node proofs use runner events to retain case identity on versions whose built-in JUnit
+reporter omits the filename. Hosted Linux CI exposed this difference and the local
+regression now runs on Node 20 as well as current Node.</li>
+<li>Scoped plans recommend test proofs in the workspace that owns the changed file.
+Inferred Cargo tests require a reviewed lockfile. A standard suite with no passing cases
+fails verification even if Cargo exits successfully.</li>
+<li>Evidence receipts bind the shareable HTML page. A modified page makes a passing verdict
+stale and the report omits the unsafe link. Narrow terminals keep each artifact path within
+the display width while keeping short path components intact.</li>
+<li>Runtime drafts now use behavior-preserving load controls where Rung can change a
+Python return value or disable inline browser scripts. The same named assertion must
+fail after the change. For other sources Rung reports a separate startup control.
+A Terra-authored Playwright check passed the behavior control on its first round and
+caught a $50 refund regression on isolated replay at seed 27623.</li>
+<li>Hosted GitHub Actions started on draft PR 19 and exercised the repository’s own workflow
+on a hosted runner. That run caught the Node compatibility regression and three
+new conditional test skips. The contributor suite exercises Node and uv directly. The
+write-guard test exercises native enforcement on macOS and the isolation plumbing with
+an injected guard on other hosts. A live Daytona run requires a configured snapshot and key.</li>
 </ul>
 <h2>References</h2>
 <ul>

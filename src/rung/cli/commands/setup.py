@@ -14,7 +14,7 @@ from pathlib import Path
 from rung import agents
 from rung.agents.install import prepare_install
 from rung.analysis import kit, plan, survey
-from rung.checks.command import isolates_evidence, package_script_commands
+from rung.checks.command import cargo_test, isolates_evidence, package_script_commands
 from rung.checks.presets import PRESETS
 from rung.cli.commands.common import GATE_FAILED, OK, ask, resolve_base
 from rung.cli.output import STATE_STYLE, Output
@@ -445,8 +445,8 @@ def cmd_plan(args, out: Output) -> int:
     else:
         checks = load(root).checks
     info = survey.survey(root)
-    recs = plan.plan(info, {check.id for check in checks})
-    payload: dict = {"schema_version": 1, "survey": info.to_dict(), "plan": [r.__dict__ for r in recs]}
+    payload: dict = {"schema_version": 1, "survey": info.to_dict()}
+    paths = None
     if args.base and not args.changed:
         raise ConfigError("use --base with --changed")
     if args.changed or args.path:
@@ -473,6 +473,8 @@ def cmd_plan(args, out: Output) -> int:
         for step in scope["follow_up"]:
             out.detail(f"{step['label']} ({step['reason']})", indent=2)
             out.command(step["command"], indent=4)
+    recs = plan.plan(info, {check.id for check in checks}, paths=paths)
+    payload["plan"] = [r.__dict__ for r in recs]
     out.emit(payload)
     _print_plan(recs, out)
     return OK
@@ -549,8 +551,13 @@ def _configured_tools(cfg: Config, probes: list[tuple[str, bool, str]]) -> list[
                 inner_tool = launch.find_executable(name, inner.cwd)
                 detail = inner_tool or f"not executable from {inner.cwd}. Install {name} for the delegated command"
                 rows.append((f"{check.id}: delegated runner ({name})", bool(inner_tool), detail))
-            if found and executable in {"python", "python3"} and len(argv) > 2 and argv[1] == "-m":
-                module = argv[2]
+            if found and cargo_test(argv) and "--locked" in argv:
+                lock = next((p / "Cargo.lock" for p in (cwd, *cwd.parents) if (p / "Cargo.lock").is_file()), None)
+                detail = str(lock) if lock else f"run cargo generate-lockfile in {cwd}, then review the lockfile"
+                rows.append((f"{check.id}: Cargo.lock", bool(lock), detail))
+            target = launch.python_entrypoint(argv)
+            if found and target and target[0] == "module":
+                module = target[1]
                 relative = cwd.joinpath(*module.split("."))
                 if relative.with_suffix(".py").is_file() or (relative / "__main__.py").is_file():
                     ok, detail = True, f"project module in {cwd}"

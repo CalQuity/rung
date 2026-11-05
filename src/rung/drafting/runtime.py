@@ -15,6 +15,7 @@ verdict goes stale and the script must be re-proven.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -341,16 +342,53 @@ def _trial_context(root: Path, *, seed: int | None, guarded: bool, network: bool
     return Context(root=root, seed=seed, command_prefix=prefix, environment=sandbox.trial_environment(root))
 
 
-def _passes_with_broken_sources(checker: EvidenceChecker, check: Check, context: Context, paths: list[str]) -> bool:
-    """Break application inputs without changing their paths, so existence checks are insufficient."""
+def _behavior_variant(source: Path) -> str | None:
+    """Change observable behavior without preventing the application from loading."""
+    if source.suffix == ".py":
+        try:
+            tree = ast.parse(source.read_bytes())
+        except SyntaxError:
+            return None
+        returns = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Return)
+            and node.value is not None
+            and not (isinstance(node.value, ast.Constant) and node.value.value is None)
+        ]
+        if returns:
+            for node in returns:
+                node.value = ast.Constant(None)
+            return ast.unparse(tree) + "\n"
+    if source.suffix == ".html":
+        content = source.read_text(errors="replace")
+        variant = re.sub(
+            r"(<script\b[^>]*>).*?(</script\s*>)",
+            r"\1\2",
+            content,
+            flags=re.I | re.S,
+        )
+        if variant != content:
+            return variant
+    return None
+
+
+def _source_sensitivity(
+    checker: EvidenceChecker,
+    check: Check,
+    context: Context,
+    paths: list[str],
+    baseline: dict | None,
+) -> tuple[bool, str]:
+    """Run a behavior mutation where possible and distinguish it from a startup control."""
     stash = context.root / ".rung" / "cache" / "trial" / "source-canary"
+    files = [context.root / name for name in paths]
+    files = [source for source in files if source.is_file() and not source.is_symlink()]
+    variants = {source: changed for source in files if (changed := _behavior_variant(source)) is not None}
     moved = []
     try:
-        for relative in paths:
-            source = context.root / relative
-            if not source.is_file() or source.is_symlink():
-                continue
-            destination = stash / relative
+        for source in variants or files:
+            destination = stash / source.relative_to(context.root)
             destination.parent.mkdir(parents=True, exist_ok=True)
             source.rename(destination)
             moved.append((destination, source))
@@ -360,11 +398,23 @@ def _passes_with_broken_sources(checker: EvidenceChecker, check: Check, context:
                 ".js": "throw new Error('RUNG_SOURCE_CANARY');\n",
                 ".ts": "throw new Error('RUNG_SOURCE_CANARY');\n",
             }.get(source.suffix, "RUNG_SOURCE_CANARY: intentionally unusable application input\n")
-            source.write_text(failure)
+            source.write_text(variants.get(source, failure))
             source.chmod(destination.stat().st_mode & 0o777)
         options = {**check.options, "timeout": 30}
         negative = Check(check.id, check.kind, check.covers, options)
-        return not moved or checker.run(context, negative).verdict == "pass"
+        if not moved:
+            return False, "no regular application source files could be changed"
+        outcome = checker.run(context, negative)
+        if not variants:
+            return outcome.verdict == "fail", f"startup control with {len(moved)} deliberately broken source file(s)"
+        run = outcome.details["runs"][0]
+        observed = read_result(context.root / run["evidence_dir"])
+        passed = {(scenario, name) for scenario, name, ok in assertion_outcomes(baseline) if ok}
+        caught = any((scenario, name) in passed and not ok for scenario, name, ok in assertion_outcomes(observed))
+        return (
+            outcome.verdict == "fail" and caught,
+            f"behavior mutation in {len(moved)} application source file(s)",
+        )
     finally:
         for destination, source in reversed(moved):
             destination.replace(source)
@@ -521,11 +571,15 @@ def _draft_in_copy(
         )
         sensitivity = "no application inputs identified"
         if app_sources:
-            if _passes_with_broken_sources(checker, check, context, app_sources):
-                last_failure = "the drive still passes with deliberately broken application sources"
-                prompt += "\n\nThe drive passed with broken application sources. Exercise the real app boundary."
+            sensitive, control = _source_sensitivity(checker, check, context, app_sources, result)
+            if not sensitive:
+                last_failure = f"the drive did not detect the {control}"
+                prompt += (
+                    f"\n\nThe drive did not detect the {control}. Exercise the real app boundary and record a named "
+                    "assertion with the expected and observed behavior, including when the observed result is wrong."
+                )
                 continue
-            sensitivity = f"failed with {len(app_sources)} deliberately broken application source file(s)"
+            sensitivity = f"detected {control}"
         elif guarded or require_source:
             last_failure = sensitivity
             prompt += "\n\nName the actual application files this drive depends on in the sources list."

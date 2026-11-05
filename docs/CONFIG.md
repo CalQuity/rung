@@ -74,6 +74,9 @@ check does not directly exercise.
 
 Recognized pytest test runs also require at least one passing case in a fresh JUnit report.
 For collection-only commands, the merge gate still requires passing cases.
+Inferred Rust tests use `cargo test --locked`. For a new project, run
+`cargo generate-lockfile` and review the lockfile before checking. Standard Cargo test runs
+require at least one passing case.
 
 ### `evidence`
 
@@ -87,6 +90,9 @@ For collection-only commands, the merge gate still requires passing cases.
 | `scenarios` | all | Scenario names to drive, passed as `RUNG_SCENARIOS` (comma-separated) |
 | `structured` | `false` | Require `result.json` with an integer seed, unique scenario names, and at least one boolean assertion outcome per scenario. Newly drafted drives enable this. |
 | `isolate` | `true` for drafts, otherwise `false` | Run in a disposable guarded copy, including when replaying a seed. An unavailable guard reports an error. |
+
+The generated evidence page is hashed alongside the artifacts. Run older receipts again to
+bind their generated pages.
 
 Add `--isolate` when registering a hand-written drive to enable the same behavior. The guard
 limits writes and filters the environment. Drives with `uv run --with` can fetch dependencies.

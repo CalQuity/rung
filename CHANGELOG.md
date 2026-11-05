@@ -27,8 +27,13 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
   managers and records test suites for multiple ecosystems in the same directory.
 - The GitHub Action blocks policy changes by default. Evidence uploads and write-token comments
   are opt-in. Verdicts with missing or modified artifacts now read as stale.
-- Pytest regression proofs reject setup failures and missing case reports. Other runners require
-  `--expect` to identify the failure on the merge base.
+- Pytest regression proofs reject setup failures and missing case reports. Node proofs identify
+  individual cases using runner events. Other runners require `--expect` to identify the
+  failure on the merge base.
+- Change plans recommend proofs in the affected workspace. Inferred Cargo tests use the
+  lockfile and require at least one passing case.
+- Runtime evidence receipts include the generated HTML page. Draft acceptance can verify
+  that a named assertion catches changes to Python return values or inline browser behavior.
 - Scanners distinguish configured finding exit codes from failed analyses. Gitleaks fingerprints
   ignore unstable SARIF column offsets. Review and regenerate Gitleaks baselines and waivers made
   with earlier versions when you migrate.

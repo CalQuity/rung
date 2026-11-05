@@ -124,11 +124,15 @@ class Output:
         for i, part in enumerate(parts):
             piece = part + ("/" if i < len(parts) - 1 else "")
             if line and _width(line + piece) > width:
-                _write(" " * indentation + line, sys.stdout, flush=True)
+                self.line(" " * indentation + line)
                 line = ""
+            if _width(piece) > width:
+                left = min(indentation, max(0, self.columns - _width(piece)))
+                self.line(" " * left + piece)
+                continue
             line += piece
         if line:
-            _write(" " * indentation + line, sys.stdout, flush=True)
+            self.line(" " * indentation + line)
 
     def document(self, text: str) -> None:
         """Preserve document formatting while removing terminal commands."""

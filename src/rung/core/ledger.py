@@ -88,6 +88,10 @@ def artifact_issues(root: Path, artifacts: list[str]) -> list[str]:
     return issues
 
 
+def report_artifact(report: str, artifacts: list[str]) -> str | None:
+    return next((artifact for artifact in artifacts if artifact.startswith(f"{report} sha256:")), None)
+
+
 def inputs_digest(files: dict[str, str]) -> str:
     """One digest over every (path, content digest) pair, in sorted order."""
     h = hashlib.sha256()
@@ -294,7 +298,11 @@ class View:
             changed.append("(the check's definition in rung.toml)")
         if context is not None and entry.get("context", "") != context:
             changed.append(f"(verified against {entry.get('context') or 'no base'}, not {context or 'no base'})")
-        if artifacts := entry.get("evidence"):
+        artifacts = entry.get("evidence", [])
+        report = entry.get("details", {}).get("report")
+        if report and not report_artifact(report, artifacts):
+            changed.append("(the evidence page is outside this receipt; run the check again)")
+        if artifacts:
             changed += artifact_issues(self.root, artifacts)
         today = datetime.now(UTC)
         if (until := entry.get("valid_until")) and today.date().isoformat() > until:

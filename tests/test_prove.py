@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 
@@ -155,12 +154,25 @@ def test_other_runners_are_judged_by_the_whole_run(repo: Path) -> None:
 def test_pytest_commands_are_recognised() -> None:
     assert prove.runs_pytest(["uv", "run", "pytest", "-q"])
     assert prove.runs_pytest(["/venv/bin/python", "-m", "pytest"])
+    assert prove.runs_pytest(["/venv/bin/python", "-Bm", "pytest"])
+    assert prove.runs_pytest(["env", "NAME=value", "python", "-X", "utf8", "-mpytest"])
     assert prove.runs_pytest([".venv/bin/pytest"])
     assert not prove.runs_pytest(["npx", "vitest", "run"])
     assert not prove.runs_pytest(["python", "-m", "unittest"])
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="requires the Node test runner")
+def test_proof_uses_exact_workspace_name_at_base(repo: Path) -> None:
+    for name, implementation in ((" lead", FIXED), ("lead", BUGGY)):
+        (repo / name).mkdir()
+        (repo / name / "money.py").write_text(implementation)
+    commit_all(repo, "different sibling implementations")
+    run_git(repo, "switch", "-qc", "fix")
+    workspace = repo / " lead"
+    (workspace / "test_money.py").write_text(TEST)
+    result = prove.prove(workspace, f"{sys.executable} -m pytest -q", "main")
+    assert result.verdict == "fail" and "pass without the fix" in result.summary
+
+
 @pytest.mark.parametrize("existing", [False, True])
 def test_node_proof_distinguishes_a_real_regression_from_a_vacuous_case(repo, existing):
     app = repo / "app.cjs"

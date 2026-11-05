@@ -13,6 +13,7 @@ import hashlib
 import shlex
 import shutil
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from rung.analysis.survey import Inspection
 from rung.checks import runner
@@ -137,7 +138,12 @@ def detected_checks(info: Inspection) -> list[tuple[str, Check]]:
     return found
 
 
-def plan(info: Inspection, existing: set[str] | None = None) -> list[Recommendation]:
+def plan(
+    info: Inspection,
+    existing: set[str] | None = None,
+    *,
+    paths: set[str] | None = None,
+) -> list[Recommendation]:
     """Recommendations for a surveyed repository, skipping check ids that already exist."""
     existing = existing or set()
     recs: list[Recommendation] = []
@@ -163,10 +169,20 @@ def plan(info: Inspection, existing: set[str] | None = None) -> list[Recommendat
             )
         )
 
-    if first := next((p for p in info.projects if p.test_command), None):
-        argv = ["rung", "prove", first.test_command]
-        if first.path != ".":
-            argv += ["--cwd", first.path]
+    suites = [p for p in info.projects if p.test_command]
+    if paths is None:
+        suites = suites[:1]
+    else:
+        nested_first = sorted(suites, key=lambda p: len(Path(p.path).parts), reverse=True)
+        selected = set()
+        for path in paths:
+            if project := next((p for p in nested_first if Path(path).is_relative_to(p.path)), None):
+                selected.add(project.path)
+        suites = [p for p in suites if p.path in selected]
+    for project in suites:
+        argv = ["rung", "prove", project.test_command]
+        if project.path != ".":
+            argv += ["--cwd", project.path]
         recs.append(
             Recommendation(
                 "tests",

@@ -1,5 +1,8 @@
 # Contributing
 
+Install uv and Node.js 20 or later to run the complete suite. The Node regression proof tests
+exercise the actual built-in test runner.
+
 ```bash
 uv sync --locked
 uv run --locked pytest -q --cov

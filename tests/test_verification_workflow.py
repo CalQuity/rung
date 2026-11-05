@@ -6,6 +6,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 from rung import cli
 from rung.checks import prove
 from rung.core import ledger
@@ -49,6 +51,39 @@ def test_workspace_preview_keeps_each_runner_and_shared_inputs(repo, capsys) -> 
     checks = [check for check in json.loads(capsys.readouterr().out)["checks"] if check["kind"] == "command"]
     assert {check["options"]["run"] for check in checks} == {"python -m pytest", "pnpm test"}
     assert all(check["covers"] == [] and check["options"]["cwd"] == "packages/app" for check in checks)
+
+
+def test_change_plan_recommends_proof_in_the_changed_workspace(repo, capsys) -> None:
+    (repo / "go").mkdir()
+    (repo / "go" / "go.mod").write_text("module fixture\n")
+    (repo / "py").mkdir()
+    (repo / "py" / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+    assert rung(repo, "plan", "--path", "py/app.py", "--json") == 0
+    recommendations = json.loads(capsys.readouterr().out)["plan"]
+    assert [r["command"] for r in recommendations if r["command"].startswith("rung prove ")] == [
+        "rung prove 'python -m pytest' --cwd py"
+    ]
+
+
+def test_inferred_cargo_checks_require_a_lockfile_and_a_passing_case(repo, monkeypatch, capsys) -> None:
+    import os
+
+    bin_dir = repo.parent / "bin"
+    bin_dir.mkdir()
+    cargo = bin_dir / "cargo"
+    cargo.write_text("#!/bin/sh\nprintf 'test result: ok. %s passed; 0 failed\\n' \"$FIXTURE_CASES\"\n")
+    cargo.chmod(0o755)
+    monkeypatch.setenv("PATH", os.pathsep.join((str(bin_dir), os.environ["PATH"])))
+    (repo / "Cargo.toml").write_text('[package]\nname = "fixture"\nversion = "0.1.0"\n')
+    assert rung(repo, "init", "--no-drafts", "--no-agents") == 0
+    capsys.readouterr()
+    assert rung(repo, "doctor", "--strict", "--json") == 1
+    assert any("cargo generate-lockfile" in row["detail"] for row in json.loads(capsys.readouterr().out))
+    (repo / "Cargo.lock").touch()
+    for cases, exit_code in (("0", 1), ("1", 0)):
+        monkeypatch.setenv("FIXTURE_CASES", cases)
+        assert rung(repo, "check", "tests", "--json") == exit_code
+        assert json.loads(capsys.readouterr().out)["results"][0]["verdict"] == ("fail" if exit_code else "pass")
 
 
 def _configure(repo: Path, *, extra: str = "") -> None:
@@ -449,6 +484,38 @@ def test_terminal_wrapping_respects_cjk_cells(capsys):
     lines = capsys.readouterr().out.splitlines()
     assert len(lines) > 1 and all(_width(line) <= 15 for line in lines)
     assert "".join(line.strip() for line in lines) == "検証の状態を詳しく説明します"
+    output.columns = 32
+    path = ".rung/evidence/browser/20261105T091246Z-5a0fe136/" + "検証結果" * 7 + ".png"
+    output.location(path, label="evidence: ")
+    label, *lines = capsys.readouterr().out.splitlines()
+    assert label.strip() == "evidence:" and all(_width(line) <= 32 for line in lines)
+    assert "".join(line.strip() for line in lines) == path
+
+
+@pytest.mark.parametrize(("command", "file"), [
+    ("python3 -Bm verify", "verify.py"),
+    ("env MODE=ci python3 verify.py", "verify.py"),
+    ("node --test verify.js", "verify.js"),
+])  # fmt: skip
+def test_gate_protects_static_wrapped_launchers(repo, capsys, command, file):
+    (repo / file).write_text("original verifier\n")
+    (repo / "rung.toml").write_text(f'[[check]]\nid = "verify"\nkind = "command"\nrun = {json.dumps(command)}\n')
+    commit_all(repo, "trusted baseline")
+    (repo / file).write_text("weakened verifier\n")
+    assert rung(repo, "gate", "--base", "main", "--json") == 1
+    gate = json.loads(capsys.readouterr().out)
+    assert gate["policy_changes"] == [file] and gate["results"] == []
+
+
+def test_gate_protects_pytest_hooks_with_compact_interpreter_flags(repo, capsys):
+    (repo / "rung.toml").write_text(
+        f'[[check]]\nid = "unit"\nkind = "command"\nrun = "{sys.executable} -Bm pytest -q"\n'
+    )
+    commit_all(repo, "trusted baseline")
+    (repo / "conftest.py").write_text("def pytest_sessionstart(session):\n    raise SystemExit(0)\n")
+    assert rung(repo, "gate", "--base", "main", "--json") == 1
+    gate = json.loads(capsys.readouterr().out)
+    assert gate["policy_changes"] == ["conftest.py"] and gate["results"] == []
 
 
 def test_gate_protects_direct_package_script_wrappers(repo, capsys):
@@ -642,12 +709,7 @@ def test_gate_protects_a_symlinked_launcher_and_its_intermediate_links(repo, cap
 
 def test_doctor_and_reuse_inspect_an_uv_delegated_executable(repo, capsys, monkeypatch):
     import os
-    import shutil
 
-    import pytest
-
-    if not shutil.which("uv"):
-        pytest.skip("uv is unavailable")
     bindir = repo.parent / "fixture-bin"
     bindir.mkdir()
     monkeypatch.setenv("PATH", os.pathsep.join(("../fixture-bin", os.environ["PATH"])))
