@@ -1,19 +1,32 @@
 name: rung
 
-# Rung checks its own pull requests with its own action.
+# Rung checks its own pull requests. The merge decision uses the action as reviewed on the base
+# branch, so a pull request cannot relax the gate that judges it. A second job exercises this pull
+# request's own action on a synthetic fixture.
 on:
   pull_request:
+    # `labeled` lets a maintainer approve reviewed policy changes with the base's approval label.
+    types: [opened, synchronize, reopened, labeled]
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
-  rung:
+  gate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out the pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          path: pr
           fetch-depth: 0
+          persist-credentials: false
+      - name: Check out the reviewed base action
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
@@ -28,10 +41,18 @@ jobs:
           go install github.com/zricethezav/gitleaks/v8@v8.30.1
           go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.7.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-      - uses: ./
+      # Policy changes block (the default) unless a maintainer applies the approval label.
+      - uses: ./base
         with:
-          # Exercise this pull request's local action, including changes to Rung policy itself.
-          policy-changes: warn
+          working-directory: pr
+
+  action:
+    # Exercises this pull request's action end to end. It is not the merge decision.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Prepare synthetic evidence fixture
         shell: bash
         env:
@@ -63,5 +84,7 @@ jobs:
         with:
           working-directory: ${{ runner.temp }}/rung-evidence-fixture
           upload-evidence: true
+          # The fixture is its own repository, not this pull request's checkout.
+          pr-head: ""
       - name: Check evidence link in report
         run: grep -Eq 'Download the recordings.*actions/runs/' "$RUNNER_TEMP/rung-report.md"

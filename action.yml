@@ -24,17 +24,27 @@ inputs:
     default: "false"
   policy-paths:
     description: >-
-      More files that decide the gate, space-separated (e.g. a semgrep rules file a scan check uses).
-      rung.toml, LAWS.md, waivers, baselines and gitleaks/semgrep ignore files are always included.
+      More files that decide the gate, space-separated project-relative globs (e.g. a semgrep rules file a
+      scan check uses). rung.toml, LAWS.md, waivers, baselines and gitleaks/semgrep ignore files are always
+      included. Ignored when the base revision's rung.toml sets [gate] policy_paths.
     default: ""
   policy-changes:
     description: >-
       What to do when the pull request edits what decides the gate (rung.toml, LAWS.md, waivers,
       baselines, scanner configs, workflows): "fail" blocks before running checks, "warn" runs anyway.
+      Ignored when the base revision's rung.toml sets [gate] policy_changes. The base [gate]
+      approval_label (default rung-policy-approved), applied by a maintainer, approves policy changes.
     default: "fail"
   require-coverage:
-    description: Space-separated project-relative globs that require an execution check when changed.
+    description: >-
+      Space-separated project-relative globs that require an execution check when changed. Ignored when
+      the base revision's rung.toml sets [gate] require_coverage.
     default: ""
+  pr-head:
+    description: >-
+      The commit the checkout must be, or a merge commit of. The gate blocks otherwise (for example a
+      pull_request_target run that checked out the base). Empty skips the check.
+    default: ${{ github.event.pull_request.head.sha }}
   executor:
     description: Where to run PR checks. Choose local or daytona.
     default: "local"
@@ -82,6 +92,30 @@ runs:
         if [ "$EXECUTOR" = "daytona" ]; then cd "$RUNNER_TEMP"; fi
         uv tool install "${PACKAGE:-$ACTION_PATH}" "${extra[@]}"
 
+    - name: Prepare Bubblewrap for isolated checks
+      if: runner.os == 'Linux' && inputs.executor == 'local'
+      shell: bash
+      run: |
+        # Drafted and `isolate = true` evidence checks run under Bubblewrap on Linux.
+        if ! command -v bwrap > /dev/null && command -v apt-get > /dev/null && sudo -n true 2> /dev/null; then
+          sudo -n apt-get install -y -qq bubblewrap > /dev/null || true
+        fi
+        if ! command -v bwrap > /dev/null; then
+          echo "::notice::Bubblewrap is not installed; isolated evidence checks will report an error."
+          exit 0
+        fi
+        probe() { bwrap --die-with-parent --unshare-all --ro-bind / / --proc /proc --dev /dev /usr/bin/true 2> /dev/null; }
+        if probe; then exit 0; fi
+        # Ubuntu 23.10+ lets AppArmor block unprivileged user namespaces. A GitHub-hosted runner is a
+        # single-use VM, so lifting the restriction there affects only this job.
+        restricted=$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2> /dev/null || echo 0)
+        if [ "$restricted" = "1" ] && [ "$RUNNER_ENVIRONMENT" = "github-hosted" ]; then
+          sudo -n sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+        fi
+        if ! probe; then
+          echo "::notice::Bubblewrap cannot create user namespaces on this runner; isolated evidence checks will report an error. See Rung's README (In CI)."
+        fi
+
     - name: Run checks
       id: check
       shell: bash
@@ -94,6 +128,12 @@ runs:
         REQUIRE_COVERAGE: ${{ inputs.require-coverage }}
         EXECUTOR: ${{ inputs.executor }}
         SNAPSHOT: ${{ inputs.daytona-snapshot }}
+        PR_HEAD: ${{ inputs.pr-head }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        EVENT_ACTION: ${{ github.event.action }}
+        EVENT_LABEL: ${{ github.event.label.name }}
+        REPO: ${{ github.repository }}
+        LABEL_TOKEN: ${{ github.token }}
       run: |
         case "$POLICY_CHANGES" in
           fail|warn) ;;
@@ -117,16 +157,30 @@ runs:
           read -ra coverage <<< "$REQUIRE_COVERAGE"
           for path in "${coverage[@]}"; do args+=("--require-coverage=$path"); done
           if [ "$POLICY_CHANGES" = "warn" ]; then args+=(--allow-policy-changes); fi
+          if [ -n "$PR_HEAD" ]; then args+=("--pr-head=$PR_HEAD"); fi
+          # Approval counts only on the run a maintainer starts by applying the label, so a later push
+          # needs a fresh approval. The label must still be on the pull request (a re-run of an old run
+          # after the label was removed does not count). Rung compares it with the base's approval_label.
+          if [ "$EVENT_ACTION" = "labeled" ] && [ -n "$EVENT_LABEL" ] && [ -n "$PR_NUMBER" ]; then
+            if GH_TOKEN="$LABEL_TOKEN" gh api "repos/$REPO/issues/$PR_NUMBER/labels" --paginate --jq '.[].name' \
+              2> /dev/null | grep -qxF -- "$EVENT_LABEL"; then
+              args+=("--pr-label=$EVENT_LABEL")
+            else
+              echo "Could not confirm the applied label through the GitHub API; policy approval is not applied." >&2
+            fi
+          fi
           if [ "$EXECUTOR" = "daytona" ]; then
             args+=(--executor daytona "--daytona-snapshot=$SNAPSHOT")
           fi
         fi
         read -ra ids <<< "$CHECKS"
-        # Repository commands do not need GitHub's file-command channels or step credentials.
+        # Hide step credentials and file-command paths from repository commands. This avoids
+        # accidental use only: in local mode, PR code runs as the runner user and can still reach the
+        # runner's files and processes. The pass/fail decision is this step's own exit code below.
         if (
           unset GITHUB_ENV GITHUB_PATH GITHUB_OUTPUT GITHUB_STEP_SUMMARY GITHUB_STATE
           unset ACTIONS_RUNTIME_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL
-          unset GH_TOKEN GITHUB_TOKEN
+          unset GH_TOKEN GITHUB_TOKEN LABEL_TOKEN
           if [ "$EXECUTOR" != "daytona" ]; then unset DAYTONA_API_KEY; fi
           rung "$command" "${args[@]}" -- "${ids[@]}"
         ) > "$RUNNER_TEMP/rung-gate.txt" 2>&1; then
@@ -140,9 +194,16 @@ runs:
         printf '::%s::\n' "$token"
         if [ "$code" -eq 0 ]; then echo "passed=true" >> "$GITHUB_OUTPUT"; else echo "passed=false" >> "$GITHUB_OUTPUT"; fi
         echo "code=$code" >> "$GITHUB_OUTPUT"
+        # Fail here, in the step that ran the gate, rather than trusting a later step.
+        if [ "$code" -ne 0 ]; then
+          echo "Rung gate failed (exit $code). See the output above."
+          exit "$code"
+        fi
 
+    # The steps below run after repository code. They publish the result; they never decide it.
     - name: Reject symlinks in evidence before uploading
-      if: inputs.upload-evidence == 'true'
+      id: symlinks
+      if: always() && inputs.upload-evidence == 'true' && steps.check.outcome != 'skipped'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: |
@@ -157,7 +218,7 @@ runs:
 
     - name: Upload evidence
       id: evidence
-      if: inputs.upload-evidence == 'true'
+      if: always() && inputs.upload-evidence == 'true' && steps.symlinks.outcome == 'success'
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: rung-evidence
@@ -166,6 +227,8 @@ runs:
         include-hidden-files: true
 
     - name: Write report
+      id: report
+      if: always() && steps.check.outcome != 'skipped'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
@@ -189,7 +252,7 @@ runs:
         cat "$RUNNER_TEMP/rung-report.md" >> "$GITHUB_STEP_SUMMARY"
 
     - name: Post or update the pull request comment
-      if: inputs.comment == 'true' && github.event_name == 'pull_request'
+      if: always() && inputs.comment == 'true' && github.event_name == 'pull_request' && steps.report.outcome == 'success'
       # A comment that cannot be posted (a forked PR's read-only token) must not fail the gate.
       continue-on-error: true
       shell: bash
@@ -206,12 +269,3 @@ runs:
         else
           gh pr comment "$PR" --repo "$REPO" --body-file "$RUNNER_TEMP/rung-report.md"
         fi
-
-    - name: Gate
-      if: steps.check.outputs.passed != 'true'
-      shell: bash
-      env:
-        CODE: ${{ steps.check.outputs.code }}
-      run: |
-        echo "Rung gate failed (exit $CODE). See the run output above."
-        exit 1
