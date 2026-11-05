@@ -280,8 +280,6 @@ class View:
             return Status(check_id, "never", None, [])
         if "invalid" in entry:
             return Status(check_id, "stale", entry, [CORRUPT])
-        if entry.get("verdict") != "pass":
-            return Status(check_id, "failing", entry, [])
         changed: list[str] = []
         now = snapshot(self.root, covers) | snapshot(self.root, specs)
         inputs = entry.get("inputs", {})
@@ -314,4 +312,5 @@ class View:
                 at = today - timedelta(days=max_age_days + 1)
             if today - at > timedelta(days=max_age_days):
                 changed.append(f"(older than {max_age_days} day(s); its data source changes over time)")
-        return Status(check_id, "stale" if changed else "fresh", entry, changed)
+        state = "stale" if changed else "fresh" if entry.get("verdict") == "pass" else "failing"
+        return Status(check_id, state, entry, changed)

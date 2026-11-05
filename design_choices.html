@@ -90,20 +90,20 @@ and failure cases in the <a href="docs/RUBRIC.md">evaluation rubric</a>.</p>
 their own review. Review I ran the locked contributor workflow to completion: 375 passed, zero
 skipped, and 85% coverage. The previous provisional scores lacked a completed contributor run.</p>
 <table>
-<thead><tr><th scope="col">Dimension</th><th scope="col">Review F</th><th scope="col">Review G</th><th scope="col">Review H</th><th scope="col">Review I</th><th scope="col">Review K</th><th scope="col">Review L</th><th scope="col">Review M</th><th scope="col">Review N</th></tr></thead>
+<thead><tr><th scope="col">Dimension</th><th scope="col">Review F</th><th scope="col">Review G</th><th scope="col">Review H</th><th scope="col">Review I</th><th scope="col">Review K</th><th scope="col">Review L</th><th scope="col">Review M</th><th scope="col">Review N</th><th scope="col">Review O</th></tr></thead>
 <tbody>
-<tr><td>First run and CLI</td><td>7</td><td>8</td><td>7</td><td>8</td><td>9</td><td>8</td><td>9</td><td>9</td></tr>
-<tr><td>Project fit</td><td>7</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td><td>9</td></tr>
-<tr><td>Development lifecycle</td><td>7</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td><td>9</td></tr>
-<tr><td>Check quality</td><td>7</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td><td>7</td><td>9</td></tr>
-<tr><td>Evidence integrity</td><td>6</td><td>8</td><td>8</td><td>7</td><td>9</td><td>7</td><td>8</td><td>9</td></tr>
-<tr><td>Safe adoption and execution</td><td>6</td><td>7</td><td>6</td><td>7</td><td>7</td><td>6</td><td>5</td><td>7</td></tr>
-<tr><td>Agent and CI integration</td><td>5</td><td>7</td><td>6</td><td>6</td><td>7</td><td>7</td><td>8</td><td>9</td></tr>
-<tr><td>Agent-operated workflow</td><td>7</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td><td>9</td><td>9</td></tr>
-<tr><td>Terminal output and accessibility</td><td>7</td><td>8</td><td>8</td><td>7</td><td>9</td><td>8</td><td>7</td><td>8</td></tr>
-<tr><td>Open-source operability</td><td>8</td><td>8, provisional</td><td>8, provisional</td><td>9</td><td>9</td><td>9</td><td>9</td><td>9</td></tr>
-<tr><td>Value beyond model prompting</td><td>8</td><td>9</td><td>9</td><td>9</td><td>9</td><td>9</td><td>7</td><td>9</td></tr>
-<tr><td>Implementation language and distribution</td><td>8</td><td>9</td><td>8</td><td>8</td><td>9</td><td>9</td><td>8</td><td>9</td></tr>
+<tr><td>First run and CLI</td><td>7</td><td>8</td><td>7</td><td>8</td><td>9</td><td>8</td><td>9</td><td>9</td><td>9</td></tr>
+<tr><td>Project fit</td><td>7</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td><td>9</td><td>9</td></tr>
+<tr><td>Development lifecycle</td><td>7</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td><td>9</td><td>9</td></tr>
+<tr><td>Check quality</td><td>7</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td><td>7</td><td>9</td><td>8</td></tr>
+<tr><td>Evidence integrity</td><td>6</td><td>8</td><td>8</td><td>7</td><td>9</td><td>7</td><td>8</td><td>9</td><td>8</td></tr>
+<tr><td>Safe adoption and execution</td><td>6</td><td>7</td><td>6</td><td>7</td><td>7</td><td>6</td><td>5</td><td>7</td><td>8</td></tr>
+<tr><td>Agent and CI integration</td><td>5</td><td>7</td><td>6</td><td>6</td><td>7</td><td>7</td><td>8</td><td>9</td><td>9</td></tr>
+<tr><td>Agent-operated workflow</td><td>7</td><td>8</td><td>8</td><td>8</td><td>8</td><td>8</td><td>9</td><td>9</td><td>9</td></tr>
+<tr><td>Terminal output and accessibility</td><td>7</td><td>8</td><td>8</td><td>7</td><td>9</td><td>8</td><td>7</td><td>8</td><td>8</td></tr>
+<tr><td>Open-source operability</td><td>8</td><td>8, provisional</td><td>8, provisional</td><td>9</td><td>9</td><td>9</td><td>9</td><td>9</td><td>9</td></tr>
+<tr><td>Value beyond model prompting</td><td>8</td><td>9</td><td>9</td><td>9</td><td>9</td><td>9</td><td>7</td><td>9</td><td>9</td></tr>
+<tr><td>Implementation language and distribution</td><td>8</td><td>9</td><td>8</td><td>8</td><td>9</td><td>9</td><td>8</td><td>9</td><td>9</td></tr>
 </tbody>
 </table>
 <h3>Changes from Review I</h3>
@@ -206,6 +206,18 @@ and environment wrappers. Arbitrary helper resolution still depends on the owner
 <li>In narrow terminals the replay label gets a separate row when needed. The command remains
 copyable. Python frames render the source path and line number together. JSON retains the
 original diagnostic and replay command.</li>
+</ul>
+<h3>Changes from Review O</h3>
+<p>The reviewer passed 402 contributor tests at 85% coverage and verified all seven hosted
+checks. Scoped custom policy behaved as intended. Three changes address the four scored gaps.</p>
+<ul>
+<li>Python unittest, Go tests, and Node tests using the default reporter require a passing
+case. Empty discovery and suites that only skip tests cannot satisfy verification.</li>
+<li>Freshness compares the recorded inputs for failures as well as passes. A failure on
+older code stays in the report with a stale receipt and its changed paths.</li>
+<li>Narrow terminal output presents assertions before the evidence summary. It prints the
+source location and HTML report path intact so copying preserves the complete values.
+The terminal can wrap long paths visually. JSON still includes the individual artifacts.</li>
 </ul>
 <h2>References</h2>
 <ul>

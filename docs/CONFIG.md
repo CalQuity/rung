@@ -80,6 +80,9 @@ required coverage.
 
 Recognized pytest test runs also require at least one passing case in a fresh JUnit report.
 For collection-only commands, the merge gate still requires passing cases.
+Python's `-m unittest`, Go tests, and direct Node tests with the default reporter
+also require at least one passing case. This catches empty test discovery even when the
+runner exits successfully.
 Inferred Rust tests use `cargo test --locked`. For a new project, run
 `cargo generate-lockfile` and review the lockfile before checking. Standard Cargo test runs
 require at least one passing case.

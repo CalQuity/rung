@@ -542,8 +542,37 @@ def test_narrow_replay_command_and_traceback_preserve_the_copyable_location(caps
     _print_result(result, output)
     lines = capsys.readouterr().out.splitlines()
     assert any(line.strip() == command for line in lines)
-    assert any("drive.py:17" in line for line in lines)
-    assert all(_width(line) <= 32 for line in lines)
+    source = "/tmp/project-with-long-name/drive.py:17"
+    assert any(line.strip() == source for line in lines)
+    assert all(_width(line) <= 32 for line in lines if source not in line)
+    page = ".rung/evidence/browser/20261105T091246Z-5a0fe136/index.html"
+    capture = ".rung/evidence/browser/20261105T091246Z-5a0fe136/seed-101/refund.png"
+    outcome = Outcome("fail", "refund did not match", [f"evidence: {capture}", "expected 32, observed 27"],
+                      {page: "hash", capture: "hash"}, details={"report": page})  # fmt: skip
+    _print_result(Result(result.check, outcome), output)
+    text = capsys.readouterr().out
+    assert text.index("expected 32, observed 27") < text.index("Report:")
+    assert page in text and capture not in text
+
+
+def test_gate_requires_unittest_to_run_a_passing_case(repo, capsys):
+    app = repo / "app"
+    app.mkdir()
+    (app / "settings.py").write_text("refund_limit = 100\n")
+    (repo / "rung.toml").write_text(
+        f'[[check]]\nid = "unit"\nkind = "command"\nrun = "{sys.executable} -B -m unittest -q"\nverifies = ["app/**"]\n'
+    )
+    commit_all(repo, "declared unittest scope")
+    (app / "settings.py").write_text("refund_limit = 50\n")
+    args = ("gate", "--base", "main", "--require-coverage", "app/**", "--json")
+    assert rung(repo, *args) == 1
+    assert "no passing test cases" in json.loads(capsys.readouterr().out)["results"][0]["summary"]
+    (repo / "test_app.py").write_text(
+        "import unittest\nfrom app.settings import refund_limit\n"
+        "class AppTests(unittest.TestCase):\n    def test_limit(self):\n        self.assertEqual(refund_limit, 50)\n"
+    )
+    assert rung(repo, *args) == 0
+    assert json.loads(capsys.readouterr().out)["passed"]
 
 
 @pytest.mark.parametrize(("command", "file"), [

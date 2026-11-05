@@ -244,6 +244,16 @@ def test_modified_evidence_page_stales_the_receipt_and_hides_the_link(shop: Path
     assert data["runtime"]["report"] == ""
 
 
+def test_previous_failure_is_stale_after_editing_covered_inputs(shop: Path) -> None:
+    (shop / "bad_seeds.txt").write_text("101\n")
+    assert rung(shop, "check", "runtime") == 1
+    assert report.build(config.load(shop))["checks"][0]["state"] == "failing"
+    drive = shop / "drive.py"
+    drive.write_text(drive.read_text() + "\n# changed since the failure\n")
+    data = report.build(config.load(shop))["checks"][0]
+    assert data["state"] == "stale" and "drive.py" in data["changed"]
+
+
 def test_captions_follow_the_step_names() -> None:
     assert evidence_page.caption("03-coupon-applied-total-32.png") == "3. coupon applied total 32"
     assert evidence_page.caption("home.png") == "home"

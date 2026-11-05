@@ -44,19 +44,31 @@ def _print_result(result: runner.Result, out: Output) -> None:
     else:
         out.line(f"{out.badge(o.verdict, VERDICT_STYLE, 6)}{out.style(label, 'bold')}")
     out.detail(redact(o.summary))
+    report_path = str(o.details.get("report") or "")
+    compact_evidence = out.columns and out.columns < 60 and report_path
     for line in redact_lines(o.lines):
-        if not (o.details.get("reproduce") and line.startswith("reproduce: ")):
-            label, separator, path = line.partition(": ")
-            location = re.match(r'^\s*File "([^"]+)", line (\d+)(?:, in (.*))?$', line)
-            if out.columns and location:
-                file, number, frame = location.groups()
-                out.location(f"{file}:{number}", label="at ")
-                if frame and frame != "<module>":
-                    out.detail(f"in {frame}", indent=8)
-            elif separator and (path in o.evidence or path == o.details.get("report")):
-                out.location(path, label=label + separator)
-            else:
-                out.detail(line)
+        if o.details.get("reproduce") and line.startswith("reproduce: "):
+            continue
+        if compact_evidence and line.startswith(("evidence: ", "evidence page: ")):
+            continue
+        label, separator, path = line.partition(": ")
+        location = re.match(r'^\s*File "([^"]+)", line (\d+)(?:, in (.*))?$', line)
+        if out.columns and location:
+            file, number, frame = location.groups()
+            source = Path(file)
+            if source.is_relative_to(Path.cwd()):
+                source = source.relative_to(Path.cwd())
+            out.command(f"{source}:{number}", prefix="at ", indent=6)
+            if frame and frame != "<module>":
+                out.detail(f"in {frame}", indent=8)
+        elif separator and (path in o.evidence or path == report_path):
+            out.location(path, label=label + separator)
+        else:
+            out.detail(line)
+    if compact_evidence:
+        count = len(o.evidence) - (report_path in o.evidence)
+        out.detail(f"Evidence · {count} file(s)", indent=2)
+        out.command(redact(report_path), prefix="Report: ", indent=2)
 
 
 def _result_data(result: runner.Result) -> dict:

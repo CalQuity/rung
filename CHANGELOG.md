@@ -36,6 +36,8 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
   policy paths before the merge gate runs. Use `rung add --specs` to register those files.
 - Runtime evidence receipts include the generated HTML page. Draft acceptance can verify
   that a named assertion catches changes to Python return values or inline browser behavior.
+- Native unittest, Go and Node suites report a verification failure when no test passes.
+  Check status also marks a previous failure stale after its covered inputs change.
 - Scanners distinguish configured finding exit codes from failed analyses. Gitleaks fingerprints
   ignore unstable SARIF column offsets. Review and regenerate Gitleaks baselines and waivers made
   with earlier versions when you migrate.

@@ -21,9 +21,9 @@ from typing import Any, BinaryIO
 
 from rung.checks import prove
 from rung.checks.base import Checker, Context, Outcome
-from rung.core import ledger, proc, sandbox
+from rung.core import launch, ledger, proc, sandbox
 from rung.core.config import Check, ConfigError, managed_path, write_atomic
-from rung.core.redact import redact
+from rung.core.redact import plain_text, redact
 from rung.engines import evidence_page
 
 # A command check that declares no coverage covers the whole project: any change stales it.
@@ -86,6 +86,24 @@ def cargo_test(argv: list[str]) -> bool:
     return args[:1] == ["test"]
 
 
+def _unittest_passed(output: str) -> bool:
+    counts = re.findall(r"^Ran (\d+) tests? in ", output, re.M)
+    summary = re.findall(r"^OK(?: \(([^)]*)\))?$", output, re.M)
+    if not counts or not summary:
+        return False
+    excluded = re.findall(r"(?:skipped|expected failures)=(\d+)", summary[-1])
+    return int(counts[-1]) > sum(map(int, excluded))
+
+
+def _default_node_tests(argv: list[str]) -> bool:
+    return (
+        bool(argv)
+        and Path(argv[0]).name in {"node", "node.exe"}
+        and "--test" in argv
+        and not any(arg.startswith("--test-reporter") for arg in argv)
+    )
+
+
 class CommandChecker(Checker):
     kind = "command"
     summary = "Run a command; exit status 0 passes"
@@ -98,7 +116,27 @@ class CommandChecker(Checker):
         collect_only = "--collect-only" in argv or "--co" in argv
         if prove.runs_pytest(argv) and (ctx.merge_gate or not collect_only):
             return self._run_pytest(ctx, check, argv)
+        cwd = ctx.root / check.get("cwd", ".")
+        inner_argv = argv
+        while inner := launch.delegated(inner_argv, cwd):
+            inner_argv, cwd = inner.argv, inner.cwd
+        tool = Path(inner_argv[0]).name
+        if tool in {"go", "go.exe"} and inner_argv[1:2] == ["test"]:
+            return self._run_go(ctx, check, argv)
         result = _run(ctx, check, argv=argv)
+        if (
+            result.returncode in {0, 5}
+            and launch.python_entrypoint(inner_argv) == ("module", "unittest")
+            and not _unittest_passed(plain_text(result.stdout + "\n" + result.stderr))
+        ):
+            return Outcome("fail", "unittest reported no passing test cases", tail(result))
+        node_suites = [inner_argv, *package_script_commands(cwd, inner_argv)]
+        if (
+            not result.returncode
+            and any(map(_default_node_tests, node_suites))
+            and not re.search(r"^(?:#|\N{INFORMATION SOURCE}) pass [1-9]\d*\s*$", plain_text(result.stdout), re.M)
+        ):
+            return Outcome("fail", "Node reported no passing test cases", tail(result))
         if (
             cargo_test(argv)
             and (ctx.merge_gate or "--no-run" not in argv)
@@ -108,6 +146,32 @@ class CommandChecker(Checker):
             return Outcome("fail", "Cargo reported no passing test cases", tail(result))
         verdict = "pass" if result.returncode == 0 else "fail"
         return Outcome(verdict, f"`{check.require('run')}` exited {result.returncode}", tail(result))
+
+    def _run_go(self, ctx: Context, check: Check, argv: list[str]) -> Outcome:
+        """Count individual test passes, excluding package-level success events."""
+        boundary = argv.index("-args") if "-args" in argv else len(argv)
+        args = argv if "-json" in argv[:boundary] else [*argv[:boundary], "-json", *argv[boundary:]]
+        result = _run(ctx, check, argv=args)
+        passed = 0
+        output = []
+        for line in result.stdout.splitlines():
+            try:
+                event = json.loads(line)
+            except ValueError:
+                output.append(line)
+                continue
+            if not isinstance(event, dict):
+                continue
+            if event.get("Action") == "pass" and event.get("Test"):
+                passed += 1
+            if message := event.get("Output"):
+                output.append(message.rstrip("\n"))
+        result.stdout = "\n".join(output)
+        if result.returncode:
+            return Outcome("fail", f"go test exited {result.returncode}", tail(result))
+        if not passed:
+            return Outcome("fail", "Go reported no passing test cases", tail(result))
+        return Outcome("pass", f"Go passed with {passed} passing test case(s)", tail(result))
 
     def _run_pytest(self, ctx: Context, check: Check, argv: list[str]) -> Outcome:
         """Require a passing test case in a fresh report before trusting an exit of zero."""
@@ -565,6 +629,7 @@ class EvidenceChecker(Checker):
                 "fail",
                 f"the script exited 0, but result.json records failures: {'; '.join(failed[:3])}",
             )
+            run.lines = failure_details(data)
         elif data is not None and "seed" in data and data["seed"] != seed:
             run.verdict, run.summary = "fail", f"result.json reports seed {data['seed']!r}, but Rung passed {seed}"
         elif (run_dir / "result.json").exists() and data is None:
