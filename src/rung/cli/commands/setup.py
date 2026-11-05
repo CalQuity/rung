@@ -99,7 +99,7 @@ def cmd_init(args, out: Output) -> int:
         (root / laws.LAWS_FILE).write_text(laws.TEMPLATE)
 
     langs = ", ".join(f"{k} ({v})" for k, v in list(info.languages.items())[:4]) or "none found"
-    out.line(f"Surveyed {root}")
+    out.line(f"Surveyed {_shown(root)}")
     out.line(f"  languages: {langs}")
     out.line(f"  surfaces:  {', '.join(info.surfaces) or 'none found'}")
     out.line(f"  tests:     {', '.join(info.test_commands) or 'none found'}")
@@ -311,6 +311,14 @@ def cmd_kit(args, out: Output) -> int:
     out.emit(built.to_dict())
     _print_kit(built, out)
     return OK
+
+
+def _shown(root: Path) -> str:
+    """The project as a person would name it: its folder name when run from inside it, else `~/...` or the path."""
+    if root == Path.cwd().resolve():
+        return root.name
+    home = Path.home().resolve()
+    return f"~/{root.relative_to(home)}" if root.is_relative_to(home) else str(root)
 
 
 def _print_plan(recs: list[plan.Recommendation], out: Output) -> None:
