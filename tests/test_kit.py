@@ -75,7 +75,9 @@ def test_a_fresh_part_is_ok_and_empty_parts_say_how_to_fill_them(project: Path, 
     capsys.readouterr()
     assert run(project, "kit", "--json") == 0
     parts = {p["part"]: p for p in json.loads(capsys.readouterr().out)["parts"]}
-    assert parts["tests"]["state"] == "ok"
+    assert parts["tests"]["state"] == "missing"
+    assert parts["tests"]["suggest"].startswith("rung add command tests --run")
+    assert parts["commands"]["state"] == "ok"
     assert parts["app"]["state"] == "missing" and parts["app"]["suggest"] == "rung map"
     assert parts["properties"]["suggest"] == "rung draft property src/core.py"
     assert parts["agents"]["suggest"] == "rung agents --hooks"
@@ -110,7 +112,7 @@ def test_init_json_prints_one_document_with_the_kit(tmp_path: Path, capsys) -> N
     (tmp_path / "app.py").write_text("def main():\n    pass\n")
     assert run(tmp_path, "init", "--provider", "none", "--json") == 0
     data = json.loads(capsys.readouterr().out)
-    assert {p["part"] for p in data["kit"]["parts"]} == {key for key, _, _ in kit.PARTS}
+    assert {p["part"] for p in data["kit"]["parts"]} == {key for key, _, _ in kit.PARTS} - {"commands"}
     assert data["drafted"] == []
 
 

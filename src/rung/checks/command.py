@@ -123,6 +123,9 @@ class CommandChecker(Checker):
         tool = Path(inner_argv[0]).name
         if tool in {"go", "go.exe"} and inner_argv[1:2] == ["test"]:
             return self._run_go(ctx, check, argv)
+        node_suites = [inner_argv, *package_script_commands(cwd, inner_argv)]
+        if any(map(_default_node_tests, node_suites)):
+            return self._run_node(ctx, check, argv)
         result = _run(ctx, check, argv=argv)
         if (
             result.returncode in {0, 5}
@@ -130,13 +133,6 @@ class CommandChecker(Checker):
             and not _unittest_passed(plain_text(result.stdout + "\n" + result.stderr))
         ):
             return Outcome("fail", "unittest reported no passing test cases", tail(result))
-        node_suites = [inner_argv, *package_script_commands(cwd, inner_argv)]
-        if (
-            not result.returncode
-            and any(map(_default_node_tests, node_suites))
-            and not re.search(r"^(?:#|\N{INFORMATION SOURCE}) pass [1-9]\d*\s*$", plain_text(result.stdout), re.M)
-        ):
-            return Outcome("fail", "Node reported no passing test cases", tail(result))
         if (
             cargo_test(argv)
             and (ctx.merge_gate or "--no-run" not in argv)
@@ -146,6 +142,20 @@ class CommandChecker(Checker):
             return Outcome("fail", "Cargo reported no passing test cases", tail(result))
         verdict = "pass" if result.returncode == 0 else "fail"
         return Outcome(verdict, f"`{check.require('run')}` exited {result.returncode}", tail(result))
+
+    def _run_node(self, ctx: Context, check: Check, argv: list[str]) -> Outcome:
+        with tempfile.TemporaryDirectory(prefix="rung-node-cases-") as tmp:
+            report = Path(tmp) / "cases.jsonl"
+            inherited = os.environ if ctx.environment is None else ctx.environment
+            flags = " ".join(json.dumps(flag) for flag in prove.node_reporter_flags(report))
+            options = f"{inherited.get('NODE_OPTIONS', '')} {flags}".strip()
+            result = _run(ctx, check, {"NODE_OPTIONS": options}, argv=argv)
+            if result.returncode:
+                return Outcome("fail", f"Node test command exited {result.returncode}", tail(result))
+            passed = sum(state == "passed" for state in prove.node_outcomes(report, ctx.root.resolve()).values())
+            if not passed:
+                return Outcome("fail", "Node reported no passing test cases", tail(result))
+            return Outcome("pass", f"Node passed with {passed} passing test case(s)", tail(result))
 
     def _run_go(self, ctx: Context, check: Check, argv: list[str]) -> Outcome:
         """Count individual test passes, excluding package-level success events."""

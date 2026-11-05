@@ -21,6 +21,7 @@ from rung.core.config import Check, Config
 PARTS = (
     ("static", "Linters and type checkers", "the mistakes a tool can see without running anything"),
     ("tests", "Tests", "regressions in the behaviour the tests pin down"),
+    ("commands", "Custom checks", "the conditions defined by manually registered commands"),
     ("properties", "Property tests", "inputs nobody thought to write a test for; each must catch planted bugs"),
     ("security", "Security gates", "leaked secrets, vulnerable or invented packages, risky CI"),
     ("app", "Driving the app", "what a user sees, under faults and odd inputs, with the evidence to show it"),
@@ -51,7 +52,7 @@ def part_of(check: Check) -> str:
         return "tests"
     if any(w in name for w in _STATIC_WORDS):
         return "static"
-    return "tests"
+    return "commands"
 
 
 @dataclass
@@ -139,8 +140,14 @@ def _suggestions(info: Inspection, existing: set[str]) -> dict[str, tuple[str, s
     found: dict[str, tuple[str, str]] = {}
     for rec in plan.plan(info, existing):
         part = _PLAN_PART.get(rec.rung)
+        if part == "tests" and not rec.command.startswith("rung add command "):
+            continue
         if part and part not in found and rec.command:
             found[part] = (rec.command, rec.title)
+    found.setdefault(
+        "tests",
+        ("rung add command tests --run '<your test command>'", "No test suite detected. Register your test command."),
+    )
     if info.model_candidates:
         target = info.model_candidates[0].path
         found["properties"] = (f"rung draft property {target}",
@@ -167,6 +174,8 @@ def build(config: Config, info: Inspection) -> Kit:
         detail = s.changed[0] if s.state == "drifted" and s.changed else ""
         by_key[part_of(check)].entries.append(Entry(check.id, check.kind, s.state, detail))
     by_key["agents"].entries = agent_entries(config.root)
+    if not by_key["commands"].entries:
+        parts.remove(by_key["commands"])
     if (entry := map_entry(config.root)) is not None:
         by_key["app"].entries.insert(0, entry)
     for part in parts:

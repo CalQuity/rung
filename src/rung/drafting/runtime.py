@@ -46,6 +46,7 @@ from rung.core.errors import ToolMissing
 from rung.drafting import feature_map, routes
 from rung.drafting.common import FILES, STRINGS, files_of, machine_path_problem, safe_write, schema
 from rung.drafting.providers import Provider
+from rung.engines import mutate
 
 VERIFY_DIR = Path(".rung") / "verify"
 CONTEXT_FILES = (
@@ -370,6 +371,12 @@ def _behavior_variant(source: Path) -> str | None:
         )
         if variant != content:
             return variant
+    if source.suffix in mutate.JS and (variants := mutate.mutants(source, limit=1)):
+        candidate = variants[0]
+        lines = source.read_text().splitlines(keepends=True)
+        line = lines[candidate.line - 1]
+        lines[candidate.line - 1] = candidate.mutated + line[len(line.rstrip("\r\n")) :]
+        return "".join(lines)
     return None
 
 
@@ -470,6 +477,7 @@ def _draft_in_copy(
     checker = EvidenceChecker()
     last_failure = ""
     produced: dict[str, str] = {}
+    round_no = 0
     for round_no in range(1, max_rounds + 1):
         system = guides.load("runtime") + (FORMAT_MAPPED if mapped else FORMAT)
         reply = provider.complete_json(prompt, schema=SCHEMA, system=system, cwd=root)
@@ -579,6 +587,11 @@ def _draft_in_copy(
                     "assertion with the expected and observed behavior, including when the observed result is wrong."
                 )
                 continue
+            if (guarded or require_source) and control.startswith("startup control"):
+                last_failure = (
+                    "the drive passed a startup control but needs a behavioral assertion control before registration"
+                )
+                break
             sensitivity = f"detected {control}"
         elif guarded or require_source:
             last_failure = sensitivity
@@ -596,4 +609,4 @@ def _draft_in_copy(
     if produced:
         files = safe_write(managed_path(root, Path(".rung/cache/drafts") / check_id), produced)
     why = f"; the last run: {last_failure}" if last_failure else ""
-    return RuntimeDraft(False, f"no passing verification script after {max_rounds} rounds{why}", files, max_rounds)
+    return RuntimeDraft(False, f"no passing verification script after {round_no} round(s){why}", files, round_no)

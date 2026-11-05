@@ -38,6 +38,10 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
   that a named assertion catches changes to Python return values or inline browser behavior.
 - Native unittest, Go and Node suites report a verification failure when no test passes.
   Check status also marks a previous failure stale after its covered inputs change.
+- Node checks exclude file-only success from passing test cases. The kit lists generic
+  custom commands separately from tests.
+- Runtime draft registration requires a behavioral assertion control. Startup-only
+  candidates remain available for manual review.
 - Scanners distinguish configured finding exit codes from failed analyses. Gitleaks fingerprints
   ignore unstable SARIF column offsets. Review and regenerate Gitleaks baselines and waivers made
   with earlier versions when you migrate.

@@ -96,7 +96,7 @@ def _runs_node(argv: list[str]) -> bool:
     return Path(argv[0]).name in {"node", "node.exe"} and "--test" in argv
 
 
-def _node_outcomes(path: Path, root: Path) -> dict[tuple[str, str], str]:
+def node_outcomes(path: Path, root: Path) -> dict[tuple[str, str], str]:
     try:
         records = [json.loads(line) for line in path.read_text().splitlines()]
     except (OSError, ValueError):
@@ -109,6 +109,12 @@ def _node_outcomes(path: Path, root: Path) -> dict[tuple[str, str], str]:
         key = (source.relative_to(root).as_posix(), case["name"])
         outcomes[key] = "error" if key in outcomes else case["status"]
     return outcomes
+
+
+def node_reporter_flags(report: Path) -> list[str]:
+    reporter = Path(__file__).with_name("node_reporter.mjs").resolve().as_uri()
+    return ["--test-reporter=spec", f"--test-reporter={reporter}", "--test-reporter-destination=stdout",
+            f"--test-reporter-destination={report}"]  # fmt: skip
 
 
 def python_tests(source: str) -> dict[str, str]:
@@ -258,12 +264,7 @@ def prove(
         report = {side: Path(tmp) / f"{side}{suffix}" for side in ("base", "head")}
         extra = {side: [f"--junitxml={path}"] if wanted else [] for side, path in report.items()}
         if node_run:
-            reporter = Path(__file__).with_name("node_reporter.mjs").resolve().as_uri()
-            extra = {
-                side: ["--test-reporter=spec", f"--test-reporter={reporter}", "--test-reporter-destination=stdout",
-                       f"--test-reporter-destination={path}"]
-                for side, path in report.items()
-            }  # fmt: skip
+            extra = {side: node_reporter_flags(path) for side, path in report.items()}
         with git.worktree(root, mb) as tree:
             if (tree / cwd).resolve() != tree.resolve() / cwd:
                 raise RungError(f"the merge base contains a symlink in the working directory: {cwd}")
@@ -275,12 +276,12 @@ def prove(
                 shutil.copy2(root / rel, dest)
             base_argv = [argv[0], *extra["base"], *argv[1:]] if node_run else argv + extra["base"]
             base_run = _run(base_argv, tree / cwd, timeout)
-            base_node = _node_outcomes(report["base"], tree.resolve()) if node_run else {}
+            base_node = node_outcomes(report["base"], tree.resolve()) if node_run else {}
         head_argv = [argv[0], *extra["head"], *argv[1:]] if node_run else argv + extra["head"]
         head_run = _run(head_argv, root / cwd, timeout)
         cases = per_test(wanted, junit_outcomes(report["base"]), junit_outcomes(report["head"])) if wanted else []
         if node_run:
-            head_node = _node_outcomes(report["head"], root)
+            head_node = node_outcomes(report["head"], root)
             for file in new_files:
                 found = {key for key in head_node if key[0] == file}
                 named.update(found or {(file, "(no reported cases)")})

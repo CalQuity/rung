@@ -575,6 +575,21 @@ def test_gate_requires_unittest_to_run_a_passing_case(repo, capsys):
     assert json.loads(capsys.readouterr().out)["passed"]
 
 
+def test_node_file_with_no_cases_cannot_pass_a_check(repo, capsys):
+    (repo / "package.json").write_text('{"scripts":{"test":"node --test cases.mjs"}}')
+    (repo / "rung.toml").write_text(
+        '[[check]]\nid = "direct"\nkind = "command"\nrun = "node --test cases.mjs"\n'
+        '[[check]]\nid = "script"\nkind = "command"\nrun = "npm test"\n'
+    )
+    case = repo / "cases.mjs"
+    case.write_text("export const loaded = true;\n")
+    assert rung(repo, "check", "--json") == 1
+    assert [r["verdict"] for r in json.loads(capsys.readouterr().out)["results"]] == ["fail", "fail"]
+    case.write_text('import test from "node:test";\ntest("cases.mjs", () => {});\n')
+    assert rung(repo, "check", "--json") == 0
+    assert all("1 passing test case" in r["summary"] for r in json.loads(capsys.readouterr().out)["results"])
+
+
 @pytest.mark.parametrize(("command", "file"), [
     ("python3 -Bm verify", "verify.py"),
     ("env MODE=ci python3 verify.py", "verify.py"),

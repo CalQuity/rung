@@ -354,12 +354,14 @@ def test_draft_with_findings_registers_the_check_and_fails(tmp_path: Path, monke
     from rung.drafting import providers
 
     (tmp_path / "rung.toml").write_text('[project]\nname = "s"\n\n[llm]\nprovider = "none"\n')
-    (tmp_path / "app.py").write_text("print('app fixture')\n")
-    reply = _drive(fail=("state",))
+    (tmp_path / "app.py").write_text(
+        "def observation(scenario):\n    return 'wrong' if scenario == 'state' else 'app fixture'\n"
+    )
+    reply = _drive()
     reply["sources"] = ["app.py"]
-    reply["files"][0]["content"] = (
-        "import subprocess, sys\nsubprocess.run([sys.executable, 'app.py'], check=True)\n"
-        + reply["files"][0]["content"]
+    script = reply["files"][0]
+    script["content"] = "import runpy\nobserve = runpy.run_path('app.py')['observation']\n" + script["content"].replace(
+        "cat not in FAIL", "observe(cat) == 'app fixture'"
     )
     monkeypatch.setattr(providers, "get", lambda llm: ScriptedProvider([reply]))
     monkeypatch.setattr(draft_cmd.agents, "install_verify_skill", lambda root, name, cid: root / "SKILL.md")
@@ -439,6 +441,36 @@ def test_draft_requires_an_assertion_to_catch_a_behavior_mutation(tmp_path: Path
     )
     accepted = runtime.draft_runtime(ScriptedProvider([real]), tmp_path, info, focus=[], max_rounds=1)
     assert accepted.ok and "detected behavior mutation" in accepted.sensitivity
+
+
+def test_runtime_draft_holds_startup_only_javascript(tmp_path: Path) -> None:
+    app = tmp_path / "app.js"
+    app.write_text("exports.answer = () => 42;\n")
+    startup = _drive()
+    startup["sources"] = ["app.js"]
+    startup["files"][0]["content"] = (
+        "import subprocess\nsubprocess.run(['node', 'app.js'], check=True)\n" + startup["files"][0]["content"]
+    )
+    result = runtime.draft_runtime(
+        ScriptedProvider([startup]), tmp_path, survey.survey(tmp_path), focus=[], max_rounds=1, require_source=True
+    )
+    assert not result.ok and "needs a behavioral assertion control" in result.message
+
+
+def test_runtime_draft_can_catch_a_javascript_arithmetic_mutation(tmp_path: Path) -> None:
+    (tmp_path / "app.js").write_text("exports.total = (amount) => amount + 1;\n")
+    reply = _drive()
+    reply["sources"] = ["app.js"]
+    code = reply["files"][0]["content"]
+    reply["files"][0]["content"] = (
+        "import subprocess\n"
+        "actual = subprocess.check_output(['node', '-p', \"require('./app.js').total(1)\"], text=True).strip()\n"
+        + code.replace("ok = cat", "ok = actual == '2' and cat")
+    )
+    result = runtime.draft_runtime(
+        ScriptedProvider([reply]), tmp_path, survey.survey(tmp_path), focus=[], max_rounds=1, require_source=True
+    )
+    assert result.ok and "detected behavior mutation" in result.sensitivity
 
 
 def test_drafted_drive_replay_retains_evidence_with_the_write_guard(tmp_path, monkeypatch, capsys):

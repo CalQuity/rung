@@ -56,6 +56,7 @@ jobs:
           tar -xzf actionlint.tar.gz actionlint
       - run: ./actionlint -color
       - run: uv run --no-project --with pyyaml python scripts/shellcheck_action.py
+      - run: uv run --no-project --with pyyaml python scripts/smoke_action_comment.py
 
   formal:
     # Runs the example end to end with the real TLC model checker and Lean kernel.

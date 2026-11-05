@@ -32,3 +32,36 @@ jobs:
         with:
           # Exercise this pull request's local action, including changes to Rung policy itself.
           policy-changes: warn
+      - name: Prepare synthetic evidence fixture
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          fixture="$RUNNER_TEMP/rung-evidence-fixture"
+          mkdir "$fixture"
+          cd "$fixture"
+          git init -qb main
+          cat > rung.toml <<'EOF'
+          [[check]]
+          id = "fixture"
+          kind = "evidence"
+          run = "python3 drive.py"
+          require = [".txt"]
+          EOF
+          cat > drive.py <<'PY'
+          import os
+          from pathlib import Path
+          evidence = Path(os.environ["RUNG_EVIDENCE_DIR"])
+          (evidence / "synthetic.txt").write_text("Synthetic Rung CI fixture\n")
+          PY
+          printf '.rung/\n' > .gitignore
+          git add .
+          git -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm baseline
+          git update-ref "refs/remotes/origin/$BASE_REF" HEAD
+      - name: Run gate and upload synthetic evidence
+        uses: ./
+        with:
+          working-directory: ${{ runner.temp }}/rung-evidence-fixture
+          upload-evidence: true
+      - name: Check evidence link in report
+        run: grep -Eq 'Download the recordings.*actions/runs/' "$RUNNER_TEMP/rung-report.md"

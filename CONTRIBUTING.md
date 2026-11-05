@@ -15,6 +15,8 @@ uv build
 Run `uv run --locked pre-commit install` to check lint, format and types on each commit.
 For workflow changes, run `actionlint`. For composite action changes, run
 `uv run --no-project --with pyyaml python scripts/shellcheck_action.py`.
+To exercise the optional PR comment branch locally, run
+`uv run --no-project --with pyyaml python scripts/smoke_action_comment.py`.
 `uv build` writes a wheel and source archive to `dist/`. To smoke-test the wheel in a
 separate tool environment, use `uv tool run --from WHEEL_PATH rung --version` with the
 wheel path printed by the build.
