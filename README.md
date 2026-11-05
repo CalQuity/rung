@@ -10,12 +10,12 @@ skills that make your coding agent use the kit, and records every result in a le
 exact bytes it checked. A result expires the moment those bytes change, and a pull request is
 blocked only on what it introduces.
 
-![A real rung init session on the Acme Store example: the feature map is drafted and approved, a drive script and property tests are drafted, and rung check runtime reports a negative cart total and a whitespace-only name accepted at checkout](https://raw.githubusercontent.com/CalQuity/rung/main/docs/assets/first-run.gif)
+![A real rung init session on the Acme Store example: the feature map is drafted and approved, a drive script and property tests are drafted, and rung check runtime reports negative quantities, a negative cart total and a coupon that outlives its minimum](https://raw.githubusercontent.com/CalQuity/rung/main/docs/assets/first-run.gif)
 
 <sub>One real session on [`examples/acme-store`](examples/acme-store), a FastAPI and Next.js shop: `rung init`
 drafts a feature map you approve, then a drive script and property tests, and `rung check runtime`
 reports what the app got wrong, each with what was expected and what it did. The model's drafting
-(about ten minutes in all) is cut from the recording and labelled where it was cut.</sub>
+(about 40 minutes in this run) is cut from the recording and labelled where it was cut.</sub>
 
 What a pass means depends on the check: a test suite proves what its tests assert, TLC proves an
 invariant over every state of a model, a Lean proof holds for the model it is about. Rung makes
