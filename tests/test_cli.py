@@ -149,3 +149,30 @@ def test_s4_add_emits_json(project: Path, capsys) -> None:
     capsys.readouterr()
     assert run(project, "--json", "add", "command", "lint", "--run", "true") == 0
     assert json.loads(capsys.readouterr().out)["check"] == "lint"
+
+
+def test_doctor_and_laws_json_are_versioned_objects(project: Path, capsys) -> None:
+    import json
+
+    capsys.readouterr()
+    (project / "rung.toml").write_text(
+        (project / "rung.toml").read_text() + '\n[[check]]\nid = "gone"\nkind = "command"\nrun = "rung-missing-tool"\n'
+    )
+    assert run(project, "doctor", "--strict", "--json") == 1
+    doctor = json.loads(capsys.readouterr().out)
+    assert doctor["schema_version"] == 1 and isinstance(doctor["tools"], list)
+    assert doctor["strict_failures"] == ["gone: run (rung-missing-tool)"]
+    assert run(project, "laws", "--json") == 0
+    laws = json.loads(capsys.readouterr().out)
+    assert laws == {"schema_version": 1, "laws": []}
+
+
+def test_drafting_without_a_provider_says_how_to_set_one() -> None:
+    import pytest
+
+    from rung.core.config import LLMConfig
+    from rung.core.errors import ToolMissing
+    from rung.drafting import providers
+
+    with pytest.raises(ToolMissing, match=r"rung init --provider claude-cli.*\[llm\] in rung.toml"):
+        providers.Provider(LLMConfig()).complete_json("x", schema={})

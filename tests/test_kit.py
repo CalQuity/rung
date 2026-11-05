@@ -233,3 +233,25 @@ def test_the_kit_drives_the_web_ui_when_an_app_also_serves_an_api(project: Path,
     assert run(project, "kit", "--json") == 0
     app = next(p for p in json.loads(capsys.readouterr().out)["parts"] if p["part"] == "app")
     assert "web UI" in app["missing"] and "screenshots" in app["missing"]
+
+
+def test_a_custom_named_check_running_a_test_runner_is_a_test_suite() -> None:
+    for run_command in ("uv run pytest", "go test ./...", "node --test", "pnpm test", "cargo test", "make test",
+                        "npx vitest run", "jest --ci", "python -m unittest discover"):  # fmt: skip
+        assert kit.part_of(Check("unit", "command", [], {"run": run_command})) == "tests", run_command
+    assert kit.part_of(Check("e2e", "command", [], {"run": "npm run lint"})) == "commands"
+
+
+def test_kit_never_suggests_a_placeholder_command_as_a_next_step(project: Path, capsys) -> None:
+    from rung.core.config import save
+
+    cfg = load(project)
+    cfg.checks = [Check("smoke", "command", [], {"run": f"{PY} -c 'pass'"})]
+    save(cfg)
+    assert run(project, "check") == 0
+    capsys.readouterr()
+    assert run(project, "kit", "--json") == 0
+    data = json.loads(capsys.readouterr().out)
+    assert all("<" not in step["command"] for step in data["next"])
+    parts = {p["part"]: p for p in data["parts"]}
+    assert parts["tests"]["state"] == "missing"

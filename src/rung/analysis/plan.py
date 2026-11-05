@@ -69,6 +69,29 @@ def focused_checks(checks: list[Check], paths: set[str]) -> list[Check]:
     ]
 
 
+def project_wide(check: Check) -> bool:
+    """An execution check at the project root with no declared scope: it verifies the whole project."""
+    return (
+        check.kind in {"command", "evidence", "tla", "lean", "drt"}
+        and not check.covers
+        and not check.get("specs")
+        and "verifies" not in check.options
+        and check.get("cwd", ".") in {".", ""}
+    )
+
+
+def focused_selection(checks: list[Check], paths: set[str]) -> list[Check]:
+    """The checks a change asks for first: declared verification targets, plus root checks of the whole project.
+
+    In a workspace, every package's suite runs on any edit because its scope is repo-wide; this narrows the
+    choice to the packages the change is in. A single project's root suite counts for any change in it.
+    """
+    if not paths:
+        return []
+    focused = focused_checks(checks, paths)
+    return [check for check in checks if check in focused or project_wide(check)]
+
+
 def change_plan(info: Inspection, checks: list[Check], paths: set[str], *, base: str | None = None) -> dict:
     """Map a proposed or actual change to checks and surface gaps in the declared scopes."""
     selected = [check for check in checks if runner.touched_by(check, paths)] if paths else []

@@ -78,7 +78,7 @@ def test_inferred_cargo_checks_require_a_lockfile_and_a_passing_case(repo, monke
     assert rung(repo, "init", "--no-drafts", "--no-agents") == 0
     capsys.readouterr()
     assert rung(repo, "doctor", "--strict", "--json") == 1
-    assert any("cargo generate-lockfile" in row["detail"] for row in json.loads(capsys.readouterr().out))
+    assert any("cargo generate-lockfile" in row["detail"] for row in json.loads(capsys.readouterr().out)["tools"])
     (repo / "Cargo.lock").touch()
     for cases, exit_code in (("0", 1), ("1", 0)):
         monkeypatch.setenv("FIXTURE_CASES", cases)
@@ -169,7 +169,7 @@ def test_agent_install_refuses_symlink_before_writing(repo) -> None:
 def test_doctor_checks_configured_executables_without_running_them(repo, capsys) -> None:
     _configure(repo, extra='\n[[check]]\nid = "scan"\nkind = "scan"\nrun = "rung-fixture-absent-scanner"\n')
     assert rung(repo, "doctor", "--strict", "--json") == 1
-    rows = json.loads(capsys.readouterr().out)
+    rows = json.loads(capsys.readouterr().out)["tools"]
     assert any(row["tool"].startswith("scan: run") and not row["ok"] for row in rows)
 
 
@@ -316,7 +316,7 @@ def test_doctor_checks_python_modules_and_their_working_directory(repo, capsys) 
     assert rung(repo, "doctor", "--strict", "--json") == 1
     assert any(
         row["tool"].endswith("Python module rung_missing_fixture_module") and not row["ok"]
-        for row in json.loads(capsys.readouterr().out)
+        for row in json.loads(capsys.readouterr().out)["tools"]
     )
 
 
@@ -479,7 +479,7 @@ def test_doctor_reports_missing_test_binary_from_package_script(repo, monkeypatc
     assert rung(repo, "init", "--no-agents", "--no-drafts") == 0
     capsys.readouterr()
     assert rung(repo, "doctor", "--strict", "--json") == 1
-    rows = json.loads(capsys.readouterr().out)
+    rows = json.loads(capsys.readouterr().out)["tools"]
     assert any(row["tool"].endswith("Node runner vitest") and not row["ok"] for row in rows)
 
 
@@ -775,9 +775,10 @@ def test_focused_workspace_check_records_only_matching_targets(repo, capsys):
 
     (repo / "api" / "app.py").unlink()
     (repo / "shared.py").write_text("refund = 150\n")
-    assert rung(repo, "check", "--changed", "--focused", "--base", "main", "--json") == 1
-    blocked = json.loads(capsys.readouterr().out)
-    assert blocked["results"] == [] and not blocked["recorded"]
+    assert rung(repo, "check", "--changed", "--focused", "--base", "main", "--json") == 0
+    fallback = json.loads(capsys.readouterr().out)
+    assert fallback["selection"] == "full-fallback" and fallback["omitted"] == []
+    assert sorted(row["id"] for row in fallback["results"]) == ["api", "web"]
 
 
 def test_gate_protects_a_symlinked_launcher_and_its_intermediate_links(repo, capsys):
@@ -816,7 +817,8 @@ def test_doctor_and_reuse_inspect_an_uv_delegated_executable(repo, capsys, monke
         '[[check]]\nid = "wrapped"\nkind = "command"\nrun = "uv run --no-project rung-fixture-delegate"\n'
     )
     assert rung(repo, "doctor", "--strict", "--json") == 1
-    assert any(not row["ok"] and "rung-fixture-delegate" in row["tool"] for row in json.loads(capsys.readouterr().out))
+    rows = json.loads(capsys.readouterr().out)["tools"]
+    assert any(not row["ok"] and "rung-fixture-delegate" in row["tool"] for row in rows)
     tool.write_text("#!/bin/sh\nexit 0\n")
     tool.chmod(0o755)
     assert rung(repo, "doctor", "--strict", "--json") == 0
@@ -843,3 +845,61 @@ def test_initializer_deduplicates_only_a_single_make_delegate(repo, capsys):
     assert rung(repo, "init", "--dry-run", "--no-agents", "--json") == 0
     commands = [c["options"]["run"] for c in json.loads(capsys.readouterr().out)["checks"] if c["kind"] == "command"]
     assert commands == ["make test", "uv run pytest"]
+
+
+def test_native_runner_wins_over_a_make_test_target(repo, capsys):
+    (repo / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+    (repo / "Makefile").write_text("test:\n\tpython -m pytest -q\n\tpython smoke.py\n")
+    assert rung(repo, "init", "--dry-run", "--no-agents", "--json") == 0
+    preview = json.loads(capsys.readouterr().out)
+    commands = [(c["id"], c["options"]["run"]) for c in preview["checks"] if c["kind"] == "command"]
+    assert ("tests", "python -m pytest") in commands
+    assert all(run != "make test" for _, run in commands)
+    assert "make" in preview["survey"]["projects"][0]["ecosystems"]
+    assert rung(repo, "plan", "--json") == 0
+    proofs = [
+        r["command"] for r in json.loads(capsys.readouterr().out)["plan"] if r["command"].startswith("rung prove")
+    ]
+    assert proofs == ["rung prove 'python -m pytest'"]
+
+
+def test_refresh_skips_a_detected_command_already_recorded_under_another_id(repo, capsys):
+    (repo / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+    (repo / "rung.toml").write_text('[[check]]\nid = "unit"\nkind = "command"\nrun = "python -m pytest"\n')
+    assert rung(repo, "init", "--refresh", "--no-drafts", "--no-agents", "--json") == 0
+    assert "tests" not in json.loads(capsys.readouterr().out)["added_checks"]
+    assert 'id = "tests"' not in (repo / "rung.toml").read_text()
+
+
+def test_focused_check_in_a_single_project_runs_the_root_suite(repo, capsys):
+    (repo / "rung.toml").write_text('[[check]]\nid = "unit"\nkind = "command"\nrun = "true"\n')
+    commit_all(repo, "kit")
+    run_git(repo, "checkout", "-qb", "feature")
+    (repo / "app.py").write_text("refund = 150\n")
+    assert rung(repo, "check", "--changed", "--focused", "--base", "main", "--json") == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["selection"] == "focused" and data["selected"] == ["unit"]
+    assert [row["id"] for row in data["results"]] == ["unit"]
+
+
+def test_plan_path_resolves_from_the_working_directory_and_accepts_directories(repo, monkeypatch, capsys):
+    package = repo / "packages" / "a"
+    package.mkdir(parents=True)
+    (package / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+    (package / "core.py").write_text("x = 1\n")
+    (repo / "notes").mkdir()
+    (repo / "notes" / "todo.txt").write_text("x\n")
+    commit_all(repo, "workspace")
+    monkeypatch.chdir(repo / "packages")
+    assert rung(repo, "plan", "--path", "a/core.py", "--json") == 0
+    change = json.loads(capsys.readouterr().out)["change"]
+    assert change["paths"] == ["packages/a/core.py"] and change["outside_projects"] == []
+    monkeypatch.chdir(repo)
+    assert rung(repo, "plan", "--path", "packages/a", "--path", "notes", "--json") == 0
+    data = json.loads(capsys.readouterr().out)
+    assert {"packages/a/core.py", "packages/a/pyproject.toml", "notes/todo.txt"} <= set(data["change"]["paths"])
+    assert data["change"]["outside_projects"] == ["notes/todo.txt"]
+    assert [r["command"] for r in data["plan"] if r["command"].startswith("rung prove")] == [
+        "rung prove 'python -m pytest' --cwd packages/a"
+    ]
+    assert rung(repo, "plan", "--path", "../elsewhere.py") == 2

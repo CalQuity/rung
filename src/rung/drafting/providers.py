@@ -97,7 +97,10 @@ class Provider:
         self, prompt: str, *, schema: dict[str, Any], system: str = "", cwd: Path | None = None, timeout: int = 1200
     ) -> dict[str, Any]:
         """Ask the model for one JSON object matching `schema`."""
-        raise ToolMissing("no model provider is configured; run `rung init` or set [llm] in rung.toml")
+        raise ToolMissing(
+            "no model provider is configured. Set one with `rung init --provider claude-cli` "
+            "(or codex-cli, openai-compatible), or set `provider` under [llm] in rung.toml"
+        )
 
 
 class ClaudeCLI(Provider):

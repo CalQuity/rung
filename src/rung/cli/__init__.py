@@ -110,7 +110,12 @@ def build_parser(*, json_errors: bool = False) -> argparse.ArgumentParser:
     s = add("plan", "cmd_plan", "recommend checks for this repo or a specific change")
     scope = s.add_mutually_exclusive_group()
     scope.add_argument("--changed", action="store_true", help="plan verification for files changed on this branch")
-    scope.add_argument("--path", action="append", metavar="PATH", help="plan for a proposed project path (repeatable)")
+    scope.add_argument(
+        "--path",
+        action="append",
+        metavar="PATH",
+        help="plan for a proposed file or directory, relative to the working directory (repeatable)",
+    )
     s.add_argument("--base", help="base ref for --changed")
     s = add("doctor", "cmd_doctor", "diagnose missing tools for this kit")
     s.add_argument("--strict", action="store_true", help="fail if a configured executable is missing")
@@ -124,7 +129,9 @@ def build_parser(*, json_errors: bool = False) -> argparse.ArgumentParser:
     s = add("check", "cmd_check", "run checks and record verdicts")
     s.add_argument("ids", nargs="*", help="check ids (default: all)")
     s.add_argument("--changed", action="store_true", help="only checks touched by this branch's changes")
-    s.add_argument("--focused", action="store_true", help="with --changed, run only declared verification targets")
+    s.add_argument("--focused", action="store_true",
+                   help="with --changed, run only checks whose declared targets (or the root project) hold the "
+                   "change; every touched check when none do")  # fmt: skip
     s.add_argument("--base", help="branch to compare with (default: the repository's default branch)")
     s.add_argument("--reuse-local", "--ci", dest="ci", action="store_true",
                    help="reuse fresh local verdicts from the same environment (CI should use gate)")  # fmt: skip

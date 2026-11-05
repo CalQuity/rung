@@ -417,19 +417,16 @@ def cmd_check(args, out: Output) -> int:
     uncovered = plan.uncovered_paths(cfg.checks, {path for path in changed or set() if not git.is_rung_output(path)})
     selected = runner.select(cfg, args.ids, changed)
     omitted: list[str] = []
+    selection = "standard"
     if args.focused:
-        focused = plan.focused_checks(selected, changed or set())
-        omitted = [check.id for check in selected if check not in focused]
-        selected = focused
-        if not focused:
-            out.emit({
-                "selection": "focused", "selected": [], "omitted": omitted, "recorded": False, "results": [],
-                "base": base, "head": git.head(cfg.root) or None,
-                "uncovered_paths": uncovered,
-                "error": "no declared verification targets match this change. Run rung check --changed",
-            })  # fmt: skip
-            out.error("no declared verification targets match this change. Run rung check --changed")
-            return GATE_FAILED
+        focused = plan.focused_selection(selected, changed or set())
+        if focused:
+            selection = "focused"
+            omitted = [check.id for check in selected if check not in focused]
+            selected = focused
+        else:
+            # Nothing declares this change as its target: run the full selection rather than nothing.
+            selection = "full-fallback"
     scenarios = tuple(args.scenario or ())
     partial = args.seed is not None or bool(scenarios)
     if partial and (len(args.ids) != 1 or args.changed or args.ci):
@@ -449,9 +446,11 @@ def cmd_check(args, out: Output) -> int:
         out.error(f"no checks declared in {CONFIG_NAME}; see `rung plan` or `rung add`", code=GATE_FAILED)
         return GATE_FAILED
     scope = f"base {base[:12]}" if base else "working tree"
-    if args.focused:
+    if selection == "focused":
         scope += " · focused"
     out.heading("Verification checks", f"{cfg.name} · {scope} · {len(selected)} selected")
+    if selection == "full-fallback":
+        out.detail("No declared verification target matches this change; running every check it touches.", indent=2)
     if omitted:
         out.detail(f"{len(omitted)} checks outside the focused selection. Run rung check --changed for the full scope.",
                    indent=2)  # fmt: skip
@@ -469,7 +468,7 @@ def cmd_check(args, out: Output) -> int:
             "head": git.head(cfg.root) or None,
             "recorded": bool(results) and not partial,
             "selected": [check.id for check in selected],
-            "selection": "focused" if args.focused else "standard",
+            "selection": selection,
             "omitted": omitted,
             "uncovered_paths": uncovered,
             "results": [_result_data(result) for result in results],

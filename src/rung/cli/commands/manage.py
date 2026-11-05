@@ -28,9 +28,9 @@ def cmd_laws(args, out: Output) -> int:
     scopes = {
         c: modelcard.scope_lines(modelcard.load(cfg.root, c)) for law in laws.load(cfg.root) for c in law.enforced_by
     }
-    out.emit([{"id": law.id, "text": law.text, "harm": law.harm, "state": st, "why": why,
-               "enforced_by": law.enforced_by, "scope": {c: scopes[c] for c in law.enforced_by if scopes[c]}}
-              for law, st, why in rows])  # fmt: skip
+    out.emit({"laws": [{"id": law.id, "text": law.text, "harm": law.harm, "state": st, "why": why,
+                        "enforced_by": law.enforced_by, "scope": {c: scopes[c] for c in law.enforced_by if scopes[c]}}
+                       for law, st, why in rows]})  # fmt: skip
     if not rows:
         out.line(f"No laws in {laws.LAWS_FILE} yet.")
     for law, st, why in rows:
