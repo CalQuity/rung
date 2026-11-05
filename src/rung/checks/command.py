@@ -152,7 +152,8 @@ class CommandChecker(Checker):
             result = _run(ctx, check, {"NODE_OPTIONS": options}, argv=argv)
             if result.returncode:
                 return Outcome("fail", f"Node test command exited {result.returncode}", tail(result))
-            passed = sum(state == "passed" for state in prove.node_outcomes(report, ctx.root.resolve()).values())
+            records = prove.node_records(report, ctx.root.resolve())
+            passed = sum(state == "passed" for _, _, state in records)
             if not passed:
                 return Outcome("fail", "Node reported no passing test cases", tail(result))
             return Outcome("pass", f"Node passed with {passed} passing test case(s)", tail(result))

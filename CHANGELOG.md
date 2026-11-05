@@ -79,6 +79,10 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
   longer turns isolation on, and `rung draft runtime` now writes `isolate = true` for the checks it
   registers. Drive checks drafted by 0.3.0 keep running un-isolated, with their verdicts intact,
   until you add `isolate = true` to them in `rung.toml`.
+- Node test cases are identified by their `describe` ancestry (`refund > caps`), so tests that share a
+  name in different suites, or are defined in a loop, no longer collapse into one errored case; a
+  passing suite with repeated names now passes, and Node checks count every passing case. Name a
+  nested case for `rung prove --case` with its suites, e.g. `--case "test/money.test.js::refund > caps"`.
 
 ## 0.3.0 (2026-11-04)
 

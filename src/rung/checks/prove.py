@@ -96,18 +96,29 @@ def _runs_node(argv: list[str]) -> bool:
     return Path(argv[0]).name in {"node", "node.exe"} and "--test" in argv
 
 
-def node_outcomes(path: Path, root: Path) -> dict[tuple[str, str], str]:
+def node_records(path: Path, root: Path) -> list[tuple[str, str, str]]:
+    """Every case the Node reporter wrote, as (file relative to `root`, `suite > name`, status).
+
+    Repeats are kept: a test defined in a loop reports once per iteration under the same name.
+    """
     try:
         records = [json.loads(line) for line in path.read_text().splitlines()]
     except (OSError, ValueError):
-        return {}
-    outcomes = {}
+        return []
+    found = []
     for case in records:
         source = (root / case["file"]).resolve()
-        if not source.is_relative_to(root):
-            continue
-        key = (source.relative_to(root).as_posix(), case["name"])
-        outcomes[key] = "error" if key in outcomes else case["status"]
+        if source.is_relative_to(root):
+            found.append((source.relative_to(root).as_posix(), case["name"], case["status"]))
+    return found
+
+
+def node_outcomes(path: Path, root: Path) -> dict[tuple[str, str], str]:
+    """(file, `suite > name`) -> the worst outcome of the cases with that identity, as for pytest parameters."""
+    outcomes: dict[tuple[str, str], str] = {}
+    for file, name, status in node_records(path, root):
+        key = (file, name)
+        outcomes[key] = max(outcomes.get(key, "passed"), status, key=OUTCOME_ORDER.index)
     return outcomes
 
 
