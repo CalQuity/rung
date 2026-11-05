@@ -184,6 +184,11 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 - The Action installs Bubblewrap only when `rung.toml` has an `isolate = true` check, and only on
   GitHub-hosted runners unless the new `install-bubblewrap: true` input asks for it on a self-hosted
   runner. `install-bubblewrap: false` never installs it.
+- Isolated drive checks clone `node_modules` into their copy (copy-on-write where the filesystem
+  supports it) instead of linking back to the project, so apps whose tools refuse dependencies outside
+  the workspace, such as Next.js, start in the copy. Files the app generates while running, such as
+  `next-env.d.ts`, no longer read as modified inputs; only inputs that existed before the run count,
+  and the error names them.
 - A Daytona provider or snapshot error names the snapshot it tried, so a misspelled or inactive
   snapshot is easy to spot.
 - A required workflow or ruleset is still the only way to stop a pull request from editing the

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -516,6 +517,31 @@ def test_drafted_drive_replay_retains_evidence_with_the_write_guard(tmp_path, mo
     assert rung(root, "status", "--require-fresh") == 0
 
 
+def test_an_isolated_drive_may_generate_ignored_files_but_not_edit_inputs(tmp_path, monkeypatch, capsys):
+    """Dev servers write generated files (Next.js writes next-env.d.ts); only changes to inputs count."""
+    from rung.core import sandbox
+
+    monkeypatch.setattr(sandbox, "validated_write_guard", lambda *_a, **_kw: ("env", "RUNG_TEST_GUARD=1"))
+    (tmp_path / ".gitignore").write_text("next-env.d.ts\n")
+    (tmp_path / "app.py").write_text("x = 1\n")
+    (tmp_path / "drive.py").write_text(
+        "import os\nfrom pathlib import Path\n"
+        "Path('next-env.d.ts').write_text('generated')\n"
+        "if os.environ.get('EDIT_INPUT'):\n    Path('app.py').write_text('x = 2\\n')\n"
+        "(Path(os.environ['RUNG_EVIDENCE_DIR']) / 'observation.txt').write_text('ok')\n"
+    )
+    (tmp_path / "rung.toml").write_text(
+        f'[[check]]\nid = "drive"\nkind = "evidence"\nrun = "{PY} drive.py"\nisolate = true\nrequire = [".txt"]\n'
+    )
+    assert rung(tmp_path, "check", "drive", "--json") == 0, capsys.readouterr().out
+    capsys.readouterr()
+    monkeypatch.setenv("EDIT_INPUT", "1")
+    monkeypatch.setattr(sandbox, "trial_environment", lambda copy: {**os.environ, "EDIT_INPUT": "1"})
+    assert rung(tmp_path, "check", "drive", "--json") == 1
+    result = json.loads(capsys.readouterr().out)["results"][0]
+    assert result["verdict"] == "error" and "app.py" in result["summary"]
+
+
 def test_drafted_drive_does_not_run_when_the_write_guard_is_unavailable(tmp_path, monkeypatch, capsys):
     from rung.core import sandbox
     from rung.core.errors import ToolMissing
@@ -654,3 +680,18 @@ def test_control_runs_scale_with_the_accepted_run_and_report_a_timeout(tmp_path:
     result = runtime.draft_runtime(ScriptedProvider([hangs]), tmp_path, survey.survey(tmp_path), focus=[], max_rounds=1)
     assert not result.ok and "timed out after 1s" in result.message
     assert "did not detect" not in result.message
+
+
+def test_an_isolated_copy_clones_node_modules_instead_of_linking_outside(tmp_path):
+    """Next.js refuses dependencies that resolve outside its workspace, so the copy holds its own."""
+    from rung.core import sandbox
+
+    (tmp_path / "web").mkdir()
+    (tmp_path / "web" / "package.json").write_text("{}\n")
+    (tmp_path / "web" / "node_modules" / "pkg").mkdir(parents=True)
+    (tmp_path / "web" / "node_modules" / "pkg" / "index.js").write_text("module.exports = 1\n")
+    with sandbox.copy_of(tmp_path) as copy:
+        cloned = copy / "web" / "node_modules"
+        assert cloned.is_dir() and not cloned.is_symlink()
+        assert (cloned / "pkg" / "index.js").resolve().is_relative_to(copy.resolve())
+    assert (tmp_path / "web" / "node_modules" / "pkg" / "index.js").exists()

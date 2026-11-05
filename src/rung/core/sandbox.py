@@ -48,6 +48,28 @@ CREDENTIAL_PATHS = (
 )
 
 
+# JavaScript tools resolve their dependencies' real paths, and some refuse ones outside the project
+# (Next.js will not build when `node_modules` resolves outside its workspace root), so these are cloned
+# into the copy rather than linked. Clones are copy-on-write where the filesystem supports it.
+CLONED_DEPENDENCY_DIRS = ("node_modules",)
+CLONE_TIMEOUT = 300
+
+
+def _link_dependencies(source: Path, target: Path) -> None:
+    """Give the copy the project's installed dependencies: a copy-on-write clone, or a link back."""
+    if source.name in CLONED_DEPENDENCY_DIRS:
+        flags = ["-c", "-R"] if sys.platform == "darwin" else ["-a", "--reflink=auto"]
+        try:
+            done = subprocess.run(["cp", *flags, str(source), str(target)], capture_output=True,
+                                  timeout=CLONE_TIMEOUT, check=False)  # fmt: skip
+        except (OSError, subprocess.TimeoutExpired):
+            done = None
+        if done is not None and done.returncode == 0:
+            return
+        shutil.rmtree(target, ignore_errors=True)
+    target.symlink_to(source, target_is_directory=True)
+
+
 @contextmanager
 def copy_of(root: Path) -> Iterator[Path]:
     """Yield a temporary copy of the project at `root`; it is deleted afterwards."""
@@ -77,7 +99,7 @@ def copy_of(root: Path) -> Iterator[Path]:
             for name in DEPENDENCY_DIRS:
                 if (root / d / name).is_dir() and not (copy / d / name).exists():
                     (copy / d).mkdir(parents=True, exist_ok=True)
-                    (copy / d / name).symlink_to(root / d / name, target_is_directory=True)
+                    _link_dependencies(root / d / name, copy / d / name)
         yield copy
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

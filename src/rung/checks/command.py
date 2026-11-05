@@ -557,8 +557,18 @@ class EvidenceChecker(Checker):
             patterns = [*self.covers(check), *self.specs(check)]
             before = ledger.snapshot(copy, patterns)
             outcome = self._run_drive(guarded, check)
-            if ledger.snapshot(copy, patterns) != before:
-                return Outcome("error", "the isolated drive modified covered inputs in its copy")
+            after = ledger.snapshot(copy, patterns)
+            # Only inputs that existed before the run count. The copy is not a git checkout, so files the
+            # app or its tools generate while running (next-env.d.ts, caches) would otherwise read as
+            # changed inputs even when the project's .gitignore excludes them.
+            moved = sorted(p for p in before if after.get(p) != before[p])
+            if moved:
+                shown = ", ".join(moved[:5]) + (" ..." if len(moved) > 5 else "")
+                return Outcome(
+                    "error",
+                    f"the isolated drive modified covered inputs in its copy: {shown}. If the app or its "
+                    "tools write them (generated files, caches), add them to .gitignore or narrow `covers`.",
+                )
             sandbox.retain_evidence(ctx.root, copy, outcome.details["report"])
             outcome.details["execution"] = "isolated"
             return outcome
