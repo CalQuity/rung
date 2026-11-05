@@ -38,8 +38,9 @@ agent skills only. Do not pick one for them. Then run, with their answer:
 rung init --provider <their choice>
 ```
 
-Rung runs the model CLI they chose and that CLI uses its own sign-in; Rung never reads or stores a
-credential. `init` builds the project's verification kit: it records each detected test suite, linter
+Rung runs the model CLI they chose, and that CLI uses its own sign-in. For an `openai-compatible`
+endpoint, Rung reads the key from the environment variable the developer names and sends it only to
+that endpoint. Rung never stores a credential. `init` builds the project's verification kit: it records each detected test suite, linter
 and type checker, the installed scanners and new-dependency vetting in `rung.toml`, and installs the
 agent skills and the Stop hook (step 5; pass `--no-agents` if the developer does not want them). Run
 without a terminal, it drafts nothing; `rung kit` then lists every part of the kit, what is missing,

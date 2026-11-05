@@ -37,9 +37,11 @@ The skill sends nothing anywhere. The Rung CLI it installs runs locally. It cont
 to install packages, when a scanner you installed does (osv-scanner queries the OSV database), when
 the `deps` check looks up new dependencies on PyPI or npm, and when you ask it to draft something with a
 model. Drafting runs the model CLI you chose (`claude` or `codex`, already installed and signed in by
-you) or an OpenAI-compatible endpoint you configure, and passes it only the project files needed for
-that draft. Rung never reads, copies or stores a credential: the model CLI manages its own sign-in, and
-an endpoint's key stays in your own environment. Rung has no telemetry.
+you) or calls an OpenAI-compatible endpoint you configure, and sends it the project's file list and the
+files relevant to that draft. With `claude` or `codex`, the CLI manages its own sign-in and Rung never
+sees a credential. With an OpenAI-compatible endpoint, Rung reads the key from the environment variable
+you name in `rung.toml` and sends it only to that endpoint, as its `Authorization` header. Rung never
+stores or logs a credential and has no telemetry.
 
 ## Requirements
 
