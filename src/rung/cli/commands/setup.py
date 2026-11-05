@@ -248,13 +248,16 @@ def _map_first(args, root: Path, out: Output) -> str:
     """
     from rung.cli.commands import featuremap
     from rung.drafting import feature_map
+    from rung.engines import map_page
 
     cfg = load(root)
     out.line("\n$ rung map")
     if not featuremap.has_map(root) and not featuremap.draft_map(cfg, out):
         return "feature map: no draft met the contract (above)"
     out.line("")
-    featuremap.print_map(cfg, out)
+    featuremap.print_map(cfg, out, brief=True)
+    page = map_page.write(root, check_ids=featuremap.evidence_check_ids(cfg))
+    out.line(f"\nEach feature in full: {(feature_map.MAP_DIR / 'README.md').as_posix()} and {page.relative_to(root)}")
     if not args.yes:
         featuremap.review(cfg, out)
     state = feature_map.load_state(root)

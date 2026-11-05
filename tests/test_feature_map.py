@@ -312,3 +312,12 @@ def test_app_focus_follows_python_and_typescript_imports_into_sub_projects(repo:
     assert {"backend/app/routes.py", "backend/app/pricing.py", "backend/app/carts.py", "frontend/app/cart/page.tsx",
             "frontend/components/cart-view.tsx", "frontend/components/coupon-form.tsx"} <= set(focus)  # fmt: skip
     assert "frontend/components/ui/button.tsx" not in focus and "backend/app/__init__.py" not in focus
+
+
+def test_the_brief_map_shows_each_feature_in_three_lines(shop: Path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr("rung.drafting.providers.get",
+                        lambda llm: MapProvider([_reply(index=INDEX, coupons=COUPONS, pay=PAY)]))  # fmt: skip
+    assert cli.main(["-C", str(shop), "map", "--brief", "--no-color"]) == 0
+    text = capsys.readouterr().out
+    assert "2 sub-features: coupon-apply, coupon-unknown" in text
+    assert "reached by:" not in text and "gotcha:" not in text

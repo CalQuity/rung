@@ -11,6 +11,10 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
   planted for Rung to find. Spoilers are in its `SOLUTIONS.md`.
 
 ### Changed
+- `rung init` shows the drafted feature map in three lines per feature (what it does and its
+  sub-feature IDs) and points to the full map and its page before asking for decisions; `rung map
+  --brief` does the same. A drive-script draft with more than 12 scenarios prints the counts and the
+  failing ones instead of a line per scenario.
 - `rung check` on a drive script reads on its own: a failure names the scenarios that failed and lists
   each failed assertion with what it expected and what the app did (up to 12, the rest on the
   evidence page), instead of the script's last output lines. More than six evidence files are
