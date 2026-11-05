@@ -99,6 +99,9 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 - Formal model records confirmed by an earlier version no longer read as drifted after upgrading:
   a confirmation that stored file digests without their mode still holds while the file contents
   match. No action is needed; the next `rung confirm` or `rung maintain` stores the new form.
+- A tracked symbolic link that points outside the project no longer makes every whole-project check
+  an error. The verdict records where the link points, without following it, so pointing the link
+  somewhere else stales the verdict.
 
 ## 0.3.0 (2026-11-04)
 
