@@ -87,6 +87,15 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
   instead of silently replacing it with a temporary one.
 - Cargo checks wrapped in `env ...` or `time ...` now also require at least one passing case, and
   colored Cargo summaries are read correctly.
+- `rung prove --expect` is matched against the whole base-run output, stdout and stderr, and accepts
+  failure lines such as `ImportError: ...` and Go's `got X, want Y`. A matching `--expect` now also
+  accepts new tests the merge base could not import or collect, so the advice to re-run with
+  `--expect` after a loading failure leads to a proof.
+- `rung prove` ignores files the test run creates (coverage.xml, JUnit reports, `.coverage`) and
+  reports an error only when a file that existed before the run changed, naming it.
+- Proofs cover the project's files except documentation (`*.md`, `*.rst` and `docs/`): editing a
+  README no longer stales every proof, while code, configuration and fixture changes still do.
+  Proofs recorded before upgrading keep their old whole-project coverage until you run them again.
 
 ## 0.3.0 (2026-11-04)
 

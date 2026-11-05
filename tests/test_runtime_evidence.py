@@ -504,8 +504,7 @@ def test_drafted_drive_replay_retains_evidence_with_the_write_guard(tmp_path, mo
         "(out / 'observation.txt').write_text(os.environ['RUNG_SEED'])\n"
     )
     (root / "rung.toml").write_text(
-        f'[[check]]\nid = "drive"\nkind = "evidence"\nrun = "{PY} drive.py"\n'
-        'isolate = true\nrequire = [".txt"]\n'
+        f'[[check]]\nid = "drive"\nkind = "evidence"\nrun = "{PY} drive.py"\nisolate = true\nrequire = [".txt"]\n'
     )
     assert rung(root, "check", "drive", "--json") == 0
     result = json.loads(capsys.readouterr().out)["results"][0]
