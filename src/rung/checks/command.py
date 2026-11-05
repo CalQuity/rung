@@ -104,6 +104,17 @@ def _default_node_tests(argv: list[str]) -> bool:
     )
 
 
+def _junitxml_option(argv: list[str]) -> str | None:
+    """The report path a pytest command already passes with `--junitxml` (or `--junit-xml`), if any."""
+    end = argv.index("--") if "--" in argv and prove.runs_pytest(argv[: argv.index("--")]) else len(argv)
+    found = None
+    for i, arg in enumerate(argv[:end]):
+        flag, equals, value = arg.partition("=")
+        if flag in {"--junitxml", "--junit-xml"}:
+            found = value if equals else (argv[i + 1] if i + 1 < end else None)
+    return found or None
+
+
 class CommandChecker(Checker):
     kind = "command"
     summary = "Run a command; exit status 0 passes"
@@ -134,10 +145,10 @@ class CommandChecker(Checker):
         ):
             return Outcome("fail", "unittest reported no passing test cases", tail(result))
         if (
-            cargo_test(argv)
-            and (ctx.merge_gate or "--no-run" not in argv)
+            cargo_test(inner_argv)
+            and (ctx.merge_gate or "--no-run" not in inner_argv)
             and not result.returncode
-            and not re.search(r"^test result: ok\. [1-9]\d* passed;", result.stdout, re.M)
+            and not re.search(r"^test result: ok\. [1-9]\d* passed;", plain_text(result.stdout), re.M)
         ):
             return Outcome("fail", "Cargo reported no passing test cases", tail(result))
         verdict = "pass" if result.returncode == 0 else "fail"
@@ -187,13 +198,18 @@ class CommandChecker(Checker):
     def _run_pytest(self, ctx: Context, check: Check, argv: list[str]) -> Outcome:
         """Require a passing test case in a fresh report before trusting an exit of zero."""
         with tempfile.TemporaryDirectory(prefix="rung-pytest-") as tmp:
-            report = Path(tmp) / "results.xml"
-            option = f"--junitxml={report}"
-            if "--" in argv and prove.runs_pytest(argv[: argv.index("--")]):
-                separator = argv.index("--")
-                args = [*argv[:separator], option, *argv[separator:]]
+            if own := _junitxml_option(argv):
+                # The user's report path is kept: appending a second option would silently replace it.
+                report = ctx.root / check.get("cwd", ".") / own
+                args = argv
             else:
-                args = [*argv, option]
+                report = Path(tmp) / "results.xml"
+                option = f"--junitxml={report}"
+                if "--" in argv and prove.runs_pytest(argv[: argv.index("--")]):
+                    separator = argv.index("--")
+                    args = [*argv[:separator], option, *argv[separator:]]
+                else:
+                    args = [*argv, option]
             result = _run(ctx, check, argv=args)
             if result.returncode:
                 return Outcome("fail", f"pytest exited {result.returncode}", tail(result))

@@ -83,6 +83,10 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
   name in different suites, or are defined in a loop, no longer collapse into one errored case; a
   passing suite with repeated names now passes, and Node checks count every passing case. Name a
   nested case for `rung prove --case` with its suites, e.g. `--case "test/money.test.js::refund > caps"`.
+- A pytest check that passes its own `--junitxml` keeps writing that report, and Rung reads it,
+  instead of silently replacing it with a temporary one.
+- Cargo checks wrapped in `env ...` or `time ...` now also require at least one passing case, and
+  colored Cargo summaries are read correctly.
 
 ## 0.3.0 (2026-11-04)
 
