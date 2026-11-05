@@ -6,15 +6,24 @@ branch, put them on top of the merge base (the code *without* the fix), and run
 the test command there. It must fail. Then run it on the branch. It must pass.
 Both runs are recorded in the ledger.
 
-When the base fails for the wrong reason, typically an import error because the
-fix added a new function, `--expect` names text the base failure must contain,
-such as the assertion or the test name.
+A base run that fails while loading (an import or collection error) is rejected, because the
+tests never reached an assertion. When that failure *is* the bug, or the runner cannot report
+individual tests, `--expect` names text the base failure must contain, such as the assertion
+message or the missing name in an `ImportError`. It is matched against the whole base output,
+stdout and stderr, on a line that reads as a failure (an error or exception name, `assert`,
+`fail`, `panic`, or a `want`/`expected`/`got` comparison). A matching `--expect` also accepts new
+tests that the base could not run at all.
 
 A file can hold several new tests, and one failing on the base says nothing about the
 others. When the command runs pytest, both runs also write a JUnit XML report, and each
 test the branch adds or changes is judged on its own: it must fail on the merge base and
 pass on the branch. Node's built-in test runner reports each case in a new test file
-and lets the caller name cases in edited files. Other runners are judged by the whole run.
+and lets the caller name cases in edited files (`--case FILE::NAME`, where a case inside
+`describe` blocks is named with its suites, `refund > caps`). Other runners are judged by
+the whole run.
+
+A proof covers the project's files except its documentation (`*.md`, `*.rst` and `docs/`):
+editing code, configuration or fixtures stales it, editing a README does not.
 """
 
 from __future__ import annotations
@@ -33,7 +42,7 @@ from rung.core import git, launch, ledger
 from rung.core.config import check_command
 from rung.core.errors import RungError
 from rung.core.proc import run as run_process
-from rung.core.redact import redact_lines
+from rung.core.redact import plain_text, redact_lines
 
 TEST_PATTERNS = [
     "**/test_*.py", "**/*_test.py", "**/tests/**", "**/__tests__/**", "**/*.test.*",
@@ -46,6 +55,7 @@ class Run:
     returncode: int
     tail: list[str]
     stderr: list[str] = field(default_factory=list)
+    output: str = ""  # everything the run printed, stdout then stderr, without terminal escapes
 
 
 @dataclass
@@ -78,7 +88,8 @@ def is_test_file(path: str) -> bool:
 def _run(argv: list[str], cwd: Path, timeout: int) -> Run:
     result = run_process(argv, cwd=cwd, timeout=timeout)
     return Run(result.returncode, (result.stdout + result.stderr).strip().splitlines()[-25:],
-               result.stderr.strip().splitlines()[-25:])  # fmt: skip
+               result.stderr.strip().splitlines()[-25:],
+               plain_text(result.stdout + "\n" + result.stderr))  # fmt: skip
 
 
 def runs_pytest(argv: list[str]) -> bool:
@@ -96,18 +107,29 @@ def _runs_node(argv: list[str]) -> bool:
     return Path(argv[0]).name in {"node", "node.exe"} and "--test" in argv
 
 
-def node_outcomes(path: Path, root: Path) -> dict[tuple[str, str], str]:
+def node_records(path: Path, root: Path) -> list[tuple[str, str, str]]:
+    """Every case the Node reporter wrote, as (file relative to `root`, `suite > name`, status).
+
+    Repeats are kept: a test defined in a loop reports once per iteration under the same name.
+    """
     try:
         records = [json.loads(line) for line in path.read_text().splitlines()]
     except (OSError, ValueError):
-        return {}
-    outcomes = {}
+        return []
+    found = []
     for case in records:
         source = (root / case["file"]).resolve()
-        if not source.is_relative_to(root):
-            continue
-        key = (source.relative_to(root).as_posix(), case["name"])
-        outcomes[key] = "error" if key in outcomes else case["status"]
+        if source.is_relative_to(root):
+            found.append((source.relative_to(root).as_posix(), case["name"], case["status"]))
+    return found
+
+
+def node_outcomes(path: Path, root: Path) -> dict[tuple[str, str], str]:
+    """(file, `suite > name`) -> the worst outcome of the cases with that identity, as for pytest parameters."""
+    outcomes: dict[tuple[str, str], str] = {}
+    for file, name, status in node_records(path, root):
+        key = (file, name)
+        outcomes[key] = max(outcomes.get(key, "passed"), status, key=OUTCOME_ORDER.index)
     return outcomes
 
 
@@ -212,7 +234,45 @@ SETUP_FAILURE = re.compile(
     r"ERROR collecting|errors? during collection|no tests ran|collected 0 items|Cannot find module|"
     r"is not exported|has no exported member|TS2307|TS2305|undefined: |cannot find package",
 )
-FAILURE_LINE = re.compile(r"\b(?:AssertionError|assert|fail(?:ed|ure)?|error|panic)\b", re.I)
+# A line that reports a failure: an error or exception name (`ImportError:`, `TypeError`), an assertion,
+# `fail`/`panic`, or a comparison such as Go's `got X, want Y` or `expected X`.
+FAILURE_LINE = re.compile(
+    r"\b(?:\w*Error|\w*Exception|assert\w*|fail(?:s|ed|ure|ures)?|panic\w*|want|wanted|expected|got)\b", re.I
+)
+# Documentation never changes what a proof is about: editing it must not stale the proof.
+DOC_SUFFIXES = (".md", ".rst")
+DOC_DIRS = ("docs/",)
+
+
+def is_documentation(path: str) -> bool:
+    """`*.md` and `*.rst` anywhere, and everything under the top-level `docs/` directory."""
+    return path.lower().endswith(DOC_SUFFIXES) or path.startswith(DOC_DIRS)
+
+
+def proof_scope(root: Path) -> list[str]:
+    """Glob patterns for the project's files except documentation, which a proof's verdict covers.
+
+    The patterns stay compact (one per top-level directory and file suffix, plus top-level and
+    suffix-less files by name), so checking a proof's freshness does not glob every file
+    against every other. A new file of a covered kind stales the proof too.
+    """
+    patterns: set[str] = set()
+    for rel in git.expand(root, ["**/*"]):
+        if is_documentation(rel):
+            continue
+        top, nested, _ = rel.partition("/")
+        suffix = PurePosixPath(rel).suffix
+        if nested and suffix and PurePosixPath(rel).stem and not any(c in rel for c in "*?["):
+            patterns.add(f"{top}/**/*{suffix}")
+        else:
+            patterns.add(rel)
+    return sorted(patterns)
+
+
+def expect_found(expect: str, run: Run) -> bool:
+    """Whether the run's output reports a failure containing `expect`, on stdout or stderr."""
+    stderr = set(run.stderr)
+    return any(expect in line and (line in stderr or FAILURE_LINE.search(line)) for line in run.output.splitlines())
 
 
 def prove(
@@ -233,7 +293,8 @@ def prove(
     missing = [t for t in chosen if not (root / t).is_file()]
     if missing:
         raise RungError(f"test file(s) not found: {', '.join(missing)}")
-    before = ledger.snapshot(root, ["**/*"])
+    scope = proof_scope(root)
+    before = ledger.snapshot(root, scope)
     check_command("prove", "command", command)
     argv = shlex.split(command)
     pytest_run = runs_pytest(argv)
@@ -302,18 +363,17 @@ def prove(
             f"{len(weak)} new or changed test(s) also pass (or skip) on the merge base, so they prove nothing "
             f"about the fix: {_names(weak)}"
         )
-    elif expect and not any(
-        expect in line and (line in base_run.stderr or FAILURE_LINE.search(line)) for line in base_run.tail
-    ):
+    elif expect and not expect_found(expect, base_run):
         proof.verdict = "fail"
         proof.summary = f"the base run failed, but not with {expect!r}; it may be failing for another reason"
     elif not expect and SETUP_FAILURE.search(base_text):
         proof.verdict = "fail"
         proof.summary = (
             "on the merge base the tests failed while loading (an import or collection error), not on an "
-            "assertion. If that failure is the bug, re-run with --expect '<text of the failing assertion>'"
+            "assertion. If that failure is the bug, re-run with --expect '<text from that error that shows "
+            "the bug, e.g. the missing name>'"
         )
-    elif not_run:
+    elif not_run and not expect:
         proof.verdict = "fail"
         proof.summary = f"{len(not_run)} test(s) did not reach a test failure on the merge base: {_names(not_run)}"
     elif head_run.returncode != 0:
@@ -322,6 +382,11 @@ def prove(
     elif not_passing:
         proof.verdict = "fail"
         proof.summary = f"{len(not_passing)} new or changed test(s) did not pass on this branch: {_names(not_passing)}"
+    elif not_run:
+        proof.summary = (
+            f"the merge base failed with {expect!r} before reaching {len(not_run)} test(s), which pass on this "
+            f"branch: {_names(not_run)}"
+        )
     elif cases:
         proof.summary = (
             f"{len(cases)} new or changed test(s) fail on merge base {mb[:10]} and pass on this branch: "
@@ -329,8 +394,13 @@ def prove(
         )
     else:
         proof.summary = f"suite fails on merge base {mb[:10]} and passes on this branch"
-    if ledger.snapshot(root, ["**/*"]) != before:
-        proof.verdict, proof.summary = "error", "files changed while the proof ran; re-run it"
+    # Only files that existed before the run count: reports and caches the tests create
+    # (coverage.xml, junit, .coverage) are not edits to the code under proof.
+    after = ledger.snapshot(root, scope)
+    if moved := sorted(path for path, digest in before.items() if after.get(path) != digest):
+        proof.verdict = "error"
+        proof.summary = "files changed while the proof ran; re-run it: " + ", ".join(moved[:5])
+    covered = before if moved else after
 
     slug = re.sub(r"[^a-z0-9]+", "-", command.lower()).strip("-")[:40] or "tests"
     ledger.record(
@@ -338,13 +408,13 @@ def prove(
         check_id=f"proof:{slug}",
         kind="proof",
         verdict=proof.verdict,
-        covers=before,
+        covers=covered,
         specs={},
         summary=proof.summary,
         context=mb,
         details={
             "command": command, "cwd": cwd, "base": mb, "tests": chosen, "expect": expect or "",
-            "files": sorted(before), "covers": ["**/*"],
+            "files": sorted(covered), "covers": scope,
             "base_returncode": base_run.returncode, "head_returncode": head_run.returncode,
             "base_tail": redact_lines(base_run.tail), "head_tail": redact_lines(head_run.tail),
             "scope": "case" if cases else "suite",

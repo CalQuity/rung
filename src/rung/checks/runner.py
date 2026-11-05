@@ -121,15 +121,13 @@ def run_check(
     cover_patterns, spec_patterns = checker.covers(check), checker.specs(check)
     before = (ledger.snapshot(root, cover_patterns), ledger.snapshot(root, spec_patterns))
     tools = tool_identity(root, check)
-    links = sorted(p for snapshots in before for p, digest in snapshots.items() if digest.startswith("external-link:"))
-    if links:
-        outcome = Outcome("error", "covered paths link outside the project: " + ", ".join(links[:5]))
-    else:
-        try:
-            context = Context(root=root, base=base, seed=seed, scenarios=scenarios, merge_gate=merge_gate)
-            outcome = checker.run(context, check)
-        except (RungError, OSError, subprocess.TimeoutExpired) as exc:
-            outcome = Outcome("error", str(exc))
+    # A covered link that points outside the project is recorded by its target path, never followed:
+    # pointing it somewhere else stales the verdict, but what it points at is not part of the evidence.
+    try:
+        context = Context(root=root, base=base, seed=seed, scenarios=scenarios, merge_gate=merge_gate)
+        outcome = checker.run(context, check)
+    except (RungError, OSError, subprocess.TimeoutExpired) as exc:
+        outcome = Outcome("error", str(exc))
     # Hash before and after: a file edited mid-run must not be recorded as verified.
     after = (ledger.snapshot(root, cover_patterns), ledger.snapshot(root, spec_patterns))
     if after != before:

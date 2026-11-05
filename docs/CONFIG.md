@@ -119,11 +119,13 @@ require at least one passing case.
 | `faults` | the script's own list | Fault scenario names, passed as `RUNG_FAULTS` (comma-separated); `[]` drives none |
 | `scenarios` | all | Scenario names to drive, passed as `RUNG_SCENARIOS` (comma-separated) |
 | `structured` | `false` | Require `result.json` with an integer seed, unique scenario names, and at least one boolean assertion outcome per scenario. Newly drafted drives enable this. |
-| `isolate` | `true` for drafts, otherwise `false` | Run in a disposable guarded copy, including when replaying a seed. An unavailable guard reports an error. |
+| `isolate` | `false` | Run in a disposable guarded copy, including when replaying a seed. An unavailable guard reports an error. `rung draft runtime` writes `isolate = true` for the checks it registers. |
 
 The generated evidence page is hashed alongside the artifacts. Run older receipts again to
 bind their generated pages.
 
+Only `isolate = true` turns isolation on; `drafted_by` alone does not. A drive drafted by an earlier
+version (with `drafted_by` but no `isolate`) keeps running un-isolated until you add `isolate = true`.
 Add `--isolate` when registering a hand-written drive to enable the same behavior. The guard
 limits writes and filters the environment. Drives with `uv run --with` can fetch dependencies.
 Set `isolate = false` for a reviewed drive that needs host access, or when running it inside

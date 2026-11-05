@@ -201,3 +201,79 @@ def test_node_proof_distinguishes_a_real_regression_from_a_vacuous_case(repo, ex
         assert result.cases[0].base == "passed"
     regression = next(case for case in result.cases if case.test == "app.test.cjs::catches bug")
     assert regression.proven
+
+
+# --- --expect, files written by the run, and what a proof covers ---------------------------------
+
+
+def test_expect_accepts_a_base_that_cannot_import_the_fix(repo: Path) -> None:
+    (repo / "money.py").write_text(BUGGY)
+    commit_all(repo, "buggy refund")
+    run_git(repo, "checkout", "-qb", "fix")
+    (repo / "money.py").write_text(FIXED + "\n\ndef cap(charged, requested):\n    return min(charged, requested)\n")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_money.py").write_text(
+        "from money import cap\n\ndef test_cap():\n    assert cap(100, 150) == 100\n"
+    )
+    without = prove.prove(repo, PYTEST, "main")
+    assert without.verdict == "fail" and "--expect" in without.summary and "missing name" in without.summary
+    result = prove.prove(repo, PYTEST, "main", expect="cannot import name 'cap'")
+    assert result.verdict == "pass", (result.summary, result.base)
+    assert "before reaching 1 test(s)" in result.summary and result.cases[0].head == "passed"
+    assert prove.prove(repo, PYTEST, "main", expect="no such text").verdict == "fail"
+
+
+def test_expect_matches_a_go_style_comparison_on_stdout(repo: Path) -> None:
+    (repo / "money.py").write_text(BUGGY)
+    commit_all(repo, "buggy refund")
+    run_git(repo, "checkout", "-qb", "fix")
+    (repo / "money.py").write_text(FIXED)
+    (repo / "refund_test.py").write_text(
+        "import sys\nfrom money import refund\n"
+        "got = refund(100, 150)\n"
+        "if got != 100:\n"
+        "    print(f'refund_test.go:12: refund(100, 150) = {got}, want 100')\n"
+        "    sys.exit(1)\n"
+        "print('ok')\n"
+    )
+    result = prove.prove(repo, f"{sys.executable} refund_test.py", "main", expect="want 100")
+    assert result.verdict == "pass", (result.summary, result.base)
+
+
+def test_reports_the_tests_write_do_not_void_the_proof(repo: Path) -> None:
+    (repo / "fixture.json").write_text("{}\n")
+    writer = TEST.replace(
+        "def test_refund_never_exceeds_charge():\n",
+        "def test_refund_never_exceeds_charge():\n    open('coverage.xml', 'w').write('<coverage/>')\n",
+    )
+    _branch(repo, FIXED, writer)
+    result = prove.prove(repo, PYTEST, "main")
+    assert result.verdict == "pass", result.summary
+    assert (repo / "coverage.xml").is_file()
+    editor = writer.replace("open('coverage.xml', 'w')", "open('fixture.json', 'a')")
+    (repo / "tests" / "test_money.py").write_text(editor)
+    result = prove.prove(repo, PYTEST, "main")
+    assert result.verdict == "error" and "fixture.json" in result.summary
+
+
+def test_documentation_edits_do_not_stale_a_proof(repo: Path) -> None:
+    from rung.analysis import report
+    from rung.core import config
+
+    (repo / "docs").mkdir()
+    (repo / "docs" / "guide.txt").write_text("how refunds work\n")
+    (repo / "fixtures").mkdir()
+    (repo / "fixtures" / "cases.json").write_text("[150]\n")
+    commit_all(repo, "docs and fixtures")
+    _branch(repo, FIXED, TEST)
+    (repo / "rung.toml").write_text('[project]\nname = "p"\n')
+    assert prove.prove(repo, PYTEST, "main").verdict == "pass"
+
+    def verdict() -> str:
+        return report.build(config.load(repo))["proofs"][0]["verdict"]
+
+    (repo / "README.md").write_text("demo, now with refunds\n")
+    (repo / "docs" / "guide.txt").write_text("how refunds work, revised\n")
+    assert verdict() == "pass"
+    (repo / "fixtures" / "cases.json").write_text("[150, 200]\n")
+    assert verdict() == "stale"
