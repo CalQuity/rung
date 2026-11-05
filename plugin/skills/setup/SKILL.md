@@ -14,7 +14,7 @@ when that code changes. Every verdict comes from a tool (tests, scanners, TLC, t
 from a model. Your job here is to wire those tools up, show the developer what they found, and leave
 the decisions that are theirs to them.
 
-Run every command non-interactively (`--provider`, explicit flags): you cannot answer prompts.
+Run every command non-interactively (explicit flags such as `--provider`): you cannot answer prompts, so ask the developer first where a flag needs their choice.
 
 ## 1. Install and check the environment
 
@@ -29,16 +29,21 @@ them (`rung doctor` prints the commands), but continue without them.
 
 ## 2. Initialise
 
+Ask the developer which model, if any, should draft TLA+ specs, Lean proofs, app-driving scripts and
+explanations. `rung doctor` (step 1) shows which model CLIs are installed. The choices are
+`claude-cli`, `codex-cli`, an `openai-compatible` endpoint they configure, or `none` for checks and
+agent skills only. Do not pick one for them. Then run, with their answer:
+
 ```bash
-rung init --provider none
+rung init --provider <their choice>
 ```
 
-Use `--provider claude-cli` or `--provider codex-cli` instead only if the developer wants Rung to draft
-TLA+ specs, Lean proofs or app-driving scripts with that tool (it reuses their existing login). `init`
-builds the project's verification kit: it records each detected test suite, linter and type checker,
-the installed scanners and new-dependency vetting in `rung.toml`, and installs the agent skills and the
-Stop hook (step 5; pass `--no-agents` if the developer does not want them). Run without a terminal, it
-drafts nothing; `rung kit` then lists every part of the kit, what is missing, and the command that adds it.
+Rung runs the model CLI they chose and that CLI uses its own sign-in; Rung never reads or stores a
+credential. `init` builds the project's verification kit: it records each detected test suite, linter
+and type checker, the installed scanners and new-dependency vetting in `rung.toml`, and installs the
+agent skills and the Stop hook (step 5; pass `--no-agents` if the developer does not want them). Run
+without a terminal, it drafts nothing; `rung kit` then lists every part of the kit, what is missing,
+and the command that adds it.
 
 Open `rung.toml` and check it against the repository:
 - Each test check's `run` command works from its `cwd`. Fix it if the project runs tests differently
