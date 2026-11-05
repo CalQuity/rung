@@ -249,8 +249,15 @@ on both the local check path and the merge path. Teams can require a check scope
 A local focused check runs only execution checks with declared targets touched by the change and
 reports omitted checks. Shared inputs still invalidate earlier verdicts. The merge gate applies its
 full selection.
+Its settings (policy mode, extra policy paths, required coverage, approval label) come from the
+`[gate]` table on the merge base, so the change under review cannot loosen them; caller options
+only fill unset keys. A matching approval label turns blocking policy changes into reported ones.
+When given the pull request head, the gate refuses to judge any other commit. Each custom check
+needs its own verifier declaration: a policy glob exempts only checks whose launch files it matches.
 A gate runs every selected automated check again, ensures approved laws have their enforcing
-checks in the selection, and checks final freshness. The verdict ledger remains useful for
+checks in the selection, and checks final freshness. These controls catch accidental or agent-made
+weakening. They do not give integrity against a hostile change: its code runs where the receipt is
+produced, on the local runner and in a Daytona sandbox alike. The verdict ledger remains useful for
 developer feedback and review. A hash in a contributor-controlled file establishes integrity
 against accidental changes.
 
@@ -284,7 +291,9 @@ misses its behavior control under `.rung/cache/drafts/`. Review the retained scr
 An accepted draft replaces the configured script and publishes its evidence.
 
 `rung check --reuse-local` can reuse an unchanged verdict only with a local environment receipt.
-The receipt hashes the environment and resolved launcher identities, with no environment variables
-in the shared verdict. It includes symlinks along a launcher path and their targets. Rung reruns
+The receipt hashes the toolchain-relevant environment (PATH, locale, and interpreter, package
+manager and compiler variables such as `PYTHON*`, `NODE*`, `UV_*`, `GO*`, `CARGO*`, `JAVA*`) and
+resolved launcher identities, with no environment variables in the shared verdict. Session noise
+such as terminal or CI bookkeeping variables does not prevent reuse. It includes symlinks along a launcher path and their targets. Rung reruns
 checks when a package runner manages the delegated tool environment and its identity is unavailable
 before execution. The merge gate always reruns its checks.

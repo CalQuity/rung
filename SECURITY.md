@@ -34,11 +34,24 @@ Rung is in an early preview (0.x). Fixes go into the latest release only.
   Run the gate on a disposable runner with a read-only token and no secrets. Keep the required
   workflow and additional policy paths under repository-owner review. The gate preflights declared
   policy and re-runs checks. A ledger hash is a local integrity check.
+- **What the gate protects against.** The merge gate catches accidental or agent-made weakening of
+  checks: edited policy, scanner configs, test hooks, launch scripts, and the gate's own settings,
+  which it reads from the base revision's `[gate]` table. It does not protect against a hostile
+  pull request. In the local executor, pull request code runs as the runner user and can alter the
+  runner, the installed Rung, later steps and the report. The action therefore fails in the step
+  that ran the checks. Never give that job a write token or secrets. Post comments from a separate
+  `workflow_run` workflow that does not run pull request code (see the README).
+- **Policy approval.** A maintainer approves a reviewed policy change by applying the label named
+  by the base `[gate]` table's `approval_label` (default `rung-policy-approved`). It counts only on
+  the run that applying it starts, so each new push needs a fresh approval. Anyone with triage
+  access can apply labels: limit those roles to maintainers.
 - **Optional Daytona execution.** The trusted coordinator uses the API key to create a private,
   short-lived sandbox. Keep the key and other secrets out of the snapshot. The sandbox receives
   the commit and reachable Git history and returns check verdicts and short summaries. Treat
-  those summaries as output from code under review. Keep approval and policy decisions with
-  repository owners.
+  those summaries as output from code under review. Daytona keeps secrets away from pull request
+  code, but like the local executor it gives no integrity against that code: the receipt is
+  produced in the same sandbox where pull request code runs. The receipt and report record the
+  resolved snapshot ID. Keep approval and policy decisions with repository owners.
 - **Artifacts.** CI uploads are disabled by default. Screenshots, HAR files, traces, and raw result
   files can contain private data. Use synthetic inputs and test accounts before enabling uploads.
 - **Registry requests.** The `deps` check queries public package registries by package name.

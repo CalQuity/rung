@@ -98,7 +98,9 @@ runs:
       run: |
         # Drafted and `isolate = true` evidence checks run under Bubblewrap on Linux.
         if ! command -v bwrap > /dev/null && command -v apt-get > /dev/null && sudo -n true 2> /dev/null; then
-          sudo -n apt-get install -y -qq bubblewrap > /dev/null || true
+          sudo -n apt-get install -y -qq bubblewrap > /dev/null 2>&1 \
+            || { sudo -n apt-get update -qq > /dev/null 2>&1 && sudo -n apt-get install -y -qq bubblewrap > /dev/null; } \
+            || true
         fi
         if ! command -v bwrap > /dev/null; then
           echo "::notice::Bubblewrap is not installed; isolated evidence checks will report an error."

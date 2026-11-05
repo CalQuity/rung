@@ -34,6 +34,27 @@ run = "pytest -q"
 covers = ["src/**", "tests/**"]
 ```
 
+### Merge gate (`[gate]`)
+
+`rung gate` reads this table from the merge base, never from the change under review. Workflow
+inputs and `rung gate` options fill only the keys the base leaves unset. A change to the table is
+itself a policy change that needs approval, even with `policy_changes = "warn"`.
+
+```toml
+[gate]
+policy_changes = "fail"                   # "fail" blocks policy changes before checks run; "warn" reports them
+policy_paths = [".semgrep/rules/**"]      # more files that decide the gate
+require_coverage = ["src/**"]             # changed files here need a declared execution check
+approval_label = "rung-policy-approved"   # a maintainer's label that approves reviewed policy changes
+```
+
+All globs are relative to the directory holding `rung.toml`; use `../` to name a file elsewhere in
+the repository. A policy path that matches a custom check's launch script also stands in for that
+check's `specs`, for that check only. `rung gate --pr-label LABEL` reports policy changes without
+blocking when `LABEL` equals `approval_label`; the GitHub Action passes the label only on the run a
+maintainer starts by applying it. `rung gate --pr-head SHA` blocks unless HEAD is that commit or a
+merge commit of it.
+
 ### Models
 
 Checks never use a model: every verdict comes from a deterministic tool. A model is used only by

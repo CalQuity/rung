@@ -75,6 +75,37 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
   Anthropic's plugin directory. Install with `/plugin marketplace add CalQuity/rung` and
   `/plugin install rung@rung`; the marketplace keeps its name, so existing installs update in place.
   The setup skill's raw URL is now `.../main/plugin/skills/setup/SKILL.md`.
+- `rung gate` reads its settings from a `[gate]` table in `rung.toml` on the merge base:
+  `policy_changes`, `policy_paths`, `require_coverage` and `approval_label`. The Action's inputs and
+  the matching options apply only to keys the base leaves unset, and a change to the table needs
+  approval. To lock the gate against a workflow edit, add the table on your default branch.
+- `policy-paths` (and `--policy-path`) are now relative to the directory holding `rung.toml`, like
+  `require-coverage`; they were relative to the repository root. If `rung.toml` is in a
+  subdirectory, drop that directory from your globs, or use `../` for files outside it.
+- A maintainer approves reviewed policy changes, including Dependabot workflow updates, by applying
+  the `rung-policy-approved` label (or the base's `approval_label`). Add `labeled` to the workflow's
+  `pull_request` types and grant `pull-requests: read`. Each new push needs the label applied again.
+- The Action fails in the step that ran the checks and no longer has a separate `Gate` step. Report,
+  upload and comment steps still run after a failure.
+- The gate blocks when HEAD is neither the pull request head nor a merge commit of it, for example a
+  `pull_request_target` run that checked out the base. The Action passes the head through the new
+  `pr-head` input; set it to `""` only when gating a different repository.
+- A policy path now exempts only the custom checks whose launch scripts it matches from the
+  verifier declaration rule. Before, any existing policy file exempted every check.
+- Daytona sandboxes live for 26 minutes, longer than all stage limits together. A failed deletion
+  prints a warning instead of discarding a verified result. The receipt and report name the
+  resolved snapshot ID.
+- `rung check --reuse-local` compares only toolchain-relevant environment variables (PATH, locale,
+  and interpreter, package-manager and compiler settings), so it now reuses verdicts across shells.
+- On Linux runners the Action installs Bubblewrap for isolated evidence checks and, on GitHub-hosted
+  runners, lifts Ubuntu's AppArmor restriction on unprivileged user namespaces for the job.
+
+### Security
+- The local executor protects against accidental or agent-made weakening of checks, not against a
+  hostile pull request: pull request code runs as the runner user and can alter later steps. Do not
+  give the gate job a write token; post comments from a separate `workflow_run` workflow (see the
+  README). Daytona keeps secrets away from pull request code but, for the same reason, does not make
+  its receipt tamper-proof.
 
 ## 0.3.0 (2026-11-04)
 

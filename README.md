@@ -358,9 +358,12 @@ The example pins the current release tag. To use the development gate behavior b
 pin a reviewed commit that includes it.
 
 ```yaml
-on: pull_request
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
 permissions:
   contents: read
+  pull-requests: read
 jobs:
   rung:
     runs-on: ubuntu-latest
@@ -379,15 +382,35 @@ A merge gate requires repeatable checks.
 
 The action runs the gate with policy preflight enabled. Changes to `rung.toml`, `LAWS.md`,
 waivers, baselines, generated drive files, formal models, declared `specs`, or GitHub workflow files block
-before checks execute. Use `policy-paths` for other rule files and trusted wrappers. Establish a
-review route for intentional policy changes with your repository owners. After review, a maintainer
-can use `--allow-policy-changes` locally or `policy-changes: warn` from a trusted workflow.
+before checks execute. Use `policy-paths` for other rule files and trusted wrappers.
 The gate follows static Python scripts and modules through `uv run`, including launchers named
 by package scripts. It protects repository symlinks along those paths and their repository-local
 targets. List files used by dynamic wrappers in `policy-paths`.
 When a custom command claims a changed path through `verifies` or required coverage,
 the gate also requires a policy declaration. Include every verifier script and helper in
-`specs`, or supply the corresponding `--policy-path` globs from a trusted workflow.
+`specs`, or list the check's launch script in `policy_paths`. A policy path exempts only the
+checks whose launch files it matches.
+
+The gate reads its own settings from the `[gate]` table of `rung.toml` on the merge base, so a pull
+request cannot loosen the gate that judges it. The action's `policy-changes`, `policy-paths` and
+`require-coverage` inputs (and the matching `rung gate` options) apply only to keys the base leaves
+unset. Paths are relative to the directory holding `rung.toml`. A pull request that edits the
+`[gate]` table always needs approval.
+
+```toml
+[gate]
+policy_changes = "fail"            # or "warn" to report policy changes without blocking
+policy_paths = [".semgrep/rules/**"]
+require_coverage = ["src/**"]
+approval_label = "rung-policy-approved"   # the default
+```
+
+To approve a reviewed policy change, a maintainer applies the approval label. The action honors it
+only on the run that applying the label starts, and checks through the API that the label is still
+there, so a later push needs a fresh approval: remove the label and apply it again. Policy changes
+are then reported but do not block, and the checks still run. This covers Dependabot updates to
+workflow files too. Anyone with triage access can apply labels, so limit those roles to maintainers.
+Locally, `rung gate --pr-label rung-policy-approved` has the same effect.
 
 ```bash
 rung add command refund --run 'python3 verify_refund.py' \
@@ -400,12 +423,66 @@ when a changed file in that scope has no matching declared target. Set `verifies
 the paths a check is intended to verify. Explicit `covers` globs also count. The default
 repo-wide freshness scope alone does not satisfy required coverage.
 
+The gate also checks that it is judging the pull request. When the event has a pull request, HEAD
+must be its head commit or a merge commit of it; otherwise the gate blocks. A `pull_request_target`
+workflow that checks out the default ref (the base) fails this way. Set `pr-head: ""` only when the
+action runs on a different repository, as Rung's own fixture job does.
+
 Run the workflow on a disposable runner with read-only permissions and without repository secrets.
 Pin the action by commit SHA in a required workflow that contributors cannot replace. Enable
 `upload-evidence: true` only for runs using test accounts and synthetic data. Videos, HARs, traces,
 and screenshots may contain the data shown to the browser. The report goes to the job summary.
-To post a sticky PR comment, opt in with `comment: true` and grant `pull-requests: write`
-in the trusted workflow.
+
+The step that runs the checks also decides the result: it exits with the gate's code. The local
+executor protects against accidental or agent-made weakening of checks, not against a hostile pull
+request. Pull request code runs as the runner user, so it can alter the runner, later steps, the
+installed Rung, and the report. Steps that run after it, including `comment: true`, publish a
+result they cannot vouch for. Do not give that job a write token. To post a sticky comment, use a
+separate `workflow_run` workflow that never checks out or runs pull request code:
+
+```yaml
+# .github/workflows/rung-comment.yml
+on:
+  workflow_run:
+    workflows: [rung]
+    types: [completed]
+permissions:
+  pull-requests: write
+jobs:
+  comment:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN: ${{ github.event.workflow_run.id }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          # Fork pull requests are not listed on the run itself; find the PR by its head commit.
+          pr=$(gh pr list --repo "$REPO" --state open --search "$SHA" --json number --jq '.[0].number')
+          [ -n "$pr" ] || exit 0
+          printf '<!-- rung-report -->\nRung gate: **%s**. [Run details](https://github.com/%s/actions/runs/%s)\n' \
+            "$CONCLUSION" "$REPO" "$RUN" > report.md
+          existing=$(gh api "repos/$REPO/issues/$pr/comments" --paginate --jq '.[]
+            | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- rung-report -->"))) | .id' | head -n 1)
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$existing" -F body=@report.md > /dev/null
+          else
+            gh pr comment "$pr" --repo "$REPO" --body-file report.md
+          fi
+```
+
+The conclusion comes from GitHub, not from files the pull request could write. Treat any text you
+copy from the gated run's summary or artifacts as output from code under review.
+
+On Linux runners the action installs Bubblewrap, which drafted and `isolate = true` evidence checks
+use. Ubuntu 23.10 and later can block unprivileged user namespaces through AppArmor. On
+GitHub-hosted runners, which are single-use VMs, the action lifts that restriction for the job. On a
+self-hosted runner, run `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` (or install an
+AppArmor profile for `bwrap`) if you accept that change on that machine; otherwise isolated checks
+report an error.
 
 ### Run PR checks in Daytona
 
@@ -427,11 +504,19 @@ snapshot credential-free. Set `DAYTONA_API_KEY` as a secret in the repository th
 Use a clean checkout with `fetch-depth: 0` and `persist-credentials: false`. The coordinator
 transfers a Git bundle containing the commit and its reachable history, up to 100 MiB. Confirm that
 your repository can share that history with Daytona before enabling this. The sandbox has outbound
-network access blocked and expires after 20 minutes. Rung requests deletion at the end of the run.
-The job summary contains check verdicts and short summaries. Screenshots and other evidence files
-stay in the sandbox and expire with it. A provider or snapshot error fails the gate.
+network access blocked and expires after 26 minutes, longer than every stage limit combined.
+Rung requests deletion at the end of the run; if that request fails, Rung prints a warning and
+keeps the verified result. The job summary contains check verdicts, short summaries, and the
+resolved snapshot ID, so you can tell which image ran the checks even if the name is moved later.
+Screenshots and other evidence files stay in the sandbox and expire with it. A provider or snapshot
+error fails the gate.
 Use offline tooling for checks that normally query a registry or scanner service, or run those
 checks in a separate required job.
+
+Daytona keeps secrets on the coordinator away from pull request code. It does not make the result
+tamper-proof: as with the local executor, the receipt is produced in the sandbox where pull request
+code runs, so a hostile pull request can forge its own verdicts. Treat Daytona as confidentiality
+for secrets, not as integrity against the code under review.
 
 Keep the workflow, action pin, snapshot and secret under maintainer control. Run repository
 commands and dependency installation inside the sandbox. Ordinary fork PR workflows do not receive
