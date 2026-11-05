@@ -361,7 +361,7 @@ pin a reviewed commit that includes it.
 ```yaml
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 permissions:
   contents: read
   pull-requests: read

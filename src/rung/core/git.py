@@ -227,15 +227,19 @@ def expand(root: Path, patterns: list[str]) -> list[str]:
     """Resolve glob patterns against the project's files.
 
     A pattern that matches nothing is kept literally, so a deleted file shows up
-    as missing instead of silently dropping out of a verdict's coverage.
+    as missing instead of silently dropping out of a verdict's coverage. A pattern
+    starting with `!` excludes the files it matches from the result.
     """
     if not patterns:
         return []
     files = [f for f in list_files(root) if not is_rung_output(f)]
+    excluded = [p[1:] for p in patterns if p.startswith("!")]
     out: set[str] = set()
-    for pattern in patterns:
+    for pattern in (p for p in patterns if not p.startswith("!")):
         matches = [f for f in files if glob_match(pattern, f)]
         out.update(matches or [pattern])
+    if excluded:  # `!pattern` removes matches, so a scope can be "everything except documentation"
+        out = {f for f in out if not any(glob_match(x, f) for x in excluded)}
     return sorted(out)
 
 

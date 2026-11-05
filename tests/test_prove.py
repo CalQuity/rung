@@ -277,3 +277,21 @@ def test_documentation_edits_do_not_stale_a_proof(repo: Path) -> None:
     assert verdict() == "pass"
     (repo / "fixtures" / "cases.json").write_text("[150, 200]\n")
     assert verdict() == "stale"
+
+
+def test_a_file_added_after_the_proof_stales_it(repo: Path) -> None:
+    from rung.analysis import report
+    from rung.core import config
+
+    _branch(repo, FIXED, TEST)
+    (repo / "rung.toml").write_text('[project]\nname = "p"\n')
+    assert prove.prove(repo, PYTEST, "main").verdict == "pass"
+
+    def verdict() -> str:
+        return report.build(config.load(repo))["proofs"][0]["verdict"]
+
+    (repo / "notes.md").write_text("a new document\n")
+    assert verdict() == "pass"
+    (repo / "plugins").mkdir()
+    (repo / "plugins" / "discount.toml").write_text("rate = 2\n")  # a new directory and file type
+    assert verdict() == "stale"

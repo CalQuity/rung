@@ -312,3 +312,21 @@ def test_action_passes_the_label_only_when_it_was_just_applied_and_is_still_pres
         _run_step(tmp_path, repo, {**env, "EVENT_ACTION": "synchronize"}, 0, labels="rung-policy-approved\\n")[0] == 0
     )
     assert not any(arg.startswith("--pr-label") for arg in args.read_text().splitlines())
+
+
+def test_reuse_compares_test_runner_options_from_the_environment() -> None:
+    names = [name for name, _ in ledger.tool_environment(
+        {"PYTEST_ADDOPTS": "-k refund", "PYTEST_PLUGINS": "x", "SHLVL": "2", "PWD": "/tmp"}
+    )]  # fmt: skip
+    assert names == ["PYTEST_ADDOPTS", "PYTEST_PLUGINS"]
+
+
+def test_glob_exclusions_remove_matches(repo: Path) -> None:
+    from rung.core import git
+
+    (repo / "a.py").write_text("x = 1\n")
+    (repo / "docs").mkdir()
+    (repo / "docs" / "g.txt").write_text("guide\n")
+    commit_all(repo, "files")
+    found = git.expand(repo, ["**/*", "!**/*.md", "!docs/**"])
+    assert "a.py" in found and "README.md" not in found and "docs/g.txt" not in found

@@ -5,8 +5,9 @@ name: rung
 # request's own action on a synthetic fixture.
 on:
   pull_request:
-    # `labeled` lets a maintainer approve reviewed policy changes with the base's approval label.
-    types: [opened, synchronize, reopened, labeled]
+    # `labeled` lets a maintainer approve reviewed policy changes with the base's approval label;
+    # `unlabeled` re-runs the gate without it, so removing the label withdraws the approval.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read

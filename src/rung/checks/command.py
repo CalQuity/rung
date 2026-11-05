@@ -202,6 +202,9 @@ class CommandChecker(Checker):
                 # The user's report path is kept: appending a second option would silently replace it.
                 report = ctx.root / check.get("cwd", ".") / own
                 args = argv
+                # Only a report this run writes counts: a leftover from an earlier run must not pass it.
+                if report.is_file() or report.is_symlink():
+                    report.unlink()
             else:
                 report = Path(tmp) / "results.xml"
                 option = f"--junitxml={report}"

@@ -48,6 +48,11 @@ inputs:
   executor:
     description: Where to run PR checks. Choose local or daytona.
     default: "local"
+  install-bubblewrap:
+    description: >-
+      Install Bubblewrap with apt when isolated evidence checks need it. "auto" installs it only on
+      GitHub-hosted runners; "true" also installs it on self-hosted runners; "false" never installs.
+    default: "auto"
   daytona-snapshot:
     description: Reviewed Daytona snapshot with Rung and the project's offline toolchain installed.
     default: ""
@@ -93,10 +98,20 @@ runs:
         uv tool install "${PACKAGE:-$ACTION_PATH}" "${extra[@]}"
 
     - name: Prepare Bubblewrap for isolated checks
-      if: runner.os == 'Linux' && inputs.executor == 'local'
+      if: runner.os == 'Linux' && inputs.executor == 'local' && inputs.install-bubblewrap != 'false'
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        INSTALL: ${{ inputs.install-bubblewrap }}
       run: |
-        # Drafted and `isolate = true` evidence checks run under Bubblewrap on Linux.
+        # Evidence checks with `isolate = true` run under Bubblewrap on Linux. Nothing to do without one.
+        if ! grep -Eqs '^[[:space:]]*isolate[[:space:]]*=[[:space:]]*true' rung.toml; then exit 0; fi
+        # A self-hosted runner keeps its packages between jobs: change it only when asked to.
+        if [ "$RUNNER_ENVIRONMENT" != "github-hosted" ] && [ "$INSTALL" != "true" ]; then
+          command -v bwrap > /dev/null \
+            || echo "::notice::Bubblewrap is not installed; set install-bubblewrap: true to install it on this self-hosted runner."
+          exit 0
+        fi
         if ! command -v bwrap > /dev/null && command -v apt-get > /dev/null && sudo -n true 2> /dev/null; then
           sudo -n apt-get install -y -qq bubblewrap > /dev/null 2>&1 \
             || { sudo -n apt-get update -qq > /dev/null 2>&1 && sudo -n apt-get install -y -qq bubblewrap > /dev/null; } \

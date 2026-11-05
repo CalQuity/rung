@@ -250,23 +250,13 @@ def is_documentation(path: str) -> bool:
 
 
 def proof_scope(root: Path) -> list[str]:
-    """Glob patterns for the project's files except documentation, which a proof's verdict covers.
+    """Glob patterns for every project file except documentation, which a proof's verdict covers.
 
-    The patterns stay compact (one per top-level directory and file suffix, plus top-level and
-    suffix-less files by name), so checking a proof's freshness does not glob every file
-    against every other. A new file of a covered kind stales the proof too.
+    The scope is "everything, minus documentation" rather than a list built from today's files, so
+    a file, directory or file type added later also stales the proof.
     """
-    patterns: set[str] = set()
-    for rel in git.expand(root, ["**/*"]):
-        if is_documentation(rel):
-            continue
-        top, nested, _ = rel.partition("/")
-        suffix = PurePosixPath(rel).suffix
-        if nested and suffix and PurePosixPath(rel).stem and not any(c in rel for c in "*?["):
-            patterns.add(f"{top}/**/*{suffix}")
-        else:
-            patterns.add(rel)
-    return sorted(patterns)
+    return ["**/*", *(f"!**/*{s}" for s in DOC_SUFFIXES), *(f"!**/*{s.upper()}" for s in DOC_SUFFIXES),
+            *(f"!{d}**" for d in DOC_DIRS)]  # fmt: skip
 
 
 def expect_found(expect: str, run: Run) -> bool:

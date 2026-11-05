@@ -43,7 +43,8 @@ Rung is in an early preview (0.x). Fixes go into the latest release only.
   `workflow_run` workflow that does not run pull request code (see the README).
 - **Policy approval.** A maintainer approves a reviewed policy change by applying the label named
   by the base `[gate]` table's `approval_label` (default `rung-policy-approved`). It counts only on
-  the run that applying it starts, so each new push needs a fresh approval. Anyone with triage
+  the run that applying it starts, so each new push needs a fresh approval, and removing the label
+  re-runs the gate without it when the workflow also triggers on `unlabeled`. Anyone with triage
   access can apply labels: limit those roles to maintainers.
 - **Optional Daytona execution.** The trusted coordinator uses the API key to create a private,
   short-lived sandbox. Keep the key and other secrets out of the snapshot. The sandbox receives

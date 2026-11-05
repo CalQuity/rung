@@ -34,6 +34,19 @@ def test_pytest_keeps_the_users_junit_report(repo: Path, capsys) -> None:
     assert "test_ok" in (repo / "reports" / "junit.xml").read_text()
 
 
+def test_a_leftover_junit_report_does_not_pass_a_run_that_writes_none(repo: Path, capsys) -> None:
+    (repo / ".gitignore").write_text("reports/\n")
+    (repo / "reports").mkdir()
+    (repo / "test_ok.py").write_text("def test_ok():\n    assert True\n")
+    # A passing report from an earlier run, and a command that exits 0 without running any test.
+    (repo / "reports" / "junit.xml").write_text(
+        '<testsuites><testsuite tests="1"><testcase classname="t" name="old"/></testsuite></testsuites>'
+    )
+    _check(repo, f"{sys.executable} -m pytest --version -p no:cacheprovider --junitxml=reports/junit.xml")
+    assert rung(repo, "check", "unit", "--json") == 1
+    assert _result(capsys)["verdict"] != "pass"
+
+
 @pytest.fixture
 def fake_cargo(tmp_path: Path, monkeypatch) -> Path:
     """A `cargo` on PATH that prints the summary in `summary.txt`, with Cargo's colors."""

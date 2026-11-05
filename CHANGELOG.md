@@ -83,8 +83,9 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
   `require-coverage`; they were relative to the repository root. If `rung.toml` is in a
   subdirectory, drop that directory from your globs, or use `../` for files outside it.
 - A maintainer approves reviewed policy changes, including Dependabot workflow updates, by applying
-  the `rung-policy-approved` label (or the base's `approval_label`). Add `labeled` to the workflow's
-  `pull_request` types and grant `pull-requests: read`. Each new push needs the label applied again.
+  the `rung-policy-approved` label (or the base's `approval_label`). Add `labeled` and `unlabeled` to the
+  workflow's `pull_request` types and grant `pull-requests: read`. Each new push needs the label applied
+  again, and removing the label re-runs the gate without the approval.
 - The Action fails in the step that ran the checks and no longer has a separate `Gate` step. Report,
   upload and comment steps still run after a failure.
 - The gate blocks when HEAD is neither the pull request head nor a merge commit of it, for example a
@@ -173,6 +174,19 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
   give the gate job a write token; post comments from a separate `workflow_run` workflow (see the
   README). Daytona keeps secrets away from pull request code but, for the same reason, does not make
   its receipt tamper-proof.
+- With a `--junitxml` path of its own, a pytest check deletes any report left at that path before it
+  runs, so only a report the run writes can pass it.
+- Proofs cover every project file except documentation, including files added after the proof, so a
+  new source file, directory or file type stales the proof too. Coverage patterns accept `!glob` to
+  exclude files.
+- `rung check --reuse-local` also compares test-runner variables (`PYTEST_*`, `COVERAGE_*`,
+  `HYPOTHESIS_*`, `JEST_*`, `VITEST_*`, `MOCHA_*`, `PLAYWRIGHT_*`, `DEBUG`).
+- The Action installs Bubblewrap only when `rung.toml` has an `isolate = true` check, and only on
+  GitHub-hosted runners unless the new `install-bubblewrap: true` input asks for it on a self-hosted
+  runner. `install-bubblewrap: false` never installs it.
+- A required workflow or ruleset is still the only way to stop a pull request from editing the
+  workflow that runs the gate, because GitHub runs the pull request's copy of a `pull_request`
+  workflow.
 
 ## 0.3.0 (2026-11-04)
 

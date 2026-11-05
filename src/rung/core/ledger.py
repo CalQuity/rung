@@ -117,6 +117,8 @@ ENVIRONMENT_NAMES = frozenset({"PATH", "VIRTUAL_ENV", "CONDA_PREFIX", "LANG", "L
 ENVIRONMENT_PREFIXES = (
     "PYTHON", "UV_", "PIP_", "NODE", "NPM_CONFIG_", "YARN_", "PNPM_", "BUN_", "DENO_", "GO", "CGO_",
     "CARGO", "RUST", "JAVA", "JDK_", "MAVEN_", "GRADLE_", "LC_", "RUNG_",
+    # Test runners read their own options from the environment (PYTEST_ADDOPTS, PYTEST_PLUGINS, ...).
+    "PYTEST_", "COVERAGE_", "HYPOTHESIS_", "JEST_", "VITEST_", "MOCHA_", "PLAYWRIGHT_", "DEBUG",
 )  # fmt: skip
 
 
