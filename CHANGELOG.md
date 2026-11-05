@@ -75,6 +75,10 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
   Anthropic's plugin directory. Install with `/plugin marketplace add CalQuity/rung` and
   `/plugin install rung@rung`; the marketplace keeps its name, so existing installs update in place.
   The setup skill's raw URL is now `.../main/plugin/skills/setup/SKILL.md`.
+- Evidence checks run in an isolated copy only when they set `isolate = true`; `drafted_by` alone no
+  longer turns isolation on, and `rung draft runtime` now writes `isolate = true` for the checks it
+  registers. Drive checks drafted by 0.3.0 keep running un-isolated, with their verdicts intact,
+  until you add `isolate = true` to them in `rung.toml`.
 
 ## 0.3.0 (2026-11-04)
 

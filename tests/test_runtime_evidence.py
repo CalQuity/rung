@@ -368,7 +368,8 @@ def test_draft_with_findings_registers_the_check_and_fails(tmp_path: Path, monke
     assert rung(tmp_path, "draft", "runtime", "--allow-unisolated") == 1
     out = capsys.readouterr().out
     assert "The app failed 1 assertion(s)" in out and "state: state holds" in out
-    assert config.load(tmp_path).check("runtime").kind == "evidence"
+    registered = config.load(tmp_path).check("runtime")
+    assert registered.kind == "evidence" and registered.get("isolate") is True
 
 
 def test_long_output_lines_are_shortened(tmp_path: Path) -> None:
@@ -504,7 +505,7 @@ def test_drafted_drive_replay_retains_evidence_with_the_write_guard(tmp_path, mo
     )
     (root / "rung.toml").write_text(
         f'[[check]]\nid = "drive"\nkind = "evidence"\nrun = "{PY} drive.py"\n'
-        'drafted_by = "example"\nrequire = [".txt"]\n'
+        'isolate = true\nrequire = [".txt"]\n'
     )
     assert rung(root, "check", "drive", "--json") == 0
     result = json.loads(capsys.readouterr().out)["results"][0]
@@ -522,7 +523,7 @@ def test_drafted_drive_does_not_run_when_the_write_guard_is_unavailable(tmp_path
     marker = tmp_path / "ran"
     (tmp_path / "drive.py").write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n")
     (tmp_path / "rung.toml").write_text(
-        f'[[check]]\nid = "drive"\nkind = "evidence"\nrun = "{PY} drive.py"\ndrafted_by = "example"\n'
+        f'[[check]]\nid = "drive"\nkind = "evidence"\nrun = "{PY} drive.py"\nisolate = true\n'
     )
 
     def unavailable(*args, **kwargs):
@@ -550,3 +551,28 @@ def test_doctor_requires_write_guard_for_an_isolated_drive(tmp_path, monkeypatch
     assert rung(tmp_path, "doctor", "--strict", "--json") == 1
     rows = json.loads(capsys.readouterr().out)
     assert any(row["tool"] == "drive: write guard" and not row["ok"] for row in rows)
+
+
+def test_a_drafted_check_without_isolate_keeps_running_unisolated(tmp_path, monkeypatch, capsys):
+    from rung.core import sandbox
+    from rung.core.errors import ToolMissing
+
+    (tmp_path / "drive.py").write_text(
+        "import os\nfrom pathlib import Path\n"
+        "(Path(os.environ['RUNG_EVIDENCE_DIR']) / 'observation.txt').write_text('seen')\n"
+    )
+    (tmp_path / "rung.toml").write_text(
+        f'[[check]]\nid = "drive"\nkind = "evidence"\nrun = "{PY} drive.py"\ndrafted_by = "claude-cli:sonnet"\n'
+    )
+
+    def unavailable(*args, **kwargs):
+        raise ToolMissing("write guard unavailable")
+
+    monkeypatch.setattr(sandbox, "write_guard", unavailable)
+    monkeypatch.setattr(sandbox, "validated_write_guard", unavailable)
+    check = config.load(tmp_path).check("drive")
+    assert not command.isolates_evidence(check)
+    assert command.isolates_evidence(config.Check("drive", "evidence", [], {**check.options, "isolate": True}))
+    assert rung(tmp_path, "check", "drive", "--json") == 0
+    result = json.loads(capsys.readouterr().out)["results"][0]
+    assert result["verdict"] == "pass" and result.get("execution") != "isolated"

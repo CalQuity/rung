@@ -304,7 +304,12 @@ def is_attested(check: Check) -> bool:
 
 
 def isolates_evidence(check: Check) -> bool:
-    return check.kind == "evidence" and not is_attested(check) and bool(check.get("isolate", check.get("drafted_by")))
+    """Whether a scripted evidence check runs in an isolated copy: only when it says `isolate = true`.
+
+    `rung draft runtime` writes `isolate = true` for the checks it registers. A check drafted before
+    that (with only `drafted_by`) keeps running un-isolated until `isolate = true` is added.
+    """
+    return check.kind == "evidence" and not is_attested(check) and check.get("isolate") is True
 
 
 def default_seed(check_id: str) -> int:

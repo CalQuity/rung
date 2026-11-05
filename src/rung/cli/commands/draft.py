@@ -119,6 +119,7 @@ def _draft_runtime(args, cfg: Config, out: Output) -> int:
                 "timeout": 900,
                 "require": list(args.require or []),
                 "structured": True,
+                "isolate": True,
                 "specs": [p.relative_to(cfg.root).as_posix() for p in result.files if p.name == "drive.py"],
                 "drafted_by": drafted_by(cfg, provider),
             },
