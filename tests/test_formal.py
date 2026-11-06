@@ -149,6 +149,24 @@ def test_drift_names_the_changed_files_and_clears_when_confirmed(shop: Path) -> 
     assert modelcard.drift(shop, "pay") is None
 
 
+def test_a_card_confirmed_before_file_modes_were_recorded_does_not_drift(shop: Path) -> None:
+    import hashlib
+
+    from rung.core.ledger import inputs_digest
+
+    card = modelcard.load(shop, "pay")
+    assert card
+    # Before 0.4 a snapshot value was the file's sha256 alone, without its mode.
+    legacy = {"shop/payments.py": hashlib.sha256(PAYMENTS.encode()).hexdigest()}
+    card["confirmed"] |= {"files": legacy, "digest": inputs_digest(legacy)}
+    modelcard.save(shop, card)
+    assert modelcard.drift(shop, "pay") is None
+    assert runner.status(load(shop), load(shop).check("pay")).state != "drifted"
+    _change_code(shop)
+    drift = modelcard.drift(shop, "pay")
+    assert drift and drift.changed == ["shop/payments.py"]
+
+
 def test_a_drifted_tla_check_is_an_error_and_never_reruns_tlc_on_the_old_spec(shop: Path, monkeypatch) -> None:
     def never(*_a: object, **_k: object) -> tla.TLCResult:
         raise AssertionError("TLC must not run on a model that may not describe the code")
@@ -520,3 +538,18 @@ def test_a_provider_failure_mid_maintenance_leaves_the_model_as_it_was(shop: Pat
     code, _ = _maintain(shop, monkeypatch, [_maintain_reply(WEAKER)])
     assert code == 2 and "unexpected error" in capsys.readouterr().err
     assert (shop / "spec" / "Pay.tla").read_text() == SPEC
+
+
+def test_model_only_pass_cannot_satisfy_an_approved_implementation_law(shop, monkeypatch, capsys):
+    modelcard.path(shop, "pay").unlink()
+    monkeypatch.setattr(tla, "run", _passes)
+    assert cli.main(["-C", str(shop), "check", "pay", "--json"]) == 0
+    check = json.loads(capsys.readouterr().out)["results"][0]
+    assert check["verdict"] == "pass" and check["implementation_link"] == "model-only"
+    data = report.build(load(shop))
+    assert data["laws"][0]["state"] == "unproven"
+    assert "Confirm a source link" in data["laws"][0]["why"]
+    assert cli.main(["-C", str(shop), "gate", "--base", "main", "--json"]) == 1
+    gate = json.loads(capsys.readouterr().out)
+    assert gate["results"] == []
+    assert gate["blocked"] == ["approved law charge-once needs a confirmed source link or an implementation check"]

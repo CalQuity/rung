@@ -139,7 +139,7 @@ def cmd_maintain(args, out: Output) -> int:
     theorems = [t.strip() for t in result.reply.get("theorems", []) if t.strip()]
     if check.kind == "lean" and theorems and theorems != check.get_list("theorems"):
         check = Check(check.id, check.kind, check.covers, {**check.options, "theorems": theorems})
-        add_check(cfg, check, out)
+        add_check(cfg, check, out, emit=False)
     if any(c["classification"] == "promise-changed" for c in result.changes):
         out.line(f"A promise changed on purpose: check that the laws in {laws.LAWS_FILE} still say what you mean.")
     skill = write_skill(cfg, check, card)

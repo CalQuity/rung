@@ -14,6 +14,7 @@ from .conftest import commit_all, run_git
     [
         ("**/*.py", "a.py", True),
         ("**/*.py", "src/deep/a.py", True),
+        ("**/*.py", "src/de\nep/a.py", True),
         ("src/*.py", "src/a.py", True),
         ("src/*.py", "src/deep/a.py", False),
         (".github/workflows/**", ".github/workflows/ci.yml", True),
@@ -70,3 +71,19 @@ def test_worktree_checks_out_the_base_and_cleans_up(repo: Path) -> None:
 def test_default_base_prefers_main(repo: Path) -> None:
     run_git(repo, "checkout", "-qb", "feature")
     assert git.default_base(repo) == "main"
+
+
+def test_batch_reads_keep_unusual_names_and_following_files_aligned(repo: Path) -> None:
+    paths = {"alpha\npart.py": b"first\n", "second\rpart.py": b"second\n", "tests/test_demo.py": b"third\n"}
+    for path, content in paths.items():
+        target = repo / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    commit_all(repo, "unusual filenames")
+    assert set(paths).issubset(git.list_files(repo))
+    assert git.show_many(repo, git.head(repo), list(paths)) == paths
+
+
+def test_default_base_finds_the_only_local_branch(repo: Path) -> None:
+    run_git(repo, "branch", "-m", "primary")
+    assert git.default_base(repo) == "refs/heads/primary"

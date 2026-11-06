@@ -28,9 +28,9 @@ def cmd_laws(args, out: Output) -> int:
     scopes = {
         c: modelcard.scope_lines(modelcard.load(cfg.root, c)) for law in laws.load(cfg.root) for c in law.enforced_by
     }
-    out.emit([{"id": law.id, "text": law.text, "harm": law.harm, "state": st, "why": why,
-               "enforced_by": law.enforced_by, "scope": {c: scopes[c] for c in law.enforced_by if scopes[c]}}
-              for law, st, why in rows])  # fmt: skip
+    out.emit({"laws": [{"id": law.id, "text": law.text, "harm": law.harm, "state": st, "why": why,
+                        "enforced_by": law.enforced_by, "scope": {c: scopes[c] for c in law.enforced_by if scopes[c]}}
+                       for law, st, why in rows]})  # fmt: skip
     if not rows:
         out.line(f"No laws in {laws.LAWS_FILE} yet.")
     for law, st, why in rows:
@@ -48,6 +48,15 @@ def cmd_laws(args, out: Output) -> int:
 def cmd_add(args, out: Output) -> int:
     cfg = load_config(args)
     options: dict[str, object] = {}
+    if args.verifies:
+        options["verifies"] = args.verifies
+    if args.specs:
+        options["specs"] = args.specs
+    for option in ("structured", "isolate"):
+        if getattr(args, option):
+            if args.kind != "evidence" or not args.run:
+                raise ConfigError(f"--{option} requires a scripted evidence check")
+            options[option] = True
     if args.kind in ("command", "evidence"):
         if not args.run and args.kind == "command":
             raise ConfigError("`rung add command` needs --run")

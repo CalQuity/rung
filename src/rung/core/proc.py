@@ -1,8 +1,10 @@
-"""Run external commands with a deadline that owns the whole process tree.
+"""Run external commands with a deadline and process-group cleanup.
 
 `subprocess.run(timeout=...)` kills only the direct child; a test runner or dev server it started
 keeps running. Here every command starts in its own process group (session), and on timeout the
-whole group is killed. Output is captured in memory and truncated to a bounded tail.
+whole group and known descendants are killed. A process that detaches and outlives its
+parent can escape ancestry-based cleanup. Output is spooled to temporary files, and
+the caller receives a bounded tail.
 """
 
 from __future__ import annotations
@@ -11,8 +13,11 @@ import contextlib
 import os
 import signal
 import subprocess
+import tempfile
+from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import BinaryIO
 
 MAX_OUTPUT = 2_000_000  # characters kept per stream
 
@@ -27,27 +32,61 @@ def run(
 ) -> subprocess.CompletedProcess[str]:
     """Run `argv` (no shell). Raises `subprocess.TimeoutExpired` after killing the whole process group."""
     posix = os.name == "posix"
-    proc = subprocess.Popen(
-        list(argv),
-        cwd=cwd,
-        env=dict(env) if env is not None else None,
-        stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=posix,
-    )
-    try:
-        out, err = proc.communicate(input=stdin, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        _kill_tree(proc, posix)
-        proc.communicate()
-        raise
-    finally:
-        # Anything the command left behind in its group (a server it backgrounded) goes too.
-        if proc.returncode is not None:
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        proc = subprocess.Popen(
+            list(argv),
+            cwd=cwd,
+            env=dict(env) if env is not None else None,
+            stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+            stdout=out,
+            stderr=err,
+            text=True,
+            start_new_session=posix,
+        )
+        detached = []
+        try:
+            proc.communicate(input=stdin, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            if posix:
+                detached = _descendants(proc.pid)
+            exc.output, exc.stderr = _tail(out), _tail(err)
+            raise
+        finally:
+            # Files rather than pipes let us return even if a detached child holds a descriptor.
             _kill_tree(proc, posix)
-    return subprocess.CompletedProcess(list(argv), proc.wait(), out[-MAX_OUTPUT:], err[-MAX_OUTPUT:])
+            for pid in detached:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.kill(pid, signal.SIGKILL)
+            proc.wait()
+        return subprocess.CompletedProcess(
+            list(argv), proc.returncode, _tail(out).decode(errors="replace"), _tail(err).decode(errors="replace")
+        )
+
+
+def _tail(file: BinaryIO) -> bytes:
+    end = file.seek(0, os.SEEK_END)
+    file.seek(max(0, end - MAX_OUTPUT))
+    return file.read(MAX_OUTPUT)
+
+
+def _descendants(pid: int) -> list[int]:
+    """Capture child PIDs before killing the parent, including processes that started a new session."""
+    try:
+        result = subprocess.run(["/bin/ps", "-axo", "pid=,ppid="], capture_output=True, text=True, timeout=1)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode:
+        return []
+    children: dict[int, list[int]] = defaultdict(list)
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) == 2 and all(field.isdecimal() for field in fields):
+            child, parent = map(int, fields)
+            children[parent].append(child)
+    found = list(children[pid])
+    for child in found:
+        found.extend(children[child])
+    return found
 
 
 def _kill_tree(proc: subprocess.Popen[str], posix: bool) -> None:

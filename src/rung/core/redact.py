@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 
 MASK = "[REDACTED]"
+_TERMINAL_ESCAPE = re.compile(r"\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~]|[@-Z\\-_])")
+_CONTROLS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
 # Each pattern has two groups: a prefix to keep, and the secret to mask.
 _PATTERNS = [
@@ -27,9 +29,15 @@ _PATTERNS = [
 
 
 def redact(text: str) -> str:
+    text = plain_text(text)
     for pattern in _PATTERNS:
         text = pattern.sub(lambda m: m.group(1) + MASK, text)
     return text
+
+
+def plain_text(text: str) -> str:
+    """Remove terminal commands from checker output while preserving tabs and line breaks."""
+    return _CONTROLS.sub("", _TERMINAL_ESCAPE.sub("", text))
 
 
 def redact_lines(lines: list[str]) -> list[str]:

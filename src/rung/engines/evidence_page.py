@@ -58,8 +58,11 @@ def _text(value: Any) -> str:
 
 
 def _result(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "result.json"
+    if path.is_symlink():
+        return {}
     try:
-        data = json.loads((run_dir / "result.json").read_text())
+        data = json.loads(path.read_text())
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
@@ -123,7 +126,7 @@ def _run_section(check_id: str, run: dict[str, Any], run_dir: Path, page_dir: Pa
     if feature := result.get("feature"):
         out.append(f"<p><b>Feature:</b> {html.escape(_text(feature))}</p>")
     out.append(f"<p class='muted'>Reproduce: <code>{html.escape(f'rung check {check_id} --seed {seed}')}</code></p>")
-    files = sorted(p for p in run_dir.rglob("*") if p.is_file() and p.name != PAGE_NAME)
+    files = sorted(p for p in run_dir.rglob("*") if not p.is_symlink() and p.is_file() and p.name != PAGE_NAME)
     media = [p for p in files if p.suffix.lower() in (*IMAGES, *VIDEOS)]
     shown: set[Path] = set()
     scenarios = _dicts(result.get("scenarios"))

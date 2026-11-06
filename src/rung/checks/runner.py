@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -9,8 +11,9 @@ from pathlib import Path
 
 from rung.checks import registry
 from rung.checks.base import Context, Outcome
-from rung.checks.command import evidence_dir, is_attested, missing_required
-from rung.core import git, ledger, modelcard
+from rung.checks.command import evidence_dir, is_attested, isolates_evidence, missing_artifacts
+from rung.checks.presets import PRESETS
+from rung.core import git, launch, ledger, modelcard
 from rung.core.config import Check, Config, ConfigError
 from rung.core.errors import RungError
 from rung.core.redact import redact, redact_lines
@@ -37,7 +40,44 @@ def specs(check: Check) -> list[str]:
 
 
 def definition(check: Check) -> str:
-    return ledger.definition_hash(check.kind, check.covers, check.options)
+    options = {**check.options, "isolate": True} if isolates_evidence(check) else check.options
+    return ledger.definition_hash(check.kind, check.covers, options)
+
+
+def tool_identity(root: Path, check: Check) -> dict[str, tuple[int, ...]] | None:
+    """Identify the static executable chain. Skip reuse when a runner resolves its own environment."""
+    paths: list[Path] = []
+    for key in ("run", "model", "impl"):
+        command = check.get(key)
+        if not command and key == "run" and check.kind == "scan" and (preset := PRESETS.get(check.get("tool", ""))):
+            command = preset.run
+        if command:
+            argv = shlex.split(command)
+            cwd = root / check.get("cwd" if key == "run" else f"{key}_cwd", ".")
+            paths.extend(launch.file_inputs(argv, cwd))
+            while argv:
+                found = launch.find_executable(argv[0], cwd)
+                if not found:
+                    return None
+                paths.append(Path(found))
+                inner = launch.delegated(argv, cwd)
+                if not inner:
+                    break
+                if not inner.host_path:
+                    return None
+                argv, cwd = inner.argv, inner.cwd
+    if check.kind == "tla":
+        paths += [Path(p) for p in (shutil.which("java"), os.environ.get("RUNG_TLA2TOOLS")) if p]
+    if check.kind == "lean":
+        paths.append(Path(shutil.which("lake") or Path.home() / ".elan/bin/lake"))
+    result = {}
+    for path in {candidate for name in paths for candidate in launch.linked_paths(name)}:
+        try:
+            stat = path.lstat()
+            result[str(path)] = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_mode)
+        except OSError:
+            result[str(path)] = ()
+    return result
 
 
 def touched_by(check: Check, changed: set[str]) -> bool:
@@ -62,8 +102,9 @@ def select(config: Config, ids: list[str], changed: set[str] | None) -> list[Che
 
 
 def run_check(
-    config: Config, check: Check, *, base: str | None = None, seed: int | None = None, scenarios: tuple[str, ...] = ()
-) -> Result:
+    config: Config, check: Check, *, base: str | None = None, seed: int | None = None, scenarios: tuple[str, ...] = (),
+    merge_gate: bool = False,
+) -> Result:  # fmt: skip
     """Run one check and record its verdict.
 
     With `seed` or `scenarios`, a scripted evidence check runs that one seed or those scenarios only, to
@@ -79,9 +120,13 @@ def run_check(
     checker = registry.get(check.kind)
     cover_patterns, spec_patterns = checker.covers(check), checker.specs(check)
     before = (ledger.snapshot(root, cover_patterns), ledger.snapshot(root, spec_patterns))
+    tools = tool_identity(root, check)
+    # A covered link that points outside the project is recorded by its target path, never followed:
+    # pointing it somewhere else stales the verdict, but what it points at is not part of the evidence.
     try:
-        outcome = checker.run(Context(root=root, base=base, seed=seed, scenarios=scenarios), check)
-    except (RungError, FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        context = Context(root=root, base=base, seed=seed, scenarios=scenarios, merge_gate=merge_gate)
+        outcome = checker.run(context, check)
+    except (RungError, OSError, subprocess.TimeoutExpired) as exc:
         outcome = Outcome("error", str(exc))
     # Hash before and after: a file edited mid-run must not be recorded as verified.
     after = (ledger.snapshot(root, cover_patterns), ledger.snapshot(root, spec_patterns))
@@ -94,7 +139,7 @@ def run_check(
         outcome = Outcome("error", hint, outcome.lines, details=outcome.details)
     if partial:
         return Result(check, outcome)
-    ledger.record(
+    entry = ledger.record(
         root,
         check_id=check.id,
         kind=check.kind,
@@ -113,6 +158,8 @@ def run_check(
             **outcome.details,
         },
     )
+    if tools is not None and tools == tool_identity(root, check):
+        ledger.record_environment(root, check.id, entry, tools)
     return Result(check, outcome)
 
 
@@ -121,9 +168,12 @@ def status(config: Config, check: Check, *, base: str | None = None, view: ledge
     view = view or ledger.View(config.root)
     max_age = registry.get(check.kind).max_age_days(check)
     held = view.status(check.id, covers(check), specs(check), definition(check), base, max_age)
-    if check.kind in modelcard.KINDS and (drift := modelcard.drift(config.root, check.id)):
-        # A model whose code changed since it was confirmed proves nothing about the code, pass or not.
-        return ledger.Status(check.id, "drifted", held.entry, [f"{drift.message}: {', '.join(drift.changed)}"])
+    if check.kind in modelcard.KINDS:
+        card = modelcard.load(config.root, check.id)
+        held.implementation_link = "source-confirmed" if modelcard.has_source_confirmation(card) else "model-only"
+        if card and (drift := modelcard.drift(config.root, check.id, card)):
+            return ledger.Status(check.id, "drifted", held.entry, [f"{drift.message}: {', '.join(drift.changed)}"],
+                                 implementation_link="drifted")  # fmt: skip
     return held
 
 
@@ -148,7 +198,7 @@ def attest(config: Config, check: Check, files: list[Path], *, by: str, note: st
     empty = [str(f) for f in files if not f.is_file() or f.stat().st_size == 0]
     if empty:
         raise ConfigError(f"not a non-empty file: {', '.join(empty)}")
-    if missing := missing_required(check, (f.name for f in files)):
+    if missing := missing_artifacts(check, files):
         raise ConfigError(f"check {check.id!r} requires evidence ending in {', '.join(missing)}")
     root = config.root
     cover_patterns, spec_patterns = covers(check), specs(check)

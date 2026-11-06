@@ -53,6 +53,17 @@ def save(root: Path, card: dict[str, Any]) -> Path:
     return target
 
 
+def has_source_confirmation(card: dict[str, Any] | None) -> bool:
+    confirmed = (card or {}).get("confirmed")
+    if not isinstance(confirmed, dict) or not confirmed.get("digest"):
+        return False
+    files = confirmed.get("files")
+    return isinstance(files, dict) and any(
+        isinstance(value, str) and not value.endswith("missing") and not value.startswith("external-link:")
+        for value in files.values()
+    )
+
+
 def new(check_id: str, kind: str, sources: list[str]) -> dict[str, Any]:
     return {"check": check_id, "kind": kind, "sources": list(sources), "confirmed": {}, "scope": {}, "functions": [],
             "actions": {}, "invariants": {}, "failability": {}, "history": []}  # fmt: skip
@@ -114,21 +125,43 @@ class Drift:
         ]
 
 
+def _same_content(now: str | None, then: str | None) -> bool:
+    """Whether two snapshot values describe the same file.
+
+    Before 0.4, a snapshot value was the file's sha256 alone (or `missing`); now it is
+    `<mode>:<sha256>`, with a `link:` prefix for symbolic links. A value in the old form matches
+    the content part of a new one, so upgrading does not read as a change to every confirmed model.
+    """
+    if now == then:
+        return True
+    if now is None or then is None or ":" in then:
+        return False
+    return not now.startswith(("link:", "external-link:")) and now.rpartition(":")[2] == then
+
+
 def changed_files(root: Path, card: dict[str, Any]) -> list[str]:
     then: dict[str, str] = card.get("confirmed", {}).get("files", {})
     now = snapshot(root, card.get("sources", []))
-    return sorted(p for p in set(now) | set(then) if now.get(p) != then.get(p))
+    return sorted(p for p in set(now) | set(then) if not _same_content(now.get(p), then.get(p)))
+
+
+def _legacy(confirmed: dict[str, Any]) -> bool:
+    files = confirmed.get("files")
+    return isinstance(files, dict) and any(isinstance(v, str) and ":" not in v for v in files.values())
 
 
 def drift(root: Path, check_id: str, card: dict[str, Any] | None = None) -> Drift | None:
     """How the covered sources moved since the model was confirmed, or None when they did not (or it never was)."""
     card = card if card is not None else load(root, check_id)
-    confirmed = (card or {}).get("confirmed") or {}
-    if not card or not confirmed.get("digest"):
+    confirmed = (card or {}).get("confirmed")
+    if not card or not isinstance(confirmed, dict) or not confirmed.get("digest"):
         return None
     if inputs_digest(snapshot(root, card.get("sources", []))) == confirmed["digest"]:
         return None
-    return Drift(check_id, confirmed.get("commit", ""), changed_files(root, card) or ["(covered files changed)"])
+    changed = changed_files(root, card)
+    if not changed and _legacy(confirmed):
+        return None  # confirmed before snapshots recorded file modes, and the contents still match
+    return Drift(check_id, confirmed.get("commit", ""), changed or ["(covered files changed)"])
 
 
 def scope_lines(card: dict[str, Any] | None) -> list[str]:

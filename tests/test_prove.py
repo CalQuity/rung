@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 from rung.checks import prove
 from rung.core import ledger
 
@@ -152,6 +154,144 @@ def test_other_runners_are_judged_by_the_whole_run(repo: Path) -> None:
 def test_pytest_commands_are_recognised() -> None:
     assert prove.runs_pytest(["uv", "run", "pytest", "-q"])
     assert prove.runs_pytest(["/venv/bin/python", "-m", "pytest"])
+    assert prove.runs_pytest(["/venv/bin/python", "-Bm", "pytest"])
+    assert prove.runs_pytest(["env", "NAME=value", "python", "-X", "utf8", "-mpytest"])
     assert prove.runs_pytest([".venv/bin/pytest"])
     assert not prove.runs_pytest(["npx", "vitest", "run"])
     assert not prove.runs_pytest(["python", "-m", "unittest"])
+
+
+def test_proof_uses_exact_workspace_name_at_base(repo: Path) -> None:
+    for name, implementation in ((" lead", FIXED), ("lead", BUGGY)):
+        (repo / name).mkdir()
+        (repo / name / "money.py").write_text(implementation)
+    commit_all(repo, "different sibling implementations")
+    run_git(repo, "switch", "-qc", "fix")
+    workspace = repo / " lead"
+    (workspace / "test_money.py").write_text(TEST)
+    result = prove.prove(workspace, f"{sys.executable} -m pytest -q", "main")
+    assert result.verdict == "fail" and "pass without the fix" in result.summary
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_node_proof_distinguishes_a_real_regression_from_a_vacuous_case(repo, existing):
+    app = repo / "app.cjs"
+    app.write_text("module.exports = () => 1;\n")
+    test = repo / "app.test.cjs"
+    fixture = (
+        "const { test } = require('node:test');\n"
+        "const assert = require('node:assert/strict');\n"
+        "const increment = require('./app.cjs');\n"
+    )
+    weak = "test('already passes', () => assert.equal(1, 1));\n"
+    if existing:
+        test.write_text(fixture + weak)
+    commit_all(repo, "buggy baseline")
+    run_git(repo, "checkout", "-qb", "fix")
+    app.write_text("module.exports = () => 2;\n")
+    test.write_text(fixture + weak + "test('catches bug', () => assert.equal(increment(), 2));\n")
+    cmd = "node --test app.test.cjs"
+    result = prove.prove(repo, cmd, "main")
+    if existing:
+        assert result.verdict == "error" and "--case" in result.summary
+        result = prove.prove(repo, cmd, "main", node_cases=["app.test.cjs::catches bug"])
+        assert result.verdict == "pass", result.summary
+    else:
+        assert result.verdict == "fail" and "already passes" in result.summary
+        assert result.cases[0].base == "passed"
+    regression = next(case for case in result.cases if case.test == "app.test.cjs::catches bug")
+    assert regression.proven
+
+
+# --- --expect, files written by the run, and what a proof covers ---------------------------------
+
+
+def test_expect_accepts_a_base_that_cannot_import_the_fix(repo: Path) -> None:
+    (repo / "money.py").write_text(BUGGY)
+    commit_all(repo, "buggy refund")
+    run_git(repo, "checkout", "-qb", "fix")
+    (repo / "money.py").write_text(FIXED + "\n\ndef cap(charged, requested):\n    return min(charged, requested)\n")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_money.py").write_text(
+        "from money import cap\n\ndef test_cap():\n    assert cap(100, 150) == 100\n"
+    )
+    without = prove.prove(repo, PYTEST, "main")
+    assert without.verdict == "fail" and "--expect" in without.summary and "missing name" in without.summary
+    result = prove.prove(repo, PYTEST, "main", expect="cannot import name 'cap'")
+    assert result.verdict == "pass", (result.summary, result.base)
+    assert "before reaching 1 test(s)" in result.summary and result.cases[0].head == "passed"
+    assert prove.prove(repo, PYTEST, "main", expect="no such text").verdict == "fail"
+
+
+def test_expect_matches_a_go_style_comparison_on_stdout(repo: Path) -> None:
+    (repo / "money.py").write_text(BUGGY)
+    commit_all(repo, "buggy refund")
+    run_git(repo, "checkout", "-qb", "fix")
+    (repo / "money.py").write_text(FIXED)
+    (repo / "refund_test.py").write_text(
+        "import sys\nfrom money import refund\n"
+        "got = refund(100, 150)\n"
+        "if got != 100:\n"
+        "    print(f'refund_test.go:12: refund(100, 150) = {got}, want 100')\n"
+        "    sys.exit(1)\n"
+        "print('ok')\n"
+    )
+    result = prove.prove(repo, f"{sys.executable} refund_test.py", "main", expect="want 100")
+    assert result.verdict == "pass", (result.summary, result.base)
+
+
+def test_reports_the_tests_write_do_not_void_the_proof(repo: Path) -> None:
+    (repo / "fixture.json").write_text("{}\n")
+    writer = TEST.replace(
+        "def test_refund_never_exceeds_charge():\n",
+        "def test_refund_never_exceeds_charge():\n    open('coverage.xml', 'w').write('<coverage/>')\n",
+    )
+    _branch(repo, FIXED, writer)
+    result = prove.prove(repo, PYTEST, "main")
+    assert result.verdict == "pass", result.summary
+    assert (repo / "coverage.xml").is_file()
+    editor = writer.replace("open('coverage.xml', 'w')", "open('fixture.json', 'a')")
+    (repo / "tests" / "test_money.py").write_text(editor)
+    result = prove.prove(repo, PYTEST, "main")
+    assert result.verdict == "error" and "fixture.json" in result.summary
+
+
+def test_documentation_edits_do_not_stale_a_proof(repo: Path) -> None:
+    from rung.analysis import report
+    from rung.core import config
+
+    (repo / "docs").mkdir()
+    (repo / "docs" / "guide.txt").write_text("how refunds work\n")
+    (repo / "fixtures").mkdir()
+    (repo / "fixtures" / "cases.json").write_text("[150]\n")
+    commit_all(repo, "docs and fixtures")
+    _branch(repo, FIXED, TEST)
+    (repo / "rung.toml").write_text('[project]\nname = "p"\n')
+    assert prove.prove(repo, PYTEST, "main").verdict == "pass"
+
+    def verdict() -> str:
+        return report.build(config.load(repo))["proofs"][0]["verdict"]
+
+    (repo / "README.md").write_text("demo, now with refunds\n")
+    (repo / "docs" / "guide.txt").write_text("how refunds work, revised\n")
+    assert verdict() == "pass"
+    (repo / "fixtures" / "cases.json").write_text("[150, 200]\n")
+    assert verdict() == "stale"
+
+
+def test_a_file_added_after_the_proof_stales_it(repo: Path) -> None:
+    from rung.analysis import report
+    from rung.core import config
+
+    _branch(repo, FIXED, TEST)
+    (repo / "rung.toml").write_text('[project]\nname = "p"\n')
+    assert prove.prove(repo, PYTEST, "main").verdict == "pass"
+
+    def verdict() -> str:
+        return report.build(config.load(repo))["proofs"][0]["verdict"]
+
+    (repo / "notes.md").write_text("a new document\n")
+    assert verdict() == "pass"
+    (repo / "plugins").mkdir()
+    (repo / "plugins" / "discount.toml").write_text("rate = 2\n")  # a new directory and file type
+    assert verdict() == "stale"

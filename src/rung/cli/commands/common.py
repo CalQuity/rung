@@ -8,9 +8,8 @@ from pathlib import Path
 from rung.checks import registry
 from rung.cli.output import Output
 from rung.core import git
-from rung.core.config import CONFIG_NAME, Check, Config, find_root, load, save
+from rung.core.config import CONFIG_NAME, Check, Config, append_checks, find_root, load, save
 
-OK, GATE_FAILED = 0, 1
 OK, GATE_FAILED = 0, 1
 
 
@@ -31,11 +30,15 @@ def resolve_base(root: Path, base: str | None) -> str:
     return git.merge_base(root, base or git.default_base(root))
 
 
-def add_check(config: Config, check: Check, out: Output) -> None:
+def add_check(config: Config, check: Check, out: Output, *, emit: bool = True) -> None:
     registry.get(check.kind)  # validate the kind before writing anything
     replaced = any(c.id == check.id for c in config.checks)
     config.checks = [c for c in config.checks if c.id != check.id] + [check]
-    save(config)
-    out.emit({"check": check.id, "kind": check.kind, "covers": check.covers, "options": check.options,
-              "replaced": replaced})  # fmt: skip
+    if replaced:
+        save(config)
+    else:
+        append_checks(config, [check])
+    if emit:
+        out.emit({"check": check.id, "kind": check.kind, "covers": check.covers, "options": check.options,
+                  "replaced": replaced})  # fmt: skip
     out.line(f"{'Updated' if replaced else 'Added'} check {check.id!r} ({check.kind}) in {CONFIG_NAME}.")

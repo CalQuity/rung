@@ -169,7 +169,7 @@ def _is_manifest(path: str) -> bool:
 def declared(root: Path) -> set[Package]:
     def read(rel: str) -> str | None:
         target = root / rel
-        return target.read_text(errors="ignore") if target.is_file() else None
+        return target.read_text(errors="ignore") if not target.is_symlink() and target.is_file() else None
 
     out: set[Package] = set()
     for rel in (f for f in git.list_files(root) if _is_manifest(f)):

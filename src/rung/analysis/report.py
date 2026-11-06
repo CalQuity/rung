@@ -13,8 +13,8 @@ from typing import Any
 from rung.analysis import formal
 from rung.checks import runner
 from rung.checks.command import read_result, reproduce_command
-from rung.core import laws, ledger
-from rung.core.config import Check, Config, ConfigError
+from rung.core import git, laws, ledger
+from rung.core.config import Check, Config, ConfigError, managed_path
 from rung.engines import evidence_page as page
 
 COMMENT_MARKER = "<!-- rung-report -->"
@@ -22,7 +22,7 @@ STATE_ICON = {"fresh": "✅", "stale": "🟡", "failing": "❌", "never": "⚪",
 LAW_ICON = {"held": "✅", "unproven": "🟡", "broken": "❌", "proposed": "📝", "unenforced": "⚪"}
 
 
-def _runtime(check: Check, details: dict[str, Any]) -> dict[str, Any] | None:
+def _runtime(root: Path, check: Check, details: dict[str, Any], evidence: list[str]) -> dict[str, Any] | None:
     """What an evidence check's latest verdict says about its runs: seeds, outcomes, how to reproduce."""
     runs = details.get("runs")
     if check.kind != "evidence" or not isinstance(runs, list) or not runs:
@@ -30,13 +30,15 @@ def _runtime(check: Check, details: dict[str, Any]) -> dict[str, Any] | None:
     na: dict[str, str] = {}
     for r in runs:
         na.update(r.get("not_applicable") or {})
+    report = details.get("report", "")
+    receipt = ledger.report_artifact(report, evidence)
     return {
         "runs": [{"seed": r.get("seed"), "verdict": r.get("verdict"), "summary": r.get("summary", ""),
                   "scenarios": r.get("scenarios", []), "failed": r.get("failed", [])} for r in runs],
         "failing_seed": details.get("failing_seed"),
         "failing_scenario": details.get("failing_scenario", ""),
         "reproduce": details.get("reproduce", ""),
-        "report": details.get("report", ""),
+        "report": report if receipt and not ledger.artifact_issues(root, [receipt]) else "",
         "not_applicable": na,
     }  # fmt: skip
 
@@ -51,6 +53,8 @@ def build(config: Config, *, evidence_url: str = "") -> dict[str, Any]:
     for check in config.checks:
         s = statuses[check.id]
         latest = s.entry or {}
+        details = latest.get("details") or {}
+        source = "external_capture" if details.get("attested_by") else "checker"
         rows.append({
             "id": check.id,
             "kind": check.kind,
@@ -58,9 +62,15 @@ def build(config: Config, *, evidence_url: str = "") -> dict[str, Any]:
             "summary": latest.get("summary", ""),
             "at": latest.get("at", ""),
             "changed": s.changed,
-            "runtime": _runtime(check, latest.get("details") or {}),
+            **({"implementation_link": s.implementation_link} if s.implementation_link else {}),
+            "evidence": latest.get("evidence", []),
+            "input_digest": latest.get("inputs", {}).get("digest"),
+            "checked_commit": latest.get("commit") or None,
+            "comparison_base": latest.get("context") or None,
+            "source": source if latest and "invalid" not in latest else None,
+            "runtime": _runtime(config.root, check, details, latest.get("evidence", [])),
         })  # fmt: skip
-        for f in (latest.get("details") or {}).get("findings", []):
+        for f in details.get("findings", []):
             if f.get("status") == "new":
                 new_findings.append({"check": check.id, **f})
             elif f.get("status") == "new-below-threshold":
@@ -74,7 +84,8 @@ def build(config: Config, *, evidence_url: str = "") -> dict[str, Any]:
     proofs = []
     for p in (v for v in verdicts.values() if v.get("kind") == "proof"):
         # A proof is about specific bytes: once its tests or the fixed code change, it no longer holds.
-        files = p.get("details", {}).get("files", [])
+        details = p.get("details", {})
+        files = details.get("covers", details.get("files", []))
         current = ledger.inputs_digest(ledger.snapshot(config.root, files))
         stale = p["verdict"] == "pass" and current != p.get("inputs", {}).get("digest")
         proofs.append({
@@ -87,7 +98,9 @@ def build(config: Config, *, evidence_url: str = "") -> dict[str, Any]:
     held = sum(1 for law in law_rows if law["state"] == "held")
     approved = sum(1 for law in law_rows if law["state"] != "proposed")
     return {
+        "schema_version": 1,
         "project": config.name,
+        "head": git.head(config.root) or None,
         "evidence_url": evidence_url,
         "checks": rows,
         "laws": law_rows,
@@ -185,9 +198,10 @@ def evidence_page(config: Config, check: Check, *, seed: int | None = None, out:
     (`rung check --seed`) is described from its own `result.json`.
     """
     root = config.root
-    base = root / ".rung" / "evidence" / check.id
+    base = managed_path(root, Path(".rung/evidence") / check.id)
     # Names start with a timestamp to the second; the last write in a run (its page) breaks ties.
-    runs_dirs = sorted((d for d in base.iterdir() if d.is_dir()), key=lambda d: (d.name[:16], d.stat().st_mtime_ns)) \
+    runs_dirs = sorted((d for d in base.iterdir() if not d.is_symlink() and d.is_dir()),
+                       key=lambda d: (d.name[:16], d.stat().st_mtime_ns)) \
         if base.is_dir() else []  # fmt: skip
     if not runs_dirs:
         raise ConfigError(f"no evidence recorded for {check.id!r} yet; run `rung check {check.id}`")
@@ -197,6 +211,8 @@ def evidence_page(config: Config, check: Check, *, seed: int | None = None, out:
     known = {r.get("seed"): r for r in details.get("runs", []) if isinstance(r, dict)}
     dirs: dict[int, Path] = {}
     for d in sorted(newest.glob("seed-*")):
+        if d.is_symlink() or not d.is_dir():
+            continue
         try:
             dirs[int(d.name.removeprefix("seed-"))] = d
         except ValueError:
@@ -221,4 +237,6 @@ def evidence_page(config: Config, check: Check, *, seed: int | None = None, out:
     failing = next((r for r in runs if r.get("verdict") == "fail"), None)
     reproduce = reproduce_command(check.id, failing["seed"]) if failing else ""
     target = out or (dirs[seed] if seed is not None else newest)
+    if out is None:
+        managed_path(root, target.relative_to(root) / page.PAGE_NAME)
     return page.write(check.id, runs, dirs, target.resolve(), reproduce=reproduce)

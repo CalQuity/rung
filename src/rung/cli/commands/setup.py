@@ -3,19 +3,37 @@
 from __future__ import annotations
 
 import argparse
+import os
+import shlex
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from rung import agents
+from rung.agents.install import prepare_install
 from rung.analysis import kit, plan, survey
+from rung.checks.command import cargo_test, isolates_evidence, package_script_commands
 from rung.checks.presets import PRESETS
-from rung.cli.commands.common import OK, ask
+from rung.cli.commands.common import GATE_FAILED, OK, ask, resolve_base
 from rung.cli.output import STATE_STYLE, Output
-from rung.core import laws
-from rung.core.config import CONFIG_NAME, Check, Config, ConfigError, LLMConfig, find_root, load, save
+from rung.core import git, launch, laws, sandbox
+from rung.core.config import (
+    CONFIG_NAME,
+    Check,
+    Config,
+    ConfigError,
+    LLMConfig,
+    append_checks,
+    find_root,
+    load,
+    managed_path,
+    save,
+    write_atomic,
+)
 from rung.core.errors import ToolMissing
+from rung.core.proc import run as run_process
 from rung.drafting import providers
 from rung.engines import lean, tla
 
@@ -39,64 +57,153 @@ def _choose_provider(requested: str | None) -> LLMConfig:
     return llm
 
 
+def _starter_checks(root: Path, info: survey.Inspection) -> list[Check]:
+    checks: list[Check] = []
+    files = git.list_files(root)
+    # Wire up the security scanners that are installed and relevant to this repo.
+    for check_id, tool in (
+        ("secrets", "gitleaks"),
+        ("vulnerable-deps", "osv-scanner"),
+        ("workflows", "zizmor"),
+    ):
+        if tool == "osv-scanner":
+            paths = [f for f in files if Path(f).name not in {"pyproject.toml", "package.json", "go.mod", "pom.xml"}]
+        else:
+            paths = files
+        relevant = tool == "gitleaks" or any(
+            git.glob_match(pattern, path) for pattern in PRESETS[tool].covers for path in paths
+        )
+        if shutil.which(tool) and relevant:
+            checks.append(Check(check_id, "scan", [], {"tool": tool}))
+    checks.append(Check("deps", "deps", [], {"min_age_days": 30}))
+    checks.extend(check for _, check in plan.detected_checks(info))
+    if info.languages:
+        checks.append(Check("shortcuts", "shortcuts", [], {}))
+    return checks
+
+
+def _local_ignores(path: Path) -> str | None:
+    """Keep raw evidence and cache receipts local by default."""
+    text = path.read_text() if path.is_file() else ""
+    entries = {line.strip().lstrip("/") for line in text.splitlines()}
+    missing = [entry for entry in (".rung/cache/", ".rung/evidence/", ".rung/runs/") if entry not in entries]
+    if not missing:
+        return None
+    prefix = text + ("\n" if text and not text.endswith("\n") else "")
+    return prefix + "\n# Rung local state\n" + "\n".join("/" + entry for entry in missing) + "\n"
+
+
 def cmd_init(args, out: Output) -> int:
     root = Path(args.dir).resolve()
     existing = (root / CONFIG_NAME).exists()
     cfg = load(root) if existing else Config(root=root, name=root.name, llm=LLMConfig(), checks=[])
+    if not root.is_dir():
+        raise ConfigError(f"project directory does not exist: {root}")
     info = survey.survey(root)
 
-    if not existing or args.provider:
-        cfg.llm = _choose_provider(args.provider)
+    interactive = sys.stdin.isatty() and not out.json_mode
+    if args.provider:
+        cfg.llm = LLMConfig(provider=args.provider) if args.provider != cfg.llm.provider else cfg.llm
+    elif not existing and not args.no_drafts and not args.dry_run and interactive:
+        cfg.llm = _choose_provider(None)
     if args.model is not None:
         cfg.llm.model = args.model
-    provider = providers.get(cfg.llm)
-    state = provider.login_state()
-    needs_login = not state.ok and cfg.llm.provider in ("claude-cli", "codex-cli")
-    if needs_login and ask("Not logged in. Log in now? (y/n)", "y").lower().startswith("y"):
-        provider.login()
+    current = {check.id: check for check in cfg.checks}
+    detected = _starter_checks(root, info) if not existing or args.refresh else []
+    # A command already recorded under another id (same run and cwd) is the same check; do not add it twice.
+    recorded = {(c.get("run"), c.get("cwd", ".")) for c in cfg.checks if c.kind == "command"}
+    new = [
+        check
+        for check in detected
+        if check.id not in current
+        and not (check.kind == "command" and (check.get("run"), check.get("cwd", ".")) in recorded)
+    ]
+    changed_commands = [
+        {"id": check.id, "configured": current[check.id].get("run"), "detected": check.get("run")}
+        for check in detected
+        if check.kind == "command" and check.id in current and current[check.id].get("run") != check.get("run")
+    ]
+    cfg.checks.extend(new)
+    added = [check.id for check in new]
+    missing_cwds = {
+        check.id: check.get("cwd")
+        for check in cfg.checks
+        if check.get("cwd") and not (root / check.get("cwd")).is_dir()
+    }
+    ignores = managed_path(root, ".gitignore")
+    ignore_update = _local_ignores(ignores)
+    prompt = "Install the agent skills and Claude Code Stop hook? (y/n)"
+    install_agents = not args.no_agents and (
+        args.dry_run or not interactive or ask(prompt, "y").lower().startswith("y")
+    )
+    if install_agents:
+        prepare_install(root, hooks=True)
+
+    if args.dry_run:
+        files = [CONFIG_NAME] if new or not existing or args.provider or args.model is not None else []
+        if not (root / laws.LAWS_FILE).exists():
+            files.append(laws.LAWS_FILE)
+        if not (root / ".rung").exists():
+            files.append(".rung/")
+        if ignore_update is not None:
+            files.append(".gitignore")
+        if install_agents:
+            files += [".claude/skills/", ".agents/skills/", "AGENTS.md", ".claude/settings.json"]
+        checks = [check.__dict__ for check in cfg.checks]
+        out.emit({"schema_version": 1, "root": str(root), "dry_run": True, "checks": checks, "added_checks": added,
+                  "files": files, "provider": cfg.llm.provider, "survey": info.to_dict(),
+                  "missing_working_directories": missing_cwds, "changed_detected_commands": changed_commands,
+                  })  # fmt: skip
+        out.heading("Setup preview", f"{_shown(root)} · {len(cfg.checks)} checks · no writes")
+        for check in cfg.checks:
+            description = check.get("run") or check.get("tool") or check.kind
+            out.detail(check.id, indent=0)
+            out.detail(f"{description} · cwd {check.get('cwd', '.')}", indent=2)
+        for check_id, cwd in missing_cwds.items():
+            out.detail(f"{check_id} uses missing directory {cwd}; review {CONFIG_NAME}.", indent=2)
+        for change in changed_commands:
+            out.detail(f"{change['id']} now detects {change['detected']!r}; review {CONFIG_NAME}.", indent=2)
+        out.line("Files to set up: " + (", ".join(files) or "none"))
+        argv = ["rung", "init", "--no-drafts"]
+        if args.no_agents:
+            argv.append("--no-agents")
+        if args.refresh:
+            argv.append("--refresh")
+        if args.provider:
+            argv += ["--provider", args.provider]
+        if args.model is not None:
+            argv += ["--model", args.model]
+        out.line("No checks or model calls ran. To apply:")
+        out.command(shlex.join(argv))
+        return OK
+
+    managed_path(root, CONFIG_NAME)
+    laws_path = managed_path(root, laws.LAWS_FILE)
+    state_dir = managed_path(root, ".rung")
+
+    state = providers.LoginState(False, "drafting disabled")
+    drafting = not args.no_drafts and cfg.llm.provider != "none" and (args.yes or interactive)
+    if drafting:
+        provider = providers.get(cfg.llm)
         state = provider.login_state()
-
-    added = []
-    if not existing:
-        # Wire up the security scanners that are installed and relevant to this repo.
-        for check_id, tool in (
-            ("secrets", "gitleaks"),
-            ("vulnerable-deps", "osv-scanner"),
-            ("workflows", "zizmor"),
+        if (
+            not state.ok
+            and interactive
+            and cfg.llm.provider in ("claude-cli", "codex-cli")
+            and ask("Not logged in. Log in now? (y/n)", "n").lower().startswith("y")
         ):
-            relevant = tool != "zizmor" or (root / ".github" / "workflows").is_dir()
-            if shutil.which(tool) and relevant:
-                cfg.checks.append(Check(check_id, "scan", [], {"tool": tool}))
-                added.append(check_id)
-        cfg.checks.append(Check("deps", "deps", [], {"min_age_days": 30}))
-        added.append("deps")
-        # Record each detected test suite, covering its own project directory.
-        for project in info.projects:
-            if not project.test_command:
-                continue
-            check_id = plan.static_check_id(project.path, "tests")
-            options = {"run": project.test_command} | ({} if project.path == "." else {"cwd": project.path})
-            covers = [] if project.path == "." else [f"{project.path}/**"]
-            cfg.checks.append(Check(check_id, "command", covers, options))
-            added.append(check_id)
-        # The type checkers and linters the project already configures, and the shortcuts that silence them.
-        for project in info.projects:
-            for kind, command in project.static:
-                check_id = plan.static_check_id(project.path, kind)
-                if any(c.id == check_id for c in cfg.checks):
-                    continue
-                options = {"run": command} | ({} if project.path == "." else {"cwd": project.path})
-                covers = [] if project.path == "." else [f"{project.path}/**"]
-                cfg.checks.append(Check(check_id, "command", covers, options))
-                added.append(check_id)
-        if info.languages:
-            cfg.checks.append(Check("shortcuts", "shortcuts", [], {}))
-            added.append("shortcuts")
+            provider.login()
+            state = provider.login_state()
 
-    save(cfg)
-    (root / ".rung").mkdir(exist_ok=True)
-    if not (root / laws.LAWS_FILE).exists():
-        (root / laws.LAWS_FILE).write_text(laws.TEMPLATE)
+    if not existing or args.provider or args.model is not None:
+        save(cfg)
+    else:
+        append_checks(cfg, new)
+    state_dir.mkdir(exist_ok=True)
+    if not laws_path.exists():
+        write_atomic(laws_path, laws.TEMPLATE)
+    if ignore_update is not None:
+        write_atomic(ignores, ignore_update)
 
     langs = ", ".join(f"{k} ({v})" for k, v in list(info.languages.items())[:4]) or "none found"
     out.line(f"Surveyed {_shown(root)}")
@@ -106,14 +213,17 @@ def cmd_init(args, out: Output) -> int:
     out.line(f"Model provider: {cfg.llm.provider} ({state.detail})")
     if added:
         out.line(f"Added checks: {', '.join(added)}")
-    out.line(f"Wrote {CONFIG_NAME}, {laws.LAWS_FILE} and .rung/.")
+    for check_id, cwd in missing_cwds.items():
+        out.detail(f"{check_id} uses missing directory {cwd}; review {CONFIG_NAME}.", indent=2)
+    for change in changed_commands:
+        out.detail(f"{change['id']} now detects {change['detected']!r}; review {CONFIG_NAME}.", indent=2)
+    out.line(f"Kit configuration: {CONFIG_NAME}, {laws.LAWS_FILE} and .rung/.")
 
     installed: list[str] = []
-    if not args.no_agents and ask("\nInstall the agent skills and a Stop hook that blocks unverified work? (y/n)",
-                                  "y").lower().startswith("y"):  # fmt: skip
+    if install_agents:
         written = agents.install(root, hooks=True, lean_version=lean.toolchain().split(":")[-1])
         installed = [str(p.relative_to(root)) for p in written]
-        out.line("Installed the agent skills, AGENTS.md rules and the Claude Code Stop hook.")
+        out.line("Installed Claude Code and Codex skills, AGENTS.md rules, and the Claude Code Stop hook.")
 
     drafted = _draft_kit(args, root, info, cfg, state.ok, out)
     cfg = load(root)
@@ -121,6 +231,7 @@ def cmd_init(args, out: Output) -> int:
     recs = plan.plan(info, {c.id for c in cfg.checks})
     out.emit({"root": str(root), "provider": cfg.llm.provider, "login": state.detail, "added_checks": added,
               "agents": installed, "drafted": drafted, "kit": built.to_dict(), "survey": info.to_dict(),
+              "missing_working_directories": missing_cwds, "changed_detected_commands": changed_commands,
               "plan": [r.__dict__ for r in recs]})  # fmt: skip
     out.line("")
     _print_kit(built, out)
@@ -294,13 +405,17 @@ def _print_kit(built: kit.Kit, out: Output) -> None:
         if not part.entries:
             out.detail(part.missing, indent=11)
             if part.suggest:
-                out.line(f"           {out.style('$ ' + part.suggest, 'blue')}")
+                out.command(part.suggest, indent=11)
     if built.laws:
         summary = ", ".join(f"{n} {state}" for state, n in sorted(built.laws.items()))
         out.line(f"\n{out.style('Laws', 'bold')} (LAWS.md): {summary}")
     if built.next_steps:
         cmd, why = built.next_steps[0]
-        out.line(f"\n{out.style('Next:', 'bold')} {out.style(cmd, 'blue')}  {out.style(why, 'dim')}")
+        out.line()
+        out.command(cmd, indent=0, prefix="Next: ")
+        out.detail(why, indent=2)
+    elif any(part.state in ("missing", "attention") for part in built.parts):
+        out.line("\nRegister the missing parts above with the commands they show.")
     else:
         out.line(f"\n{out.style('Every part of the kit is in place and fresh.', 'green')}")
 
@@ -327,20 +442,69 @@ def _print_plan(recs: list[plan.Recommendation], out: Output) -> None:
         out.line(f"\n {i}. {out.style(rec.title, 'bold')}  [{rec.rung}, effort {rec.effort}]")
         out.detail(rec.why, indent=4)
         if rec.command:
-            out.line(f"    {out.style('$ ' + rec.command, 'blue')}")
+            out.command(rec.command, indent=4)
 
 
 def cmd_plan(args, out: Output) -> int:
     root = Path(args.dir).resolve()
     try:
-        existing = {c.id for c in load(find_root(root)).checks}
+        root = find_root(root)
     except ConfigError:
-        existing = set()
+        checks = []
+    else:
+        checks = load(root).checks
     info = survey.survey(root)
-    recs = plan.plan(info, existing)
-    out.emit({"survey": info.to_dict(), "plan": [r.__dict__ for r in recs]})
+    payload: dict = {"schema_version": 1, "survey": info.to_dict()}
+    paths = None
+    if args.base and not args.changed:
+        raise ConfigError("use --base with --changed")
+    if args.changed or args.path:
+        base = resolve_base(root, args.base) if args.changed else None
+        paths = git.changed_files(root, base) if base else set()
+        outside: list[str] = []
+        for value in args.path or []:
+            for path in _plan_paths(root, value):
+                paths.add(path)
+                if not any(Path(path).is_relative_to(p.path) for p in info.projects):
+                    outside.append(path)
+        paths = {path for path in paths if not git.is_rung_output(path)}
+        scope = plan.change_plan(info, checks, paths, base=base)
+        payload["change"] = {"base": base, **scope, "outside_projects": sorted(set(outside))}
+        out.line(f"Verification plan for {len(paths)} path(s)")
+        for path in sorted(set(outside)):
+            out.detail(f"{path} is outside every detected project; no test suite is recommended for it", indent=2)
+        if scope["focused_run"]:
+            out.detail("Focused checks for declared targets", indent=2)
+            out.command(scope["focused_run"], indent=4)
+        if scope["run"]:
+            if scope["focused_run"]:
+                out.detail("All checks that may be affected", indent=2)
+            out.command(scope["run"])
+        for path in scope["without_execution_check"]:
+            out.detail(f"No command, runtime or formal check scope includes {path}", indent=2)
+        for step in scope["follow_up"]:
+            out.detail(f"{step['label']} ({step['reason']})", indent=2)
+            out.command(step["command"], indent=4)
+    recs = plan.plan(info, {check.id for check in checks}, paths=paths)
+    payload["plan"] = [r.__dict__ for r in recs]
+    out.emit(payload)
     _print_plan(recs, out)
     return OK
+
+
+def _plan_paths(root: Path, value: str) -> list[str]:
+    """Project-relative paths for one `--path`: relative to the working directory when run inside the
+    project (else to the project root), and a directory stands for the tracked files under it."""
+    cwd = Path.cwd().resolve()
+    base = cwd if cwd.is_relative_to(root) else root
+    resolved = (base / value).resolve()
+    if not resolved.is_relative_to(root):
+        raise ConfigError(f"--path must name a path inside the project: {value!r}")
+    rel = resolved.relative_to(root).as_posix()
+    if not resolved.is_dir():
+        return [rel]
+    prefix = "" if rel == "." else rel + "/"
+    return [name for name in git.list_files(root) if name.startswith(prefix)] or [rel]
 
 
 def cmd_doctor(args, out: Output) -> int:
@@ -359,25 +523,142 @@ def cmd_doctor(args, out: Output) -> int:
         note = "" if preset.verified else " (preset not yet verified against real output)"
         rows.append((name, bool(found), (found or f"not installed: {preset.install}") + note))
     for name in ("claude-cli", "codex-cli"):
-        state = providers.get(LLMConfig(provider=name)).login_state()
-        rows.append((name, state.ok, state.detail))
-    out.emit([{"tool": label, "ok": ok, "detail": detail} for label, ok, detail in rows])
+        command = name.removesuffix("-cli")
+        found = shutil.which(command)
+        rows.append((name, bool(found), found or f"not installed: {command}"))
+    try:
+        guard = sandbox.probe_write_guard(Path(args.dir))
+    except ToolMissing as exc:
+        rows.append(("draft write guard", False, str(exc)))
+    else:
+        rows.append(("draft write guard", True, guard))
+    try:
+        root = find_root(Path(args.dir))
+    except ConfigError:
+        if args.strict:
+            raise
+        required = []
+    else:
+        required = _configured_tools(load(root), rows)
+    rows.extend(required)
+    # `strict_failures` names the configured tools `--strict` fails on, whether or not it was passed.
+    failures = [label for label, ok, _ in required if not ok]
+    out.emit({"tools": [{"tool": label, "ok": ok, "detail": detail} for label, ok, detail in rows],
+              "strict_failures": failures})  # fmt: skip
     for label, ok, detail in rows:
         mark = out.style("ok ", "green") if ok else out.style("-- ", "dim")
         out.line(f"{mark} {label:14} {detail}")
-    return OK
+    return GATE_FAILED if args.strict and failures else OK
+
+
+def _configured_tools(cfg: Config, probes: list[tuple[str, bool, str]]) -> list[tuple[str, bool, str]]:
+    available = {name: (ok, detail) for name, ok, detail in probes}
+    rows = []
+    for check in cfg.checks:
+        if isolates_evidence(check):
+            ok, detail = available["draft write guard"]
+            rows.append((f"{check.id}: write guard", ok, detail))
+        keys = ("model", "impl") if check.kind == "drt" else ("run",)
+        for key in keys:
+            if not (command := check.get(key)):
+                continue
+            argv = shlex.split(command)
+            executable = argv[0]
+            cwd_key = "cwd" if key == "run" else f"{key}_cwd"
+            cwd = cfg.root / check.get(cwd_key, ".")
+            label = f"{check.id}: {key} ({executable})"
+            if not cwd.is_dir():
+                rows.append((label, False, f"working directory {cwd} is missing; review {CONFIG_NAME}"))
+                continue
+            if key == "model" and executable == "lake":
+                ready, found = available["lake (Lean)"]
+                rows.append((f"{check.id}: {key} (lake)", ready, found))
+                continue
+            found = launch.find_executable(executable, cwd)
+            rows.append((label, bool(found), found or f"not executable from {cwd}; install {executable}"))
+            if found and (inner := launch.delegated(argv, cwd)) and inner.host_path:
+                name = inner.argv[0]
+                inner_tool = launch.find_executable(name, inner.cwd)
+                detail = inner_tool or f"not executable from {inner.cwd}. Install {name} for the delegated command"
+                rows.append((f"{check.id}: delegated runner ({name})", bool(inner_tool), detail))
+            if found and cargo_test(argv) and "--locked" in argv:
+                lock = next((p / "Cargo.lock" for p in (cwd, *cwd.parents) if (p / "Cargo.lock").is_file()), None)
+                detail = str(lock) if lock else f"run cargo generate-lockfile in {cwd}, then review the lockfile"
+                rows.append((f"{check.id}: Cargo.lock", bool(lock), detail))
+            target = launch.python_entrypoint(argv)
+            if found and target and target[0] == "module":
+                module = target[1]
+                relative = cwd.joinpath(*module.split("."))
+                if relative.with_suffix(".py").is_file() or (relative / "__main__.py").is_file():
+                    ok, detail = True, f"project module in {cwd}"
+                else:
+                    ok, detail = _python_module(found, module.split(".")[0])
+                rows.append((f"{check.id}: Python module {module}", ok, detail))
+            for script in package_script_commands(cwd, argv) if found else []:
+                if not script or script[0] not in {
+                    "vitest",
+                    "jest",
+                    "mocha",
+                    "ava",
+                    "playwright",
+                    "eslint",
+                    "tsc",
+                    "next",
+                }:
+                    continue
+                tool = script[0]
+                binary = tool + (".cmd" if os.name == "nt" else "")
+                ready = bool(shutil.which(tool)) or any(
+                    (Path(executable).name == "yarn" and (directory / ".pnp.cjs").is_file())
+                    or os.access(directory / "node_modules" / ".bin" / binary, os.X_OK)
+                    for directory in (cwd, *cwd.parents)
+                )
+                if ready:
+                    detail = "available to the package script"
+                elif Path(executable).name == "npm" and (cwd / "package-lock.json").is_file():
+                    detail = f"run npm ci in {cwd}"
+                else:
+                    detail = f"install dependencies for {cwd} using the project's package manager"
+                rows.append((f"{check.id}: Node runner {tool}", ready, detail))
+        tools = {
+            "scan": (check.get("tool"),),
+            "lean": ("lake (Lean)",),
+            "tla": ("java (TLC)", "tla2tools.jar"),
+        }.get(check.kind, ())
+        for tool in tools:
+            if tool and not (check.kind == "scan" and check.get("run")):
+                ok, detail = available.get(tool, (False, f"unknown tool: {tool}"))
+                rows.append((f"{check.id}: {tool}", ok, detail))
+    return rows
+
+
+def _python_module(executable: str, module: str) -> tuple[bool, str]:
+    """Probe the PATH interpreter in isolation, without importing the module or any project code."""
+    probe = "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec(sys.argv[1]) else 1)"
+    try:
+        result = run_process([str(Path(executable).absolute()), "-I", "-c", probe, module],
+                             cwd=Path(sys.base_prefix), timeout=5)  # fmt: skip
+    except (OSError, subprocess.TimeoutExpired):
+        return False, f"could not inspect {executable}"
+    if result.returncode:
+        return False, f"install {module} into the environment used by {executable}"
+    return True, f"available to {executable}"
 
 
 def cmd_agents(args, out: Output) -> int:
     root = find_root(Path(args.dir))
-    written = agents.install(root, hooks=args.hooks, lean_version=lean.toolchain().split(":")[-1])
+    written = agents.install(
+        root, hooks=args.hooks, codex_hooks=args.codex_hooks, lean_version=lean.toolchain().split(":")[-1]
+    )
     out.emit({"written": [str(p.relative_to(root)) for p in written]})
     for path in written:
         out.line(f"wrote {path.relative_to(root)}")
     if args.hooks:
         out.line("Claude Code will now run `rung hook stop` before an agent finishes.")
+    if args.codex_hooks:
+        out.line("Review and trust the project Stop hook in Codex with /hooks.")
     return OK
 
 
 def cmd_hook(args, out: Output) -> int:
-    return agents.main_stop_hook()
+    return agents.main_stop_hook(agent=args.agent)

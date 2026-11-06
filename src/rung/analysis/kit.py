@@ -9,6 +9,7 @@ enforces. `rung kit` shows it; `rung init` builds it.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from rung.core.config import Check, Config
 PARTS = (
     ("static", "Linters and type checkers", "the mistakes a tool can see without running anything"),
     ("tests", "Tests", "regressions in the behaviour the tests pin down"),
+    ("commands", "Custom checks", "the conditions defined by manually registered commands"),
     ("properties", "Property tests", "inputs nobody thought to write a test for; each must catch planted bugs"),
     ("security", "Security gates", "leaked secrets, vulnerable or invented packages, risky CI"),
     ("app", "Driving the app", "what a user sees, under faults and odd inputs, with the evidence to show it"),
@@ -30,6 +32,16 @@ PARTS = (
 _PLAN_PART = {"tests": "tests", "security": "security", "architecture": "static", "runtime": "app",
               "protocol": "formal", "model": "formal"}  # fmt: skip
 _STATIC_WORDS = ("lint", "type", "format", "check", "fmt", "vet", "clippy", "mypy", "pyright", "ruff", "eslint")
+# A command that runs one of these is a test suite, whatever its id (`unit`, `e2e`, ...).
+_TEST_RUNNER = re.compile(
+    r"(?:^|[\s/])(?:pytest|py\.test|vitest|jest|mocha|ava)(?:\s|$)"
+    r"|(?:^|\s)-m\s+(?:pytest|unittest)\b"
+    r"|(?:^|[\s/])(?:go|cargo|mvn|mvnw|gradle|gradlew|mix|swift|make|rake)\s+(?:test|nextest)\b"
+    r"|(?:^|[\s/])(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b"
+    r"|(?:^|[\s/])node\s+--test\b"
+)
+# A suggestion with a placeholder is something to fill in, not a command to run.
+_PLACEHOLDER = "<your test command>"
 # The order in which a check's state calls for attention.
 _URGENCY = {"failing": 0, "drifted": 1, "stale": 2, "never": 3}
 
@@ -49,9 +61,11 @@ def part_of(check: Check) -> str:
         return "properties"
     if "test" in name or "spec" in name:
         return "tests"
+    if check.kind == "command" and _TEST_RUNNER.search(str(check.get("run", ""))):
+        return "tests"
     if any(w in name for w in _STATIC_WORDS):
         return "static"
-    return "tests"
+    return "commands"
 
 
 @dataclass
@@ -106,7 +120,11 @@ def agent_entries(root: Path) -> list[Entry]:
     skills = root / ".claude" / "skills"
     entries: list[Entry] = []
     if (skills / "rung" / "SKILL.md").exists():
-        entries.append(Entry("rung skills + AGENTS.md", "skill", "installed"))
+        entries.append(Entry("Claude Code skills", "skill", "installed"))
+    if (root / ".agents" / "skills" / "rung" / "SKILL.md").exists():
+        entries.append(Entry("Codex skills", "skill", "installed"))
+    if (root / "AGENTS.md").is_file() and "<!-- rung:begin -->" in (root / "AGENTS.md").read_text(errors="replace"):
+        entries.append(Entry("AGENTS.md guidance", "skill", "installed"))
     for path in sorted(skills.glob("verify-*/SKILL.md")) if skills.is_dir() else []:
         entries.append(Entry(path.parent.name, "skill", "installed", "project-specific verification skill"))
     settings = root / ".claude" / "settings.json"
@@ -135,8 +153,14 @@ def _suggestions(info: Inspection, existing: set[str]) -> dict[str, tuple[str, s
     found: dict[str, tuple[str, str]] = {}
     for rec in plan.plan(info, existing):
         part = _PLAN_PART.get(rec.rung)
+        if part == "tests" and not rec.command.startswith("rung add command "):
+            continue
         if part and part not in found and rec.command:
             found[part] = (rec.command, rec.title)
+    found.setdefault(
+        "tests",
+        (f"rung add command tests --run '{_PLACEHOLDER}'", "No test suite detected. Register your test command."),
+    )
     if info.model_candidates:
         target = info.model_candidates[0].path
         found["properties"] = (f"rung draft property {target}",
@@ -163,6 +187,8 @@ def build(config: Config, info: Inspection) -> Kit:
         detail = s.changed[0] if s.state == "drifted" and s.changed else ""
         by_key[part_of(check)].entries.append(Entry(check.id, check.kind, s.state, detail))
     by_key["agents"].entries = agent_entries(config.root)
+    if not by_key["commands"].entries:
+        parts.remove(by_key["commands"])
     if (entry := map_entry(config.root)) is not None:
         by_key["app"].entries.insert(0, entry)
     for part in parts:
@@ -208,7 +234,7 @@ def _next_steps(parts: list[Part], law_states: dict[str, int]) -> list[tuple[str
         steps.append((2, "rung check", f"{len(unrun)} check(s) stale or never run: {', '.join(unrun[:4])}"
                       + (" ..." if len(unrun) > 4 else "")))  # fmt: skip
     for part in parts:
-        if part.state == "missing":
+        if part.state == "missing" and _PLACEHOLDER not in part.suggest:
             steps.append((3, part.suggest, f"{part.title}: {part.missing}"))
     if law_states.get("proposed"):
         steps.append((4, "rung laws", f"{law_states['proposed']} proposed law(s) wait for a person to approve them"))

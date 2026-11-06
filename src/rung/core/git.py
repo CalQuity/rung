@@ -45,14 +45,15 @@ class GitError(RungError):
 
 def _git(root: Path, *args: str, check: bool = True, timeout: int = GIT_TIMEOUT) -> str:
     try:
-        proc = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, check=False, timeout=timeout)
+        proc = subprocess.run(["git", *args], cwd=root, capture_output=True, check=False, timeout=timeout)
     except FileNotFoundError as exc:
         raise GitError("git is not installed") from exc
     except subprocess.TimeoutExpired as exc:
         raise GitError(f"git {' '.join(args)} timed out after {timeout}s") from exc
     if check and proc.returncode != 0:
-        raise GitError(f"git {' '.join(args)}: {proc.stderr.strip() or proc.stdout.strip()}")
-    return proc.stdout
+        detail = os.fsdecode(proc.stderr.strip() or proc.stdout.strip())
+        raise GitError(f"git {' '.join(args)}: {detail}")
+    return os.fsdecode(proc.stdout)
 
 
 def _paths(output: str) -> list[str]:
@@ -75,7 +76,7 @@ def head(root: Path) -> str:
 
 def prefix(root: Path) -> str:
     """Where `root` sits inside its repository, e.g. `backend/` (empty at the top)."""
-    return _git(root, "rev-parse", "--show-prefix").strip()
+    return _git(root, "rev-parse", "--show-prefix").removesuffix("\n")
 
 
 def merge_base(root: Path, base: str) -> str:
@@ -86,7 +87,7 @@ def merge_base(root: Path, base: str) -> str:
 def changed_files(root: Path, base: str) -> set[str]:
     """Files under `root` that differ from the merge base with `base`, including uncommitted and untracked ones."""
     mb = merge_base(root, base)
-    changed = set(_paths(_git(root, "diff", "--name-only", "-z", "--relative", mb)))
+    changed = set(_paths(_git(root, "diff", "--no-renames", "--name-only", "-z", "--relative", mb, "--")))
     changed |= set(_paths(_git(root, "ls-files", "-z", "--others", "--exclude-standard")))
     return changed
 
@@ -98,9 +99,19 @@ def show(root: Path, commit: str, path: str) -> str:
 
 def show_many(root: Path, commit: str, paths: list[str]) -> dict[str, bytes]:
     """The contents of many files at `commit` in one `git cat-file --batch` process (missing ones left out)."""
+    out: dict[str, bytes] = {}
+    for path in paths:
+        if "\n" in path:
+            # The ordinary batch protocol delimits requests by LF. Read these names
+            # as individual arguments so they cannot shift the following responses.
+            try:
+                out[path] = os.fsencode(show(root, commit, path))
+            except GitError:
+                continue
+    paths = [path for path in paths if "\n" not in path]
     if not paths:
-        return {}
-    request = "".join(f"{commit}:./{p}\n" for p in paths).encode()
+        return out
+    request = os.fsencode("".join(f"{commit}:./{p}\n" for p in paths))
     try:
         proc = subprocess.run(["git", "cat-file", "--batch"], cwd=root, input=request, capture_output=True,
                               check=False, timeout=600)  # fmt: skip
@@ -108,7 +119,7 @@ def show_many(root: Path, commit: str, paths: list[str]) -> dict[str, bytes]:
         raise GitError(f"git cat-file failed: {exc}") from exc
     if proc.returncode != 0:
         raise GitError(f"git cat-file failed: {proc.stderr.decode(errors='replace').strip()}")
-    out, data, pos = {}, proc.stdout, 0
+    data, pos = proc.stdout, 0
     for path in paths:
         end = data.index(b"\n", pos)
         header = data[pos:end].split()
@@ -144,9 +155,12 @@ def default_base(root: Path) -> str:
         return ref.removeprefix("refs/remotes/")
     except GitError:
         pass
-    for candidate in ("origin/main", "main", "origin/master", "master"):
+    for candidate in ("origin/main", "main", "origin/master", "master", "origin/trunk", "trunk"):
         if _git(root, "rev-parse", "--verify", "--quiet", candidate, check=False).strip():
             return candidate
+    local = _git(root, "for-each-ref", "--format=%(refname)", "refs/heads").splitlines()
+    if len(local) == 1:
+        return local[0]
     raise GitError("cannot find a base branch; pass --base")
 
 
@@ -158,7 +172,7 @@ def list_files(root: Path) -> list[str]:
             p for p in _paths(_git(root, "ls-files", "-z", "--others", "--exclude-standard"))
             if not SKIP_DIRS.intersection(p.split("/"))
         ]  # fmt: skip
-        return sorted({p for p in tracked + untracked if (root / p).is_file()})
+        return sorted({p for p in tracked + untracked if (root / p).is_symlink() or (root / p).is_file()})
     files = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and d != ".git"]
@@ -198,7 +212,7 @@ def _glob_regex(pattern: str) -> re.Pattern[str]:
         else:
             out.append(re.escape(c))
             i += 1
-    return re.compile("".join(out) + r"\Z")
+    return re.compile("".join(out) + r"\Z", re.DOTALL)
 
 
 def glob_match(pattern: str, path: str) -> bool:
@@ -213,15 +227,19 @@ def expand(root: Path, patterns: list[str]) -> list[str]:
     """Resolve glob patterns against the project's files.
 
     A pattern that matches nothing is kept literally, so a deleted file shows up
-    as missing instead of silently dropping out of a verdict's coverage.
+    as missing instead of silently dropping out of a verdict's coverage. A pattern
+    starting with `!` excludes the files it matches from the result.
     """
     if not patterns:
         return []
     files = [f for f in list_files(root) if not is_rung_output(f)]
+    excluded = [p[1:] for p in patterns if p.startswith("!")]
     out: set[str] = set()
-    for pattern in patterns:
+    for pattern in (p for p in patterns if not p.startswith("!")):
         matches = [f for f in files if glob_match(pattern, f)]
         out.update(matches or [pattern])
+    if excluded:  # `!pattern` removes matches, so a scope can be "everything except documentation"
+        out = {f for f in out if not any(glob_match(x, f) for x in excluded)}
     return sorted(out)
 
 
