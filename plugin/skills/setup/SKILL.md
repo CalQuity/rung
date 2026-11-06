@@ -83,22 +83,18 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: CalQuity/rung@v0.3.0
-        with:
-          upload-evidence: false   # recordings can show real data; opt in only for synthetic data
-          comment: false           # a PR comment needs `pull-requests: write`; the job stays read-only
-          policy-changes: fail     # edits to rung.toml, LAWS.md, waivers or baselines fail the job
+      - uses: CalQuity/rung@v0.4.0
 ```
 
-Keep these three inputs explicit: v0.3.0 defaults to uploading evidence, commenting and only warning
-on policy changes. If the developer wants the report as a PR comment, set `comment: true` and add
-`pull-requests: write` under `permissions`.
+The defaults keep the job read-only: no evidence upload, no PR comment, and policy changes (edits to
+rung.toml, LAWS.md, waivers or baselines) fail the job. If the developer wants the report as a PR
+comment, post it from a separate `workflow_run` workflow as Rung's README shows, so the job that runs
+pull request code never holds a write token.
 
 Install whatever the checks need (language runtimes, scanners) in steps before `CalQuity/rung`.
 Use `rung check --changed` for local iteration. Protect the workflow with repository-owner review.
 Keep PR jobs free of secrets. Upload evidence only when the developer has chosen to share synthetic
-recordings. After the next release, `rung gate --base origin/main` makes the same merge decision from
-the CLI and the Action blocks policy changes by default; v0.3.0 has neither.
+recordings. `rung gate --base origin/main` makes the same merge decision from the CLI.
 
 ## 5. Teach the repository's agents
 
