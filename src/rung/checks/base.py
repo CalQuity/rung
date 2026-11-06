@@ -20,6 +20,10 @@ class Context:
     seed: int | None = None
     # Run only these named scenarios of a drive script (`RUNG_SCENARIOS`).
     scenarios: tuple[str, ...] = ()
+    # Draft trials may run under a filesystem guard with a sanitized process environment.
+    command_prefix: tuple[str, ...] = ()
+    environment: dict[str, str] | None = None
+    merge_gate: bool = False
 
 
 @dataclass

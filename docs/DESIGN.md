@@ -115,7 +115,7 @@ the app can still pass on one run of a seed and fail on another.
 Each run's evidence is meant to be replayed by a person: a Playwright trace (DOM snapshots, network
 and console at every action), a HAR, a video, and screenshots named after the step they prove. Rung
 writes one `index.html` per run that ties them to the scenarios and assertions, with relative links
-only, and the GitHub Action uploads them as a workflow artifact linked from the report.
+only. With uploads enabled, the GitHub Action links the artifact from the report.
 
 ### Agents
 
@@ -162,6 +162,10 @@ the model was last confirmed to describe them, with who confirmed it and why.
 - **Drift is an error, not a rerun.** When the covered sources' digest differs from the confirmed
   one, the check is an error naming the changed files, and the laws it enforces are UNPROVEN until
   someone acts. A draft that is accepted sets the record; so do the two ways out of drift.
+- A standalone check can pass against a model before a source link is confirmed. Reports label that
+  result model-only. An approved law that relies entirely on model checks requires at least one
+  confirmed link to the source. Differential or other implementation checks can supply separate
+  evidence for the law.
 - **`rung maintain <check>`** gives the model the spec, the diff of the covered files (and any SQL
   definitions) since the confirmed commit, and the commit messages, and makes it classify each
   change: no effect, the model must change, the promise changed on purpose (with quoted evidence),
@@ -213,19 +217,19 @@ Lean theorem plus a differential test, and a test suite, all at once. Agents may
   providers read a key from an environment variable named in `rung.toml`.
 - Drafting with Claude Code runs with all tools disabled (`--tools ""`) and no MCP servers
   (`--strict-mcp-config`), so the model sees only what Rung sends; Codex runs in a read-only sandbox and may read the repository.
-- Model replies are written only inside the chosen output directory. What Rung then *runs* is
-  model-written code: drive scripts and Lean builds run in the project, property tests in a
-  disposable copy with credential-looking variables removed. None of that is a security sandbox;
-  read generated code before trusting it.
+- Runtime and property trials run in a disposable copy under an OS write guard. The trial
+  environment removes credential-like variables and masks common credential paths. Model-assisted
+  Lean builds run as project tooling. Review the generated files before relying on them.
 - Spec and proof checking runs locally. Nothing is uploaded. The `deps` check sends package
   names to PyPI and npm; the scanners make whatever network calls they make themselves
   (zizmor runs with `--offline`).
 - Gitleaks always runs with `--redact`.
-- Drive scripts are model-written code that Rung runs with the developer's permissions; fault
-  scenarios kill and restart processes the script itself started. Evidence is not redacted: a HAR or
-  a trace records request headers and bodies, cookies and tokens included, and the GitHub Action
-  uploads `.rung/evidence/` for anyone who can read the repository's workflow artifacts. Drive with
-  test accounts, or set `upload-evidence: false`. Only the excerpts kept in verdict files are redacted.
+- Drafted drives retain the write guard on replay. Rung runs each replay in a disposable copy
+  and copies back the report and ordinary evidence files. Drives can require broader access
+  through reviewed configuration. A HAR or
+  a trace records request headers and bodies, cookies and tokens included. The GitHub Action
+  uploads `.rung/evidence/` only when opted in. Drive with test accounts and synthetic data
+  before sharing. Rung redacts known secret shapes in command excerpts.
 - The evidence page escapes everything it shows and loads nothing from the network; it does not
   sandbox the files it links to.
 
@@ -235,3 +239,61 @@ Lean theorem plus a differential test, and a test suite, all at once. Agents may
 - Not a guarantee of correctness. It guarantees that the stated laws were checked
   against the exact code in the ledger. A law that says the wrong thing is checked just
   as faithfully, which is why laws need human approval.
+
+## Merge decision and agent output
+
+`rung gate` resolves the target's merge base, then checks protected paths against the working
+tree. It treats checker-declared specs as policy, including formal model and configuration files.
+A Node command also makes package script definitions part of policy. Coverage gaps are reported
+on both the local check path and the merge path. Teams can require a check scope for selected globs.
+A local focused check runs only execution checks with declared targets touched by the change and
+reports omitted checks. Shared inputs still invalidate earlier verdicts. The merge gate applies its
+full selection.
+Its settings (policy mode, extra policy paths, required coverage, approval label) come from the
+`[gate]` table on the merge base, so the change under review cannot loosen them; caller options
+only fill unset keys. A matching approval label turns blocking policy changes into reported ones.
+When given the pull request head, the gate refuses to judge any other commit. Each custom check
+needs its own verifier declaration: a policy glob exempts only checks whose launch files it matches.
+A gate runs every selected automated check again, ensures approved laws have their enforcing
+checks in the selection, and checks final freshness. These controls catch accidental or agent-made
+weakening. They do not give integrity against a hostile change: its code runs where the receipt is
+produced, on the local runner and in a Daytona sandbox alike. The verdict ledger remains useful for
+developer feedback and review. A hash in a contributor-controlled file establishes integrity
+against accidental changes.
+
+Object-shaped JSON responses carry `schema_version`, including setup, kit, and draft results.
+The existing `doctor` and `laws` lists keep their array shape. Read the exit code first.
+Check results expose artifact paths and hashes.
+Gate output includes its merge base, HEAD, selected checks, blocked reasons, uncovered paths,
+and results. A scope match describes the inputs that invalidate a verdict. Its assertions
+determine the behavior it exercises. A seed or scenario replay returns results without replacing
+the full verdict. Configuration errors encountered after parsing emit an error object in JSON
+mode. Argument errors also emit an error object when `--json` is present.
+
+Input snapshot version 2 includes executable permissions and symbolic link targets as well as
+the file contents. Earlier passing verdicts refresh on their next check. External link targets
+have no reproducible repository snapshot, so covered paths using them produce an error.
+
+POSIX checks run in their own process group and use temporary files for subprocess output.
+A deadline ends the process group and any still-discoverable descendants, then returns
+without waiting for inherited output descriptors. A process that is already detached and
+reparented may outlive this cleanup. Run untrusted commands on an isolated disposable worker.
+Linux and macOS are exercised by CI.
+
+### Draft trial controls
+
+A runtime draft runs twice at one seed. Rung then changes application sources in the copy
+and reruns the same drive. Python returns, scripts embedded in HTML, and supported JavaScript
+or TypeScript expressions provide behavior controls. The app can still load, and a previously
+passing named assertion must fail. Rung holds a drive that only passes a startup control or
+misses its behavior control under `.rung/cache/drafts/`. Review the retained script and use
+`rung add evidence` if a manual check fits the project. Review accepted assertions against the intended behavior.
+An accepted draft replaces the configured script and publishes its evidence.
+
+`rung check --reuse-local` can reuse an unchanged verdict only with a local environment receipt.
+The receipt hashes the toolchain-relevant environment (PATH, locale, and interpreter, package
+manager and compiler variables such as `PYTHON*`, `NODE*`, `UV_*`, `GO*`, `CARGO*`, `JAVA*`) and
+resolved launcher identities, with no environment variables in the shared verdict. Session noise
+such as terminal or CI bookkeeping variables does not prevent reuse. It includes symlinks along a launcher path and their targets. Rung reruns
+checks when a package runner manages the delegated tool environment and its identity is unavailable
+before execution. The merge gate always reruns its checks.

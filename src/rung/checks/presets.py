@@ -26,6 +26,7 @@ class Preset:
     max_age_days: int | None = None
     covers: list[str] = field(default_factory=lambda: ["**/*"])
     verified: bool = False
+    finding_exit_codes: tuple[int, ...] = (1,)
 
 
 PRESETS: dict[str, Preset] = {
@@ -35,10 +36,11 @@ PRESETS: dict[str, Preset] = {
             "gitleaks",
             "secrets committed to the code",
             # --redact keeps secret values out of the report, the ledger and the terminal.
-            "gitleaks dir . --no-banner --redact -f sarif -r {out}",
+            "gitleaks dir . --no-banner --redact --exit-code 42 -f sarif -r {out}",
             "brew install gitleaks  |  https://github.com/gitleaks/gitleaks",
             default_level="error",
             verified=True,
+            finding_exit_codes=(42,),
         ),
         Preset(
             "osv-scanner",
@@ -75,6 +77,7 @@ PRESETS: dict[str, Preset] = {
             "brew install zizmor  |  https://github.com/zizmorcore/zizmor",
             covers=[".github/workflows/**", ".github/actions/**", "action.yml", "action.yaml"],
             verified=True,
+            finding_exit_codes=(),  # SARIF mode reports findings with exit 0
         ),
         Preset(
             "semgrep",

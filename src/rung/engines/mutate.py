@@ -33,7 +33,8 @@ _COMMON = (
     (r"(?<=\s)\*(?=\s)", "/"),
 )
 _PY = (*_COMMON, (r"==", "!="), (r"!=", "=="), (r"\band\b", "or"), (r"\bor\b", "and"),
-       (r"\bTrue\b", "False"), (r"\bFalse\b", "True"), (r"\bnot\s+", ""))  # fmt: skip
+       (r"\bTrue\b", "False"), (r"\bFalse\b", "True"), (r"\bnot\s+", ""),
+       (r"(?<![\w.])min(?=\s*\()", "max"), (r"(?<![\w.])max(?=\s*\()", "min"))  # fmt: skip
 _JS = (*_COMMON, (r"===", "!=="), (r"!==", "==="), (r"&&", "||"), (r"\|\|", "&&"),
        (r"\btrue\b", "false"), (r"\bfalse\b", "true"))  # fmt: skip
 
@@ -110,7 +111,7 @@ def mutants(path: Path, limit: int = 12, lines: set[int] | None = None) -> list[
 def applied(mutant: Mutant) -> Iterator[None]:
     """Write the mutant into its file for the duration of the block, then restore the original.
 
-    Only ever call this on a disposable copy of the project (see `rung.drafting.sandbox`): a process
+    Only ever call this on a disposable copy of the project (see `rung.core.sandbox`): a process
     killed inside the block leaves the mutant in place.
     """
     original = mutant.path.read_bytes()

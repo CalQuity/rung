@@ -406,7 +406,9 @@ def test_attested_evidence_holds_until_the_code_changes(repo: Path) -> None:
     assert runner.run_check(cfg, check).verdict == "error"  # nothing attested yet
 
     gif = repo / "demo.gif"
-    gif.write_bytes(b"GIF89a...")
+    gif.write_bytes(
+        bytes.fromhex("47494638396101000100800000000000ffffff21f90401000000002c00000000010001000002024401003b")
+    )
     result = runner.attest(cfg, check, [gif], by="claude-in-chrome", note="saved a draft")
     assert result.verdict == "pass" and "claude-in-chrome" in result.outcome.summary
     assert runner.status(cfg, check).trusted

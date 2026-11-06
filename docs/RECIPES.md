@@ -19,6 +19,19 @@ When you fix a bug, prove the regression test catches it:
 rung prove "pytest tests/test_refunds.py" --expect "refund exceeded charge"
 ```
 
+With Node's built-in runner, Rung checks every reported case in a new test file.
+For an edited file, name each regression case with a separate `--case`:
+
+```bash
+rung prove "node --test test/refunds.test.js" --case "test/refunds.test.js::caps the refund"
+```
+
+A case inside `describe` blocks is named with its suites, joined by ` > `:
+`--case "test/refunds.test.js::refund > caps the refund"`.
+
+Use a Node version with the JUnit reporter. Case names must be unique within each file.
+For runners without individual case support, `--expect` identifies the failure in a suite-level proof.
+
 ## REST or CRUD API
 
 - **Runtime evidence.** `rung draft runtime --intent "create, read, update and delete an order"`.
@@ -65,20 +78,23 @@ as a numbered trace. See [`examples/lease-queue`](../examples/lease-queue).
 
 ## Monorepo
 
-Give each check the files it covers, so `rung check --changed` runs only what a change touches:
+Setup detects multiple manifest roots and runs each command in its project directory. Generated
+commands cover the repository, since a package can import a sibling or use root configuration.
+For faster local iteration, narrow a check to its full dependency scope, including shared code and
+workspace configuration:
 
 ```toml
 [[check]]
 id = "web-tests"
 kind = "command"
 run = "pnpm --filter web test"
-covers = ["apps/web/**", "packages/ui/**"]
+covers = ["apps/web/**", "packages/ui/**", "pnpm-lock.yaml", "pnpm-workspace.yaml", "tsconfig.base.json"]
 
 [[check]]
 id = "api-tests"
 kind = "command"
 run = "uv run pytest services/api"
-covers = ["services/api/**"]
+covers = ["services/api/**", "libs/shared/**", "uv.lock", "pyproject.toml"]
 ```
 
 ## Adopting scanners on an existing codebase
@@ -96,3 +112,18 @@ reason and an expiry:
 ```bash
 rung waive secrets 7a9fe0a79cbca79f --reason "test fixture with a fake token" --days 90
 ```
+
+## Migration, infrastructure, and data pipeline changes
+
+Use a disposable database, plan environment, or fixture dataset. Record the existing command with
+`rung add command`. A meaningful check exercises the risky behavior in that environment:
+
+- **Database migration** · Apply it to a representative prior schema. Test repeat execution, backfill
+  invariants, and whether old and new application versions can operate during rollout.
+- **Infrastructure** · Check the plan against the organization's policy and run a smoke test after
+  deploying to an isolated environment. Record the plan and smoke test as distinct checks.
+- **Data pipeline** · Reprocess a fixture partition with duplicates and late arrivals. Assert output
+  counts, deduplication and replay behavior. Keep inputs synthetic when recording artifacts.
+
+Run `rung gate --base origin/main` before merging. Run the environment-specific smoke check after
+deploying the built artifact and archive the report with that artifact's identifier.

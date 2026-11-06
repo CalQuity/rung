@@ -75,7 +75,6 @@ name: rung
 on: pull_request
 permissions:
   contents: read
-  pull-requests: write   # only for the report comment
 jobs:
   rung:
     runs-on: ubuntu-latest
@@ -85,11 +84,21 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: CalQuity/rung@v0.3.0
+        with:
+          upload-evidence: false   # recordings can show real data; opt in only for synthetic data
+          comment: false           # a PR comment needs `pull-requests: write`; the job stays read-only
+          policy-changes: fail     # edits to rung.toml, LAWS.md, waivers or baselines fail the job
 ```
 
+Keep these three inputs explicit: v0.3.0 defaults to uploading evidence, commenting and only warning
+on policy changes. If the developer wants the report as a PR comment, set `comment: true` and add
+`pull-requests: write` under `permissions`.
+
 Install whatever the checks need (language runtimes, scanners) in steps before `CalQuity/rung`.
-Locally the equivalent is `rung check --changed`, which runs only what a branch touches and blocks only
-what it introduces.
+Use `rung check --changed` for local iteration. Protect the workflow with repository-owner review.
+Keep PR jobs free of secrets. Upload evidence only when the developer has chosen to share synthetic
+recordings. After the next release, `rung gate --base origin/main` makes the same merge decision from
+the CLI and the Action blocks policy changes by default; v0.3.0 has neither.
 
 ## 5. Teach the repository's agents
 
@@ -99,9 +108,10 @@ what it introduces.
 rung agents --hooks
 ```
 
-This writes Claude Code skills (`rung`, `rung-tla`, `rung-lean`), an AGENTS.md section for Codex,
-Cursor and others, and a Claude Code Stop hook that keeps an agent from finishing while checks covering
-its edits are not freshly passing. The hook needs `rung` on the PATH Claude Code sees.
+This installs shared `AGENTS.md` guidance and the Claude Code Stop hook. Run
+`rung check --changed` and `rung report --format json` to drive and report verification.
+Newer builds also install the Codex workflow and support `rung plan --changed --json`.
+The hook needs `rung` on the PATH Claude Code sees.
 
 ## 6. Optional: evidence and formal checks
 

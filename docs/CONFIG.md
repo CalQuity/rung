@@ -13,7 +13,7 @@
 | `.rung/verify/` | yes | Generated drive script and feature map (`rung draft runtime`) |
 | `.rung/formal/<check>.json` | yes | For a `tla` or `lean` check: the code its model was last confirmed to describe, and what the model says (scope, labels, fail-ability) |
 | `.claude/skills/verify-<check>/SKILL.md` | yes | How an agent runs, reads and maintains one `tla` or `lean` check |
-| `.rung/evidence/` | no | Evidence artifacts; the ledger keeps their hashes. Upload them from CI. |
+| `.rung/evidence/` | no | Evidence artifacts; the ledger verifies their hashes before treating a verdict as fresh. CI upload is opt-in. |
 
 ## `rung.toml`
 
@@ -33,6 +33,27 @@ kind = "command"
 run = "pytest -q"
 covers = ["src/**", "tests/**"]
 ```
+
+### Merge gate (`[gate]`)
+
+`rung gate` reads this table from the merge base, never from the change under review. Workflow
+inputs and `rung gate` options fill only the keys the base leaves unset. A change to the table is
+itself a policy change that needs approval, even with `policy_changes = "warn"`.
+
+```toml
+[gate]
+policy_changes = "fail"                   # "fail" blocks policy changes before checks run; "warn" reports them
+policy_paths = [".semgrep/rules/**"]      # more files that decide the gate
+require_coverage = ["src/**"]             # changed files here need a declared execution check
+approval_label = "rung-policy-approved"   # a maintainer's label that approves reviewed policy changes
+```
+
+All globs are relative to the directory holding `rung.toml`; use `../` to name a file elsewhere in
+the repository. A policy path that matches a custom check's launch script also stands in for that
+check's `specs`, for that check only. `rung gate --pr-label LABEL` reports policy changes without
+blocking when `LABEL` equals `approval_label`; the GitHub Action passes the label only on the run a
+maintainer starts by applying it. `rung gate --pr-head SHA` blocks unless HEAD is that commit or a
+merge commit of it.
 
 ### Models
 
@@ -59,12 +80,33 @@ inputs such as `.rung/verify/` scripts, baselines and waivers can be.
 Instead each verdict records a hash of its check's declaration, so editing a check stales only
 that check. `timeout` (seconds) is accepted by every kind.
 
+`verifies` optionally declares the paths the check is intended to verify. A gate with
+`--require-coverage` requires a matching `verifies` or explicit `covers` scope on a selected
+command, runtime, or formal check. The path must also be among the check's freshness inputs.
+Use `verifies` when the input scope includes shared configuration or dependencies that the
+check does not directly exercise.
+
+For a custom check with declared verification targets, list the files that implement the
+verifier under `specs`. Include indirect helpers that the command loads. `rung add --specs`
+sets these paths at registration. The merge gate also accepts policy paths declared by the
+trusted workflow. A custom check needs this declaration to claim changed targets or satisfy
+required coverage.
+
 ### `command`
 
 | Field | Default | |
 |---|---|---|
 | `run` | required | Command; exit status 0 passes |
 | `cwd` | `.` | Working directory |
+
+Recognized pytest test runs also require at least one passing case in a fresh JUnit report.
+For collection-only commands, the merge gate still requires passing cases.
+Python's `-m unittest`, Go tests, and direct Node tests with the default reporter
+also require at least one passing case. This catches empty test discovery even when the
+runner exits successfully.
+Inferred Rust tests use `cargo test --locked`. For a new project, run
+`cargo generate-lockfile` and review the lockfile before checking. Standard Cargo test runs
+require at least one passing case.
 
 ### `evidence`
 
@@ -76,10 +118,26 @@ that check. `timeout` (seconds) is accepted by every kind.
 | `seed` | derived from the check id | The first seed; runs use `seed`, `seed + 1`, ... |
 | `faults` | the script's own list | Fault scenario names, passed as `RUNG_FAULTS` (comma-separated); `[]` drives none |
 | `scenarios` | all | Scenario names to drive, passed as `RUNG_SCENARIOS` (comma-separated) |
+| `structured` | `false` | Require `result.json` with an integer seed, unique scenario names, and at least one boolean assertion outcome per scenario. Newly drafted drives enable this. |
+| `isolate` | `false` | Run in a disposable guarded copy, including when replaying a seed. An unavailable guard reports an error. `rung draft runtime` writes `isolate = true` for the checks it registers. |
+
+The generated evidence page is hashed alongside the artifacts. Run older receipts again to
+bind their generated pages.
+
+Only `isolate = true` turns isolation on; `drafted_by` alone does not. A drive drafted by an earlier
+version (with `drafted_by` but no `isolate`) keeps running un-isolated until you add `isolate = true`.
+Add `--isolate` when registering a hand-written drive to enable the same behavior. The guard
+limits writes and filters the environment. Drives with `uv run --with` can fetch dependencies.
+Set `isolate = false` for a reviewed drive that needs host access, or when running it inside
+an isolated worker that provides equivalent protection.
+
+Required PNG, GIF, JPEG, WebM, ZIP and HAR artifacts also receive basic format checks.
+The format checks establish that a file resembles the required capture. The scenario assertions
+establish what the drive observed.
 
 With `run`, each run passes only if the script exits 0 **and** wrote at least one non-empty artifact
 into its own directory (`.rung/evidence/<check>/<time>/seed-<N>/`), with every `require` suffix. If the
-script writes `result.json`, Rung also fails the run when it records a failed scenario, reports a seed
+script writes `result.json`, Rung also fails the run when the file is malformed, records a failure, reports a seed
 other than the one Rung passed, or has no scenario for a name in `faults` or `scenarios`. The check
 passes only if every run passes. The verdict's `details.runs` (also in `rung check --json`) lists each
 seed with its verdict, scenarios and failed assertions; a failure adds `failing_seed`,
@@ -119,6 +177,7 @@ can reach the feature.
 |---|---|---|
 | `tool` | | Preset: `gitleaks`, `osv-scanner`, `zizmor`, `semgrep`, `opengrep`, `trivy` |
 | `run` | preset's | Any command that writes SARIF; `{out}` is replaced with a file path, otherwise stdout is read |
+| `finding_exit_codes` | preset's, or `[1]` for custom commands | Nonzero exit codes meaning a completed scan with findings. Other nonzero exits are errors, even when partial SARIF is present. |
 | `fail_on` | `warning` | Lowest SARIF level that blocks: `none`, `note`, `warning`, `error` |
 | `default_level` | preset's | Level for results the tool reports without one |
 | `covers` | preset's | gitleaks/semgrep: everything; osv-scanner: manifests and lockfiles; zizmor: workflows |
@@ -191,9 +250,11 @@ A drafted `tla` or `lean` check has a record in `.rung/formal/<check>.json`, wri
 When the digest of `sources` differs from `confirmed.digest`, the check is an error ("the code
 changed since the model was confirmed at <commit>") and `rung status` shows it as `drifted`. Resolve
 it with `rung maintain <check>` (the drafting model updates the model from the diff and Rung rechecks
-it) or, after reviewing the model yourself, `rung confirm <check> --by NAME --reason TEXT`. A check
-with no record behaves as before; `rung confirm` creates one from its `covers` (for `lean`, from its
-`<check>-drt` check's `covers`).
+it) or, after reviewing the model yourself, `rung confirm <check> --by NAME --reason TEXT`.
+A check without a source link can still validate the model and reports a model-only result.
+An approved law needs a confirmed source link or a check that exercises the implementation
+before it can hold or pass the merge gate. `rung confirm` creates a record from the model's
+`covers` (for `lean`, it can use its `<check>-drt` check's `covers`).
 
 ### `lean`
 

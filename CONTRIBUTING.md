@@ -1,17 +1,40 @@
 # Contributing
 
+Install uv and Node.js 20 or later to run the complete suite. The Node regression proof tests
+exercise the actual built-in test runner.
+
 ```bash
-uv sync
-uv run pre-commit install    # ruff, ruff format and pyright on every commit, as in CI
-uv run pytest -q --cov       # the example integration test skips without TLC/Lean
-uv run pyright               # type check (editors read the same [tool.pyright] settings)
-actionlint                   # workflows, if you change .github/ (CI also shellchecks action.yml)
+uv sync --locked
+uv run --locked pytest -q --cov
+uv run --locked ruff check .
+uv run --locked ruff format --check .
+uv run --locked pyright
+uv build
+```
+
+Run `uv run --locked pre-commit install` to check lint, format and types on each commit.
+For workflow changes, run `actionlint`. For composite action changes, run
+`uv run --no-project --with pyyaml python scripts/shellcheck_action.py`.
+To exercise the optional PR comment branch locally, run
+`uv run --no-project --with pyyaml python scripts/smoke_action_comment.py`.
+`uv build` writes a wheel and source archive to `dist/`. To smoke-test the wheel in a
+separate tool environment, use `uv tool run --from WHEEL_PATH rung --version` with the
+wheel path printed by the build.
+
+To test an installed agent workflow, put Codex or Claude Code on your PATH and run the
+corresponding command. Both use a disposable Git project and a loopback model fixture to
+verify skill discovery, shell execution and Rung's JSON results.
+
+```bash
+uv run --locked python scripts/smoke_codex.py --rung .venv/bin/rung
+uv run --locked python scripts/smoke_claude.py --rung .venv/bin/rung
 ```
 
 To run the integration test locally, install Java 11+, put
 [`tla2tools.jar`](https://github.com/tlaplus/tlaplus/releases) at
 `~/.cache/rung/tla2tools.jar` (or set `RUNG_TLA2TOOLS`), and install Lean with
 [elan](https://lean-lang.org/install/). `rung doctor` shows what is missing.
+The formal integration test skips when those tools are unavailable.
 
 ## Layout
 
@@ -20,7 +43,7 @@ Each layer imports only from the layers below it.
 | Path | What |
 |---|---|
 | `src/rung/cli/` | Argument parsing, terminal/JSON output, and `commands/` (`setup`, `run`, `manage`, `draft`) |
-| `src/rung/agents/` | Agent skills and the AGENTS.md section (`install`), the Claude Code Stop hook (`hooks`) |
+| `src/rung/agents/` | Agent skills and the AGENTS.md section (`install`), Claude Code and Codex Stop hooks (`hooks`) |
 | `src/rung/drafting/` | Model providers with structured output, and the TLA+, Lean and runtime drafters |
 | `src/rung/guides/` | Markdown guidance used both as drafting prompts and as agent skills |
 | `src/rung/analysis/` | Repository survey, recommended plan, report |
@@ -30,7 +53,9 @@ Each layer imports only from the layers below it.
 | `examples/lease-queue` | The worked example, used by the integration test |
 
 To add a check kind, subclass `rung.checks.base.Checker`, register it in `rung/checks/registry.py`,
-add the kind to `CHECK_KINDS` in `rung/core/config.py`, and document its fields in `docs/CONFIG.md`.
+add its option tuple to `KIND_OPTIONS` in `rung/core/config.py`, and document its fields in
+`docs/CONFIG.md`. Include an empty tuple if the checker uses only common options. Add a small
+`rung.toml` fixture and run `rung check CHECK_ID --json` with both passing and failing input.
 To change what models or agents are told, edit the Markdown in `src/rung/guides/`.
 
 ## Rules for changes
@@ -45,6 +70,11 @@ To change what models or agents are told, edit the Markdown in `src/rung/guides/
   runs without the tool installed.
 
 ## Releasing
+
+Source builds use a Python `.dev0` version while the changelog has unreleased work. The plugin
+installs from the default branch, so `plugin/.claude-plugin/plugin.json` keeps the latest released
+version (the top `## X.Y.Z (date)` heading in CHANGELOG.md), and documentation keeps the latest
+published action tag, until the next release.
 
 1. Move the CHANGELOG.md entries out of "unreleased". Bump the version in `pyproject.toml`, `src/rung/__init__.py` and `plugin/.claude-plugin/plugin.json`, and the
    `CalQuity/rung@v…` references in `README.md` and `plugin/skills/setup/SKILL.md`.

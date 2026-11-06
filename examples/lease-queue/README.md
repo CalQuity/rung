@@ -21,6 +21,20 @@ Apply the fix in the docstring of `complete()`:
 if job.owner == worker and job.lease_valid and not job.done:
 ```
 
+Update the corresponding `Complete(w)` action in `spec/tla/LeaseQueue.tla` so TLC
+checks the new implementation guard. Replace `w \in claimedBy` with the owner and validity
+checks. Leave the other guards, assignments and invariant unchanged.
+
+```tla
+Complete(w) ==
+    /\ owner = w
+    /\ valid
+    /\ ~done
+    /\ done' = TRUE
+    /\ result' = w
+    /\ UNCHANGED <<owner, valid, claimedBy>>
+```
+
 ```bash
 rung check            # all three pass
 rung laws             # both laws HOLD

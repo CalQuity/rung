@@ -64,3 +64,90 @@ def test_report_markdown_summarizes_checks_and_laws(repo: Path) -> None:
     md = report.markdown(data)
     assert md.startswith(report.COMMENT_MARKER)
     assert "Core works." in md and "`unit`" in md
+
+
+def test_codex_hook_is_opt_in_and_uses_structured_stop_protocol(repo, monkeypatch, capsys):
+    from io import StringIO
+
+    from rung import cli
+
+    cfg = _project(repo)
+    hooks = repo / ".codex" / "hooks.json"
+    assert cli.main(["-C", str(repo), "agents", "--hooks"]) == 0
+    assert not hooks.exists()
+    hooks.parent.mkdir()
+    hooks.write_text('{"description":"local policy","hooks":{"SessionStart":[]}}')
+    for _ in range(2):
+        assert cli.main(["-C", str(repo), "agents", "--codex-hooks"]) == 0
+    data = json.loads(hooks.read_text())
+    assert data["description"] == "local policy"
+    assert data["hooks"]["SessionStart"] == []
+    stop = data["hooks"]["Stop"]
+    assert len(stop) == 1 and stop[0]["hooks"][0]["command"] == "rung hook stop --agent codex"
+    capsys.readouterr()
+
+    (repo / "src" / "core.py").write_text("x = 2\n")
+
+    def codex_stop(**fields):
+        payload = {"cwd": str(repo / "src"), **fields}
+        monkeypatch.setattr(sys, "stdin", StringIO(json.dumps(payload)))
+        assert cli.main(["hook", "stop", "--agent", "codex"]) == 0
+        captured = capsys.readouterr()
+        assert captured.err == ""
+        return json.loads(captured.out)
+
+    blocked = codex_stop()
+    assert blocked["decision"] == "block" and "rung check unit" in blocked["reason"]
+    assert codex_stop(stop_hook_active=True) == {}
+    assert runner.run_check(cfg, cfg.check("unit")).verdict == "pass"
+    assert codex_stop() == {}
+
+
+def test_cli_markdown_report_removes_terminal_controls(repo, capsys):
+    from rung import cli
+
+    _project(repo)
+    path = repo / "rung.toml"
+    path.write_text(path.read_text().replace('name = "demo"', 'name = "demo\\u001b[2JTitle"'))
+    assert cli.main(["-C", str(repo), "report", "--no-color"]) == 0
+    output = capsys.readouterr().out
+    assert "demoTitle" in output and "\x1b" not in output
+    assert output.startswith(report.COMMENT_MARKER + "\n")
+
+
+def _workspace(repo: Path) -> None:
+    for name in ("api", "web"):
+        (repo / name).mkdir()
+        (repo / name / "app.py").write_text("x = 1\n")
+    (repo / "shared.py").write_text("x = 1\n")
+    (repo / "rung.toml").write_text(
+        "\n".join(
+            f'[[check]]\nid = "{name}"\nkind = "command"\nrun = "true"\ncwd = "{name}"\nverifies = ["{name}/**"]\n'
+            for name in ("api", "web")
+        )
+    )
+    commit_all(repo, "workspace")
+
+
+def test_stop_hook_asks_for_the_focused_workspace_checks_first(repo: Path) -> None:
+    _workspace(repo)
+    (repo / "api" / "app.py").write_text("x = 2\n")
+    code, message = agents.stop_hook(repo, "{}")
+    assert code == 2 and "`rung check api`" in message
+    assert "1 check(s) for other declared targets" in message
+
+    (repo / "shared.py").write_text("x = 2\n")  # shared code: every touched check
+    code, message = agents.stop_hook(repo, "{}")
+    assert code == 2 and "`rung check api web`" in message
+
+
+def test_codex_stop_hook_allows_the_second_consecutive_stop_without_stop_hook_active(repo: Path) -> None:
+    _project(repo)
+    (repo / "src" / "core.py").write_text("x = 2\n")
+    first = json.dumps({"session_id": "s1"})
+    assert agents.stop_hook(repo, first, agent="codex")[0] == 2
+    assert agents.stop_hook(repo, json.dumps({"session_id": "s2"}), agent="codex")[0] == 2  # another session
+    assert agents.stop_hook(repo, first, agent="codex") == (0, "")
+    assert agents.stop_hook(repo, first, agent="codex")[0] == 2  # the next turn is checked again
+    assert agents.stop_hook(repo, "{}", agent="claude")[0] == 2  # Claude relies on stop_hook_active
+    assert agents.stop_hook(repo, "{}", agent="claude")[0] == 2

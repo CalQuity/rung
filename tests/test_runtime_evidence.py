@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -233,12 +234,50 @@ def test_report_shows_seeds_the_failing_scenario_and_the_page(shop: Path) -> Non
     assert "evidence page: `.rung/evidence/runtime/" in md
 
 
+def test_modified_evidence_page_stales_the_receipt_and_hides_the_link(shop: Path) -> None:
+    assert rung(shop, "check", "runtime") == 0
+    entry = _entry(shop)
+    path = entry["details"]["report"]
+    assert any(row.startswith(f"{path} sha256:") for row in entry["evidence"])
+    (shop / path).write_text("<h1>Fabricated result</h1>")
+    data = report.build(config.load(shop))["checks"][0]
+    assert data["state"] == "stale" and any(path in item for item in data["changed"])
+    assert data["runtime"]["report"] == ""
+
+
+def test_previous_failure_is_stale_after_editing_covered_inputs(shop: Path) -> None:
+    (shop / "bad_seeds.txt").write_text("101\n")
+    assert rung(shop, "check", "runtime") == 1
+    assert report.build(config.load(shop))["checks"][0]["state"] == "failing"
+    drive = shop / "drive.py"
+    drive.write_text(drive.read_text() + "\n# changed since the failure\n")
+    data = report.build(config.load(shop))["checks"][0]
+    assert data["state"] == "stale" and "drive.py" in data["changed"]
+
+
 def test_captions_follow_the_step_names() -> None:
     assert evidence_page.caption("03-coupon-applied-total-32.png") == "3. coupon applied total 32"
     assert evidence_page.caption("home.png") == "home"
 
 
 # --- drafting -----------------------------------------------------------------------------------
+
+
+def test_draft_accepts_exact_managed_paths_and_explains_a_missing_file(tmp_path: Path) -> None:
+    prefixed = _drive()
+    for file in prefixed["files"]:
+        file["path"] = f".rung/verify/drives/refund/{file['path']}"
+    rejected = {"files": [{"path": "../drive.py", "content": "pass"}], "sources": [], "requirements": [], "notes": ""}
+    info = survey.survey(tmp_path)
+    result = runtime.draft_runtime(
+        ScriptedProvider([rejected]), tmp_path, info, focus=[], check_id="refund", max_rounds=1
+    )
+    assert not result.ok and not result.files
+    assert "did not include nonempty files named drive.py, FEATURES.md" in result.message
+    result = runtime.draft_runtime(
+        ScriptedProvider([prefixed]), tmp_path, info, focus=[], check_id="refund", max_rounds=1
+    )
+    assert result.ok and {file.name for file in result.files} == {"drive.py", "FEATURES.md"}
 
 
 def test_draft_rejects_a_script_that_only_drives_the_happy_path(tmp_path: Path) -> None:
@@ -316,12 +355,23 @@ def test_draft_with_findings_registers_the_check_and_fails(tmp_path: Path, monke
     from rung.drafting import providers
 
     (tmp_path / "rung.toml").write_text('[project]\nname = "s"\n\n[llm]\nprovider = "none"\n')
-    monkeypatch.setattr(providers, "get", lambda llm: ScriptedProvider([_drive(fail=("state",))]))
+    (tmp_path / "app.py").write_text(
+        "def observation(scenario):\n    return 'wrong' if scenario == 'state' else 'app fixture'\n"
+    )
+    reply = _drive()
+    reply["sources"] = ["app.py"]
+    script = reply["files"][0]
+    # The robustness scenario only shows the app loads, so a changed `observation` leaves it passing.
+    script["content"] = "import runpy\nobserve = runpy.run_path('app.py')['observation']\n" + script["content"].replace(
+        "cat not in FAIL", "(cat == 'robustness' or observe(cat) == 'app fixture')"
+    )
+    monkeypatch.setattr(providers, "get", lambda llm: ScriptedProvider([reply]))
     monkeypatch.setattr(draft_cmd.agents, "install_verify_skill", lambda root, name, cid: root / "SKILL.md")
-    assert rung(tmp_path, "draft", "runtime") == 1
+    assert rung(tmp_path, "draft", "runtime", "--allow-unisolated") == 1
     out = capsys.readouterr().out
     assert "The app failed 1 assertion(s)" in out and "state: state holds" in out
-    assert config.load(tmp_path).check("runtime").kind == "evidence"
+    registered = config.load(tmp_path).check("runtime")
+    assert registered.kind == "evidence" and registered.get("isolate") is True
 
 
 def test_long_output_lines_are_shortened(tmp_path: Path) -> None:
@@ -348,3 +398,300 @@ def test_a_failing_drive_script_reports_expected_and_observed_not_its_raw_output
     many = {"scenarios": [{"name": "s", "assertions": [{"name": f"a{i}", "passed": False} for i in range(20)]}]}
     lines = failure_details(many)
     assert len(lines) == 13 and lines[-1].startswith("... and 8 more")
+
+
+def test_full_runtime_does_not_inherit_replay_selection(shop: Path, monkeypatch) -> None:
+    (shop / "bad_seeds.txt").write_text("102\n")
+    monkeypatch.setenv("RUNG_SCENARIOS", "happy")
+    monkeypatch.setenv("RUNG_FAULTS", "happy")
+    assert rung(shop, "check", "runtime") == 1
+    assert _entry(shop)["details"]["failing_seed"] == 102
+
+
+def test_draft_rejects_a_drive_that_only_checks_source_presence(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("raise RuntimeError('cannot start')\n")
+    reply = _drive()
+    reply["sources"] = ["app.py"]
+    reply["files"][0]["content"] = (
+        "from pathlib import Path\nassert Path('app.py').exists()\n" + reply["files"][0]["content"]
+    )
+    result = runtime.draft_runtime(
+        ScriptedProvider([reply]),
+        tmp_path,
+        survey.survey(tmp_path),
+        focus=[],
+        max_rounds=1,
+    )
+    assert not result.ok and "did not detect the startup control" in result.message
+    assert (tmp_path / "app.py").is_file()
+    assert not (tmp_path / ".rung" / "verify" / "drive.py").exists()
+    assert result.files[0].is_relative_to(tmp_path / ".rung" / "cache" / "drafts")
+
+
+def test_draft_requires_an_assertion_to_catch_a_behavior_mutation(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("def calculate():\n    return 42\n")
+    false_proof = _drive()
+    false_proof["sources"] = ["app.py"]
+    false_proof["files"][0]["content"] = "import runpy\nrunpy.run_path('app.py')\n" + false_proof["files"][0]["content"]
+    info = survey.survey(tmp_path)
+    held = runtime.draft_runtime(ScriptedProvider([false_proof]), tmp_path, info, focus=[], max_rounds=1)
+    assert not held.ok and "did not detect the behavior mutation" in held.message
+    real = _drive()
+    real["sources"] = ["app.py"]
+    code = real["files"][0]["content"]
+    real["files"][0]["content"] = "import runpy\nactual = runpy.run_path('app.py')['calculate']()\n" + code.replace(
+        "ok = cat", "ok = (actual == 42 or cat != 'happy') and cat"
+    )
+    accepted = runtime.draft_runtime(ScriptedProvider([real]), tmp_path, info, focus=[], max_rounds=1)
+    assert accepted.ok and "detected behavior mutation" in accepted.sensitivity
+
+
+def test_runtime_draft_holds_startup_only_javascript(tmp_path: Path) -> None:
+    app = tmp_path / "app.js"
+    app.write_text("exports.answer = () => 42;\n")
+    startup = _drive()
+    startup["sources"] = ["app.js"]
+    startup["files"][0]["content"] = (
+        "import subprocess\nsubprocess.run(['node', 'app.js'], check=True)\n" + startup["files"][0]["content"]
+    )
+    result = runtime.draft_runtime(
+        ScriptedProvider([startup]), tmp_path, survey.survey(tmp_path), focus=[], max_rounds=1, require_source=True
+    )
+    assert not result.ok and "needs a behavioral assertion control" in result.message
+
+
+def test_runtime_draft_can_catch_a_javascript_arithmetic_mutation(tmp_path: Path) -> None:
+    (tmp_path / "app.js").write_text("exports.total = (amount) => amount + 1;\n")
+    reply = _drive()
+    reply["sources"] = ["app.js"]
+    code = reply["files"][0]["content"]
+    reply["files"][0]["content"] = (
+        "import subprocess\n"
+        "actual = subprocess.check_output(['node', '-p', \"require('./app.js').total(1)\"], text=True).strip()\n"
+        + code.replace("ok = cat", "ok = (actual == '2' or cat != 'happy') and cat")
+    )
+    result = runtime.draft_runtime(
+        ScriptedProvider([reply]), tmp_path, survey.survey(tmp_path), focus=[], max_rounds=1, require_source=True
+    )
+    assert result.ok and "detected behavior mutation" in result.sensitivity
+
+
+def test_drafted_drive_replay_retains_evidence_with_the_write_guard(tmp_path, monkeypatch, capsys):
+    from rung.core import sandbox
+
+    monkeypatch.setenv("DATABASE_URL", "test-value")
+    root = tmp_path / "project"
+    root.mkdir()
+    outside = tmp_path / "escaped"
+    guard_assertions = (
+        "import os\nfrom pathlib import Path\n"
+        f"assert Path.cwd() != Path({str(root.resolve())!r})\n"
+        "assert 'DATABASE_URL' not in os.environ\n"
+    )
+    if sys.platform == "darwin":
+        sandbox.probe_write_guard(tmp_path)
+        guard_assertions += (
+            f"outside = Path({str(outside)!r})\n"
+            "try:\n"
+            "    outside.write_text('escaped')\n"
+            "except PermissionError:\n"
+            "    pass\n"
+            "assert not outside.exists()\n"
+        )
+    else:
+        monkeypatch.setattr(sandbox, "validated_write_guard", lambda *_a, **_kw: ("env", "RUNG_TEST_GUARD=1"))
+        guard_assertions += "assert os.environ['RUNG_TEST_GUARD'] == '1'\n"
+    (root / "drive.py").write_text(
+        guard_assertions + "out = Path(os.environ['RUNG_EVIDENCE_DIR'])\n"
+        "(out / 'observation.txt').write_text(os.environ['RUNG_SEED'])\n"
+    )
+    (root / "rung.toml").write_text(
+        f'[[check]]\nid = "drive"\nkind = "evidence"\nrun = "{PY} drive.py"\nisolate = true\nrequire = [".txt"]\n'
+    )
+    assert rung(root, "check", "drive", "--json") == 0
+    result = json.loads(capsys.readouterr().out)["results"][0]
+    assert result["execution"] == "isolated"
+    assert not outside.exists()
+    assert (root / result["report"]).is_file()
+    assert all((root / path).is_file() for path in result["artifacts"])
+    assert rung(root, "status", "--require-fresh") == 0
+
+
+def test_an_isolated_drive_may_generate_ignored_files_but_not_edit_inputs(tmp_path, monkeypatch, capsys):
+    """Dev servers write generated files (Next.js writes next-env.d.ts); only changes to inputs count."""
+    from rung.core import sandbox
+
+    monkeypatch.setattr(sandbox, "validated_write_guard", lambda *_a, **_kw: ("env", "RUNG_TEST_GUARD=1"))
+    (tmp_path / ".gitignore").write_text("next-env.d.ts\n")
+    (tmp_path / "app.py").write_text("x = 1\n")
+    (tmp_path / "drive.py").write_text(
+        "import os\nfrom pathlib import Path\n"
+        "Path('next-env.d.ts').write_text('generated')\n"
+        "if os.environ.get('EDIT_INPUT'):\n    Path('app.py').write_text('x = 2\\n')\n"
+        "(Path(os.environ['RUNG_EVIDENCE_DIR']) / 'observation.txt').write_text('ok')\n"
+    )
+    (tmp_path / "rung.toml").write_text(
+        f'[[check]]\nid = "drive"\nkind = "evidence"\nrun = "{PY} drive.py"\nisolate = true\nrequire = [".txt"]\n'
+    )
+    assert rung(tmp_path, "check", "drive", "--json") == 0, capsys.readouterr().out
+    capsys.readouterr()
+    monkeypatch.setenv("EDIT_INPUT", "1")
+    monkeypatch.setattr(sandbox, "trial_environment", lambda copy: {**os.environ, "EDIT_INPUT": "1"})
+    assert rung(tmp_path, "check", "drive", "--json") == 1
+    result = json.loads(capsys.readouterr().out)["results"][0]
+    assert result["verdict"] == "error" and "app.py" in result["summary"]
+
+
+def test_drafted_drive_does_not_run_when_the_write_guard_is_unavailable(tmp_path, monkeypatch, capsys):
+    from rung.core import sandbox
+    from rung.core.errors import ToolMissing
+
+    marker = tmp_path / "ran"
+    (tmp_path / "drive.py").write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n")
+    (tmp_path / "rung.toml").write_text(
+        f'[[check]]\nid = "drive"\nkind = "evidence"\nrun = "{PY} drive.py"\nisolate = true\n'
+    )
+
+    def unavailable(*args, **kwargs):
+        raise ToolMissing("write guard unavailable")
+
+    monkeypatch.setattr(sandbox, "write_guard", unavailable)
+    assert rung(tmp_path, "check", "drive", "--json") == 1
+    result = json.loads(capsys.readouterr().out)["results"][0]
+    assert result["verdict"] == "error" and "write guard unavailable" in result["summary"]
+    assert not marker.exists()
+
+
+def test_doctor_requires_write_guard_for_an_isolated_drive(tmp_path, monkeypatch, capsys):
+    from rung.core import sandbox
+    from rung.core.errors import ToolMissing
+
+    (tmp_path / "rung.toml").write_text(
+        f'[[check]]\nid = "drive"\nkind = "evidence"\nrun = "{PY} drive.py"\nisolate = true\n'
+    )
+
+    def unavailable(*args, **kwargs):
+        raise ToolMissing("write guard unavailable")
+
+    monkeypatch.setattr(sandbox, "probe_write_guard", unavailable)
+    assert rung(tmp_path, "doctor", "--strict", "--json") == 1
+    rows = json.loads(capsys.readouterr().out)["tools"]
+    assert any(row["tool"] == "drive: write guard" and not row["ok"] for row in rows)
+
+
+def test_a_drafted_check_without_isolate_keeps_running_unisolated(tmp_path, monkeypatch, capsys):
+    from rung.core import sandbox
+    from rung.core.errors import ToolMissing
+
+    (tmp_path / "drive.py").write_text(
+        "import os\nfrom pathlib import Path\n"
+        "(Path(os.environ['RUNG_EVIDENCE_DIR']) / 'observation.txt').write_text('seen')\n"
+    )
+    (tmp_path / "rung.toml").write_text(
+        f'[[check]]\nid = "drive"\nkind = "evidence"\nrun = "{PY} drive.py"\ndrafted_by = "claude-cli:sonnet"\n'
+    )
+
+    def unavailable(*args, **kwargs):
+        raise ToolMissing("write guard unavailable")
+
+    monkeypatch.setattr(sandbox, "write_guard", unavailable)
+    monkeypatch.setattr(sandbox, "validated_write_guard", unavailable)
+    check = config.load(tmp_path).check("drive")
+    assert not command.isolates_evidence(check)
+    assert command.isolates_evidence(config.Check("drive", "evidence", [], {**check.options, "isolate": True}))
+    assert rung(tmp_path, "check", "drive", "--json") == 0
+    result = json.loads(capsys.readouterr().out)["results"][0]
+    assert result["verdict"] == "pass" and result.get("execution") != "isolated"
+
+
+# --- behavior controls ---------------------------------------------------------------------------
+
+FACTORY_APP = """class App:
+    def __init__(self, prices):
+        self.prices = prices
+
+    def total(self, items):
+        return sum(self.prices[item] for item in items)
+
+
+def load_config():
+    return {"apple": 3, "pear": 5}
+
+
+def create_app():
+    return App(load_config())
+
+
+app = create_app()
+"""
+
+
+def _factory_drive(check: str) -> dict:
+    reply = _drive()
+    reply["sources"] = ["app.py"]
+    code = reply["files"][0]["content"]
+    reply["files"][0]["content"] = "import runpy\napp = runpy.run_path('app.py')['app']\n" + code.replace(
+        "ok = cat", f"ok = ({check}) and cat"
+    )
+    return reply
+
+
+def test_behavior_variants_change_one_function_and_leave_startup_code_alone(tmp_path: Path) -> None:
+    source = tmp_path / "app.py"
+    source.write_text(FACTORY_APP)
+    variants = runtime._behavior_variants([source])
+    assert [v.label for v in variants] == ["total() in app.py returns None"]
+    assert "return App(load_config())" in variants[0].content and "return None" in variants[0].content
+
+
+def test_a_drive_that_only_asserts_startup_is_rejected(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text(FACTORY_APP)
+    startup_only = _factory_drive("app is not None")
+    result = runtime.draft_runtime(
+        ScriptedProvider([startup_only]), tmp_path, survey.survey(tmp_path), focus=[], max_rounds=1
+    )
+    assert not result.ok and "did not detect the behavior mutation" in result.message
+
+
+def test_a_drive_that_asserts_behavior_is_accepted(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text(FACTORY_APP)
+    behavioral = _factory_drive("app is not None and (cat != 'happy' or app.total(['apple', 'pear']) == 8)")
+    result = runtime.draft_runtime(
+        ScriptedProvider([behavioral]), tmp_path, survey.survey(tmp_path), focus=[], max_rounds=1, require_source=True
+    )
+    assert result.ok, result.message
+    assert "detected behavior mutation" in result.sensitivity and "total()" in result.sensitivity
+
+
+def test_control_runs_scale_with_the_accepted_run_and_report_a_timeout(tmp_path: Path, monkeypatch) -> None:
+    check = config.Check("runtime", "evidence", [], {"run": "x", "timeout": 900})
+    assert runtime.control_timeout(check, 1.0) == runtime.CONTROL_TIMEOUT_FLOOR
+    assert runtime.control_timeout(check, 100.0) == 300
+    assert runtime.control_timeout(check, 500.0) == 900
+    (tmp_path / "app.py").write_text("def calculate():\n    return 42\n")
+    hangs = _drive()
+    hangs["sources"] = ["app.py"]
+    code = hangs["files"][0]["content"]
+    hangs["files"][0]["content"] = (
+        "import runpy, time\nactual = runpy.run_path('app.py')['calculate']()\n"
+        "if actual != 42:\n    time.sleep(30)\n" + code
+    )
+    monkeypatch.setattr(runtime, "CONTROL_TIMEOUT_FLOOR", 1)
+    result = runtime.draft_runtime(ScriptedProvider([hangs]), tmp_path, survey.survey(tmp_path), focus=[], max_rounds=1)
+    assert not result.ok and "timed out after 1s" in result.message
+    assert "did not detect" not in result.message
+
+
+def test_an_isolated_copy_clones_node_modules_instead_of_linking_outside(tmp_path):
+    """Next.js refuses dependencies that resolve outside its workspace, so the copy holds its own."""
+    from rung.core import sandbox
+
+    (tmp_path / "web").mkdir()
+    (tmp_path / "web" / "package.json").write_text("{}\n")
+    (tmp_path / "web" / "node_modules" / "pkg").mkdir(parents=True)
+    (tmp_path / "web" / "node_modules" / "pkg" / "index.js").write_text("module.exports = 1\n")
+    with sandbox.copy_of(tmp_path) as copy:
+        cloned = copy / "web" / "node_modules"
+        assert cloned.is_dir() and not cloned.is_symlink()
+        assert (cloned / "pkg" / "index.js").resolve().is_relative_to(copy.resolve())
+    assert (tmp_path / "web" / "node_modules" / "pkg" / "index.js").exists()

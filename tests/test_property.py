@@ -138,7 +138,9 @@ def test_a_mutant_that_breaks_the_import_is_not_counted_as_caught(tmp_path: Path
         "@settings(max_examples=20, deadline=None)\n@given(st.integers())\ndef test_f_is_callable(x):\n"
         "    assert callable(f)\n"
     )
-    result, _ = property_draft.draft(ScriptedProvider([_reply(weak)]), tmp_path, [tmp_path / "flags.py"], "flags")
+    result, target = property_draft.draft(ScriptedProvider([_reply(weak)]), tmp_path, [tmp_path / "flags.py"], "flags")
+    assert not result.ok and not (tmp_path / target.test_file).exists()
+    assert result.failability == {"caught": 0, "viable": 0, "nonviable": 1}
     assert "INCONCLUSIVE" in result.message
     assert any("not counted" in w for w in result.warnings)
 

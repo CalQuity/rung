@@ -14,6 +14,7 @@ import os
 import re
 from collections import Counter
 from dataclasses import asdict, dataclass
+from itertools import islice
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
@@ -49,7 +50,7 @@ def at_least(level: str, threshold: str) -> bool:
     return LEVELS.index(level) >= LEVELS.index(threshold)
 
 
-def _relative(uri: str, root: Path) -> str:
+def _relative(uri: str, root: Path, workdir: Path) -> str:
     """`file:///abs/repo/a.py`, `a.py` or `./a.py` -> `a.py`, relative to `root` when inside it."""
     if uri.startswith("file:"):
         uri = unquote(urlparse(uri).path)
@@ -59,7 +60,7 @@ def _relative(uri: str, root: Path) -> str:
         if real == real_root or real.startswith(real_root + os.sep):
             return Path(os.path.relpath(real, real_root)).as_posix()
         return uri
-    return Path(uri).as_posix().removeprefix("./")
+    return (workdir.relative_to(root) / uri).as_posix().removeprefix("./") if uri else ""
 
 
 def _rule_levels(run: dict[str, Any]) -> dict[str, str]:
@@ -81,29 +82,33 @@ def _normalize_message(text: str) -> str:
 REDACTED_SNIPPETS = {"REDACTED", "[REDACTED]", "***", "<redacted>"}
 
 
-def _flagged_text_digest(root: Path, path: str, region: dict[str, Any]) -> str:
+def _flagged_text_digest(root: Path, path: str, region: dict[str, Any], *, whole_line: bool = False) -> str:
     """A hash of the exact characters a finding points at, read from the file; the text is never kept.
 
     Secret scanners redact their snippets, so without this every secret of one rule in one file
     would share a fingerprint: replacing an accepted test token with a live one would look unchanged.
     """
     start, end = region.get("startLine"), region.get("endLine", region.get("startLine"))
-    if not start or not path:
+    if not isinstance(start, int) or start < 1 or not isinstance(end, int) or end < start or not path:
         return ""
     try:
-        lines = (root / path).read_text(errors="ignore").splitlines()[start - 1 : end]
-    except OSError:
+        source = (root / path).resolve()
+        if not source.is_relative_to(root.resolve()) or not source.is_file():
+            return ""
+        with source.open(errors="replace") as content:
+            lines = [line.rstrip("\n") for line in islice(content, start - 1, end)]
+    except (OSError, ValueError, RuntimeError):
         return ""
     if not lines:
         return ""
-    if region.get("endColumn"):
+    if not whole_line and region.get("endColumn"):
         lines[-1] = lines[-1][: region["endColumn"] - 1]
-    if region.get("startColumn"):
+    if not whole_line and region.get("startColumn"):
         lines[0] = lines[0][region["startColumn"] - 1 :]
     return "flagged:" + hashlib.sha256("\n".join(lines).encode()).hexdigest()
 
 
-def _stable_token(result: dict[str, Any], location: dict[str, Any], root: Path, path: str) -> str:
+def _stable_token(result: dict[str, Any], location: dict[str, Any], root: Path, path: str, tool: str) -> str:
     """What identifies a finding apart from its line number, which shifts with every edit.
 
     Order matters. The flagged code itself is the best identity. Next is the
@@ -115,7 +120,9 @@ def _stable_token(result: dict[str, Any], location: dict[str, Any], root: Path, 
     snippet = region.get("snippet", {}).get("text")
     if snippet and snippet.strip() not in REDACTED_SNIPPETS:
         return " ".join(snippet.split())
-    if snippet and (flagged := _flagged_text_digest(root, path, region)):
+    # Gitleaks SARIF columns can move with unrelated lines. Keep hashing the exact
+    # source bytes containing the secret without trusting those column offsets.
+    if snippet and (flagged := _flagged_text_digest(root, path, region, whole_line=tool.lower() == "gitleaks")):
         return flagged
     message = _normalize_message(result.get("message", {}).get("text") or "")
     if message:
@@ -175,7 +182,9 @@ def _uri(location: dict[str, Any], run: dict[str, Any]) -> str:
     return uri
 
 
-def parse(sarif: str | dict[str, Any], root: Path, *, default_level: str = "warning") -> list[Finding]:
+def parse(
+    sarif: str | dict[str, Any], root: Path, *, default_level: str = "warning", workdir: Path | None = None,
+) -> list[Finding]:  # fmt: skip
     """Turn a SARIF document into findings with repository-relative paths."""
     doc = json.loads(sarif) if isinstance(sarif, str) else sarif
     validate(doc)
@@ -192,10 +201,10 @@ def parse(sarif: str | dict[str, Any], root: Path, *, default_level: str = "warn
                 level = default_level
             locations = result.get("locations") or [{}]
             physical = locations[0].get("physicalLocation", {})
-            path = _relative(_uri(physical, run), root)
+            path = _relative(_uri(physical, run), root, workdir or root)
             line = int(physical.get("region", {}).get("startLine") or 0)
             message = redact(" ".join((result.get("message", {}).get("text") or "").split()))
-            token = _stable_token(result, physical, root, path)
+            token = _stable_token(result, physical, root, path, tool)
             digest = hashlib.sha256(f"{tool}\0{rule}\0{path}\0{token}".encode()).hexdigest()[:16]
             findings.append(Finding(tool, rule, level, path, line, message, digest))
     return findings

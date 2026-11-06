@@ -1,8 +1,7 @@
-"""Install guidance for coding agents: Claude Code skills, an AGENTS.md section, and the Stop hook.
+"""Install CLI workflows, shared guidance, and optional agent Stop hooks.
 
 Skills are installed for Claude Code under `.claude/skills/`; the AGENTS.md section is read by
-Codex, Cursor and other agents. Every skill body comes from `rung.guides`, the same text Rung
-sends to the model when it drafts specs and proofs itself.
+Codex, Cursor and other agents. Codex also discovers the skills under `.agents/skills/`.
 """
 
 from __future__ import annotations
@@ -11,8 +10,8 @@ import json
 from pathlib import Path
 
 from rung import guides
-from rung.agents.hooks import HOOK_COMMAND
-from rung.core.config import ConfigError
+from rung.agents.hooks import CODEX_HOOK_COMMAND, HOOK_COMMAND
+from rung.core.config import ConfigError, managed_path, write_atomic
 
 BEGIN, END = "<!-- rung:begin -->", "<!-- rung:end -->"
 
@@ -25,14 +24,24 @@ says how to use it.
 ## Rules
 
 {rules}
-## Commands
+## Run the CLI
 
-- `rung check --changed`: run the checks your change touches and record verdicts.
-- `rung status`: `stale` means covered code or a spec changed since the last green run.
-- `rung laws`: which laws hold.
-- `rung maintain <check>`: update a TLA+ or Lean model after the code it describes changed.
-- `rung prove '<test command>'`: show your new test fails without the fix and passes with it.
-- `rung report`: everything at once; add `--json` to read it programmatically.
+Use your terminal tool. Check `rung --version` first. From another directory, use
+`rung -C <project>`; after setup, commands can find the kit from a project subdirectory.
+
+1. When asked to set up a kit, start with `rung init --dry-run --json` and inspect its
+   proposed checks. Apply the deterministic setup with `rung init --no-drafts --json`.
+2. Before editing, use `rung plan --path <project-relative-path> --json`. For an existing
+   branch, use `rung plan --changed --base <target> --json`. Read the matching checks
+   and any scope gaps. Use `rung doctor --strict --json` to diagnose missing executables.
+3. Run `rung check --changed --base <target> --json`. Read the exit code and each result.
+   If a runtime check gives a `reproduce` command, run it to isolate the failure. A replay
+   is diagnostic. Run the full check again to record a verdict.
+4. For a bug fix, use `rung prove '<test command>' --base <target>`. Pass `--expect`
+   to name the expected failure when the test runner reports only a whole-suite result.
+5. Use `rung report --json` to report fresh checks, remaining gaps, and evidence. When
+   asked to verify merge readiness, run `rung gate --base <target> --json`. Send
+   protected policy changes, law approvals and waivers to a person for review.
 """
 
 SKILLS = {
@@ -60,14 +69,28 @@ def _skill(name: str, description: str, body: str) -> str:
     return f"---\nname: {name}\ndescription: >-\n  {description}\n---\n\n{body}"
 
 
-def _write_skill(root: Path, name: str, body: str, description: str) -> Path:
-    path = root / ".claude" / "skills" / name / "SKILL.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_skill(name, description, body))
+def _write_skill(root: Path, name: str, body: str, description: str, *, directory: str = ".claude/skills") -> Path:
+    path = managed_path(root, Path(directory) / name / "SKILL.md")
+    write_atomic(path, _skill(name, description, body))
     return path
 
 
-def install(root: Path, *, hooks: bool = False, lean_version: str = "the pinned version") -> list[Path]:
+SKILL_DIRECTORIES = (".claude/skills", ".agents/skills")
+
+
+def prepare_install(root: Path, *, hooks: bool) -> tuple[Path, tuple[Path, str] | None]:
+    agents = managed_path(root, "AGENTS.md")
+    for directory in SKILL_DIRECTORIES:
+        for name in SKILLS:
+            managed_path(root, Path(directory) / name / "SKILL.md")
+    return agents, _stop_hook_settings(root) if hooks else None
+
+
+def install(
+    root: Path, *, hooks: bool = False, codex_hooks: bool = False, lean_version: str = "the pinned version",
+) -> list[Path]:  # fmt: skip
+    agents, hook = prepare_install(root, hooks=hooks)
+    codex_hook = _stop_hook_settings(root, agent="codex") if codex_hooks else None
     rules = guides.load("rules")
     bodies = {
         "rung": USAGE.format(rules=rules),
@@ -75,9 +98,12 @@ def install(root: Path, *, hooks: bool = False, lean_version: str = "the pinned 
         "rung-property": guides.load("property"),
         "rung-lean": guides.load("lean", lean_version=lean_version),
     }
-    written = [_write_skill(root, name, bodies[name], desc) for name, desc in SKILLS.items()]
+    written = [
+        _write_skill(root, name, bodies[name], desc, directory=directory)
+        for directory in SKILL_DIRECTORIES
+        for name, desc in SKILLS.items()
+    ]
 
-    agents = root / "AGENTS.md"
     block = f"{BEGIN}\n## Verification (Rung)\n\n{rules}{END}\n"
     text = agents.read_text() if agents.exists() else ""
     if BEGIN in text and END in text:
@@ -86,11 +112,14 @@ def install(root: Path, *, hooks: bool = False, lean_version: str = "the pinned 
         text = head + block.rstrip("\n") + tail
     else:
         text = (text.rstrip() + "\n\n" if text.strip() else "") + block
-    agents.write_text(text)
+    write_atomic(agents, text)
     written.append(agents)
 
-    if hooks:
-        written.append(install_stop_hook(root))
+    for settings_file in (hook, codex_hook):
+        if settings_file:
+            path, settings = settings_file
+            write_atomic(path, settings)
+            written.append(path)
     return written
 
 
@@ -105,19 +134,26 @@ def install_verify_skill(root: Path, project: str, check_id: str) -> Path:
     return _write_skill(root, f"verify-{slug}", body, description)
 
 
-def install_stop_hook(root: Path) -> Path:
-    """Add the Stop hook to `.claude/settings.json`, keeping everything already there."""
-    path = root / ".claude" / "settings.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
+def _stop_hook_settings(root: Path, *, agent: str = "claude") -> tuple[Path, str]:
+    if agent == "codex":
+        path, command, label = managed_path(root, ".codex/hooks.json"), CODEX_HOOK_COMMAND, "Codex"
+    else:
+        path, command, label = managed_path(root, ".claude/settings.json"), HOOK_COMMAND, "Claude Code"
     try:
         settings = json.loads(path.read_text()) if path.exists() else {}
-    except json.JSONDecodeError as exc:
-        raise ConfigError(f"{path} is not plain JSON ({exc}); add the Stop hook by hand or remove comments") from exc
-    stop = settings.setdefault("hooks", {}).setdefault("Stop", [])
-    present = any(h.get("command") == HOOK_COMMAND for group in stop for h in group.get("hooks", []))
-    if not present:
-        stop.append({"hooks": [{"type": "command", "command": HOOK_COMMAND, "timeout": 120}]})
-    path.write_text(json.dumps(settings, indent=2) + "\n")
+        stop = settings.setdefault("hooks", {}).setdefault("Stop", [])
+        present = any(h.get("command") == command for group in stop for h in group.get("hooks", []))
+        if not present:
+            stop.append({"hooks": [{"type": "command", "command": command, "timeout": 120}]})
+    except (json.JSONDecodeError, AttributeError, TypeError) as exc:
+        raise ConfigError(f"{path} needs a JSON object with {label} hook settings: {exc}") from exc
+    return path, json.dumps(settings, indent=2) + "\n"
+
+
+def install_stop_hook(root: Path) -> Path:
+    """Add the Stop hook to `.claude/settings.json`, keeping everything already there."""
+    path, settings = _stop_hook_settings(root)
+    write_atomic(path, settings)
     return path
 
 

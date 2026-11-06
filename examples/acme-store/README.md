@@ -35,7 +35,8 @@ Tests and build:
 
 ```bash
 cd backend && uv run pytest -q
-cd frontend && npm run build
+cd ../frontend && npm run typecheck
+npm run build
 ```
 
 ## Try Rung on it

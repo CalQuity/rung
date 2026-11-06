@@ -6,11 +6,49 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 ## Unreleased
 
 ### Added
+- `rung init --dry-run` previews file writes and commands. `--refresh` appends newly detected checks,
+  and `rung doctor --strict` checks the executables the kit declares.
+- `rung plan --path PATH` and `rung plan --changed` show which check scopes match a change.
+- `rung gate` reruns the merge checks, checks protected policy before running repository code, and
+  requires fresh evidence for every check enforcing an approved law.
+- Adopting repositories can opt in to running their PR gate in a private Daytona sandbox with a
+  reviewed snapshot and offline dependencies.
+- Structured runtime checks validate the seed, scenario names, and assertion outcomes on every run.
+- `rung agents` installs CLI workflows for Claude Code and Codex. Versioned JSON exposes scope
+  gaps, replay commands and artifact digests. Terminal runs group results and preserve plain-text
+  labels with `NO_COLOR`.
+- `rung agents --codex-hooks` installs a project-local Stop hook for review in Codex.
 - `examples/acme-store`: a small shop to try Rung on in a minute, built the way a team would build
   one today (FastAPI and SQLite behind a Next.js, TypeScript and Tailwind front end), with a few bugs
   planted for Rung to find. Spoilers are in its `SOLUTIONS.md`.
 
 ### Changed
+- Generated workspace checks use repository-wide coverage. The survey resolves workspace package
+  managers and records test suites for multiple ecosystems in the same directory.
+- The GitHub Action blocks policy changes by default. Evidence uploads and write-token comments
+  are opt-in. Verdicts with missing or modified artifacts now read as stale.
+- Pytest regression proofs reject setup failures and missing case reports. Node proofs identify
+  individual cases using runner events. Other runners require `--expect` to identify the
+  failure on the merge base.
+- Change plans recommend proofs in the affected workspace. Inferred Cargo tests use the
+  lockfile and require at least one passing case.
+- Custom checks with declared coverage name their verifier files in `specs` or trusted workflow
+  policy paths before the merge gate runs. Use `rung add --specs` to register those files.
+- Runtime evidence receipts include the generated HTML page. Draft acceptance can verify
+  that a named assertion catches changes to Python return values or inline browser behavior.
+- Native unittest, Go and Node suites report a verification failure when no test passes.
+  Check status also marks a previous failure stale after its covered inputs change.
+- Node checks exclude file-only success from passing test cases. The kit lists generic
+  custom commands separately from tests.
+- Runtime draft registration requires a behavioral assertion control. Startup-only
+  candidates remain available for manual review.
+- Scanners distinguish configured finding exit codes from failed analyses. Gitleaks fingerprints
+  ignore unstable SARIF column offsets. Review and regenerate Gitleaks baselines and waivers made
+  with earlier versions when you migrate.
+- Verdicts now cover executable permissions and symbolic links as well as bytes. Re-run checks
+  once after upgrading to refresh older verdicts.
+- Formal checks disclose when their result covers only a model. An approved law needs a confirmed
+  source link or an implementation check to hold and pass the merge gate.
 - `rung kit` no longer marks "Driving the app" ok when the feature map is approved but no drive
   script exists yet; it needs attention, and the next step is `rung draft runtime`.
 - `rung init` names the project by its folder when run from inside it, instead of printing the full path.
@@ -37,6 +75,125 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
   Anthropic's plugin directory. Install with `/plugin marketplace add CalQuity/rung` and
   `/plugin install rung@rung`; the marketplace keeps its name, so existing installs update in place.
   The setup skill's raw URL is now `.../main/plugin/skills/setup/SKILL.md`.
+- `rung gate` reads its settings from a `[gate]` table in `rung.toml` on the merge base:
+  `policy_changes`, `policy_paths`, `require_coverage` and `approval_label`. The Action's inputs and
+  the matching options apply only to keys the base leaves unset, and a change to the table needs
+  approval. To lock the gate against a workflow edit, add the table on your default branch.
+- `policy-paths` (and `--policy-path`) are now relative to the directory holding `rung.toml`, like
+  `require-coverage`; they were relative to the repository root. If `rung.toml` is in a
+  subdirectory, drop that directory from your globs, or use `../` for files outside it.
+- A maintainer approves reviewed policy changes, including Dependabot workflow updates, by applying
+  the `rung-policy-approved` label (or the base's `approval_label`). Add `labeled` and `unlabeled` to the
+  workflow's `pull_request` types and grant `pull-requests: read`. Each new push needs the label applied
+  again, and removing the label re-runs the gate without the approval.
+- The Action fails in the step that ran the checks and no longer has a separate `Gate` step. Report,
+  upload and comment steps still run after a failure.
+- The gate blocks when HEAD is neither the pull request head nor a merge commit of it, for example a
+  `pull_request_target` run that checked out the base. The Action passes the head through the new
+  `pr-head` input; set it to `""` only when gating a different repository.
+- A policy path now exempts only the custom checks whose launch scripts it matches from the
+  verifier declaration rule. Before, any existing policy file exempted every check.
+- Daytona sandboxes live for 26 minutes, longer than all stage limits together. A failed deletion
+  prints a warning instead of discarding a verified result. The receipt and report name the
+  resolved snapshot ID.
+- `rung check --reuse-local` compares only toolchain-relevant environment variables (PATH, locale,
+  and interpreter, package-manager and compiler settings), so it now reuses verdicts across shells.
+- On Linux runners the Action installs Bubblewrap for isolated evidence checks and, on GitHub-hosted
+  runners, lifts Ubuntu's AppArmor restriction on unprivileged user namespaces for the job.
+- Evidence checks run in an isolated copy only when they set `isolate = true`; `drafted_by` alone no
+  longer turns isolation on, and `rung draft runtime` now writes `isolate = true` for the checks it
+  registers. Drive checks drafted by 0.3.0 keep running un-isolated, with their verdicts intact,
+  until you add `isolate = true` to them in `rung.toml`.
+- Node test cases are identified by their `describe` ancestry (`refund > caps`), so tests that share a
+  name in different suites, or are defined in a loop, no longer collapse into one errored case; a
+  passing suite with repeated names now passes, and Node checks count every passing case. Name a
+  nested case for `rung prove --case` with its suites, e.g. `--case "test/money.test.js::refund > caps"`.
+- A pytest check that passes its own `--junitxml` keeps writing that report, and Rung reads it,
+  instead of silently replacing it with a temporary one.
+- Cargo checks wrapped in `env ...` or `time ...` now also require at least one passing case, and
+  colored Cargo summaries are read correctly.
+- `rung prove --expect` is matched against the whole base-run output, stdout and stderr, and accepts
+  failure lines such as `ImportError: ...` and Go's `got X, want Y`. A matching `--expect` now also
+  accepts new tests the merge base could not import or collect, so the advice to re-run with
+  `--expect` after a loading failure leads to a proof.
+- `rung prove` ignores files the test run creates (coverage.xml, JUnit reports, `.coverage`) and
+  reports an error only when a file that existed before the run changed, naming it.
+- Proofs cover the project's files except documentation (`*.md`, `*.rst` and `docs/`): editing a
+  README no longer stales every proof, while code, configuration and fixture changes still do.
+  Proofs recorded before upgrading keep their old whole-project coverage until you run them again.
+- Formal model records confirmed by an earlier version no longer read as drifted after upgrading:
+  a confirmation that stored file digests without their mode still holds while the file contents
+  match. No action is needed; the next `rung confirm` or `rung maintain` stores the new form.
+- A tracked symbolic link that points outside the project no longer makes every whole-project check
+  an error. The verdict records where the link points, without following it, so pointing the link
+  somewhere else stales the verdict.
+- `rung draft runtime` checks that a drive notices a change to the app by changing one function's
+  return values (or one inline script) at a time, leaving startup code such as app factories,
+  config loaders and entry points alone. A variant counts only when one assertion that passed on the
+  real app fails while another keeps passing, so a drive that only shows the app started is no
+  longer accepted. Drives whose every assertion depends on one function need a separate assertion
+  that shows the app is running.
+- The control runs of `rung draft runtime` get three times the accepted run's duration (at least
+  60 seconds, at most the check's timeout) instead of a fixed 30 seconds, and a control run that
+  times out is reported as a timeout rather than as an undetected change.
+- The survey reads Makefiles (`GNUmakefile`, `makefile`, `Makefile`) and records `make test` only
+  when the directory has no native test runner it can detect. With pytest and a Makefile `test:`
+  target, the kit records pytest once and `rung plan` recommends per-case `rung prove` runs.
+  `rung init --refresh` no longer adds a detected command whose run and cwd are already recorded
+  under another id. If an earlier refresh recorded the same suite twice, delete one of the checks.
+- Run without a terminal, `rung init` records provider `none` instead of the first detected model CLI.
+  To draft, pass `rung init --provider claude-cli` (or `codex-cli`, `openai-compatible`) or set
+  `provider` under `[llm]` in `rung.toml`; `rung draft` and `rung map` now say so when no provider is set.
+- `rung doctor --json` prints `{"schema_version": 1, "tools": [...], "strict_failures": [...]}`, where
+  `strict_failures` names the configured tools `--strict` fails on, and `rung laws --json` prints
+  `{"schema_version": 1, "laws": [...]}`. Scripts that read either as a bare list must read `tools`
+  or `laws`.
+- `rung check --ci` is now an alias of `rung check --reuse-local`: it skips only checks with a fresh
+  local verdict from the same base and environment. `rung status --ci` is an alias of
+  `rung status --require-fresh`. Use `rung gate` in CI for the merge decision.
+- `rung check --changed --focused` counts a root check with no declared scope as focused, so it runs
+  the suite of a single-project repository. When no declared target matches the change it runs every
+  touched check (`"selection": "full-fallback"` in JSON) instead of exiting 1.
+- The Stop hooks ask first for the checks whose `verifies` targets hold every edited source file, plus
+  checks with no declared target; checks for other workspace packages are left to `rung check --changed`
+  and the merge gate. Edits outside every declared target, or to `rung.toml`, still ask for every
+  touched check. The Codex Stop hook keeps a per-session marker in `.rung/cache/hooks/` so it allows
+  the second consecutive stop even when Codex does not send `stop_hook_active`.
+- `rung plan --path` resolves paths from the current directory when run inside the project, accepts
+  directories (every file under them), and warns about paths outside every detected project
+  (`outside_projects` in JSON).
+- `rung kit` counts a command check that runs a test runner (pytest, unittest, go test, node --test,
+  npm/pnpm/yarn/bun test, cargo test, make test, vitest, jest and similar) as a test suite whatever its
+  id, and never lists the `<your test command>` placeholder as a next step.
+- The plugin manifest keeps the latest released version during a development cycle and is bumped with
+  the package at release.
+
+### Security
+- The local executor protects against accidental or agent-made weakening of checks, not against a
+  hostile pull request: pull request code runs as the runner user and can alter later steps. Do not
+  give the gate job a write token; post comments from a separate `workflow_run` workflow (see the
+  README). Daytona keeps secrets away from pull request code but, for the same reason, does not make
+  its receipt tamper-proof.
+- With a `--junitxml` path of its own, a pytest check deletes any report left at that path before it
+  runs, so only a report the run writes can pass it.
+- Proofs cover every project file except documentation, including files added after the proof, so a
+  new source file, directory or file type stales the proof too. Coverage patterns accept `!glob` to
+  exclude files.
+- `rung check --reuse-local` also compares test-runner variables (`PYTEST_*`, `COVERAGE_*`,
+  `HYPOTHESIS_*`, `JEST_*`, `VITEST_*`, `MOCHA_*`, `PLAYWRIGHT_*`, `DEBUG`).
+- The Action installs Bubblewrap only when `rung.toml` has an `isolate = true` check, and only on
+  GitHub-hosted runners unless the new `install-bubblewrap: true` input asks for it on a self-hosted
+  runner. `install-bubblewrap: false` never installs it.
+- Isolated drive checks clone `node_modules` into their copy (copy-on-write where the filesystem
+  supports it) instead of linking back to the project, so apps whose tools refuse dependencies outside
+  the workspace, such as Next.js, start in the copy. Files the app generates while running, such as
+  `next-env.d.ts`, no longer read as modified inputs; only inputs that existed before the run count,
+  and the error names them.
+- A Daytona provider or snapshot error names the snapshot it tried, so a misspelled or inactive
+  snapshot is easy to spot.
+- A required workflow or ruleset is still the only way to stop a pull request from editing the
+  workflow that runs the gate, because GitHub runs the pull request's copy of a `pull_request`
+  workflow.
 
 ## 0.3.0 (2026-11-04)
 
