@@ -17,5 +17,8 @@
     "tla+",
     "lean",
     "coding-agents"
-  ]
+  ],
+  "documentationUrl": "https://github.com/CalQuity/rung#readme",
+  "supportUrl": "https://github.com/CalQuity/rung/issues",
+  "privacyPolicyUrl": "https://github.com/CalQuity/rung/blob/main/plugin/README.md#data-and-network"
 }
