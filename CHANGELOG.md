@@ -3,7 +3,7 @@
 All notable changes to Rung. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 
-## Unreleased
+## 0.4.0 (2026-11-06)
 
 ### Added
 - `rung init --dry-run` previews file writes and commands. `--refresh` appends newly detected checks,

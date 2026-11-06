@@ -59,11 +59,8 @@ a change does what was meant. Rung's answer is three habits.
 
 ## Quick start
 
-Run the first line from a checkout of this repository. It installs the development CLI used
-in the examples below. `uv tool install rung-cli` installs the latest published release.
-
 ```bash
-uv tool install .                 # run from the Rung source checkout
+uv tool install rung-cli           # or: pipx install rung-cli (the command is `rung`)
 cd your-repo
 rung init --dry-run                # inspect commands and file writes
 rung init --no-drafts              # record existing checks and install agent guidance
@@ -355,8 +352,7 @@ three-step case only the differential test finds.
 
 ## In CI
 
-The example pins the current release tag. To use the development gate behavior below,
-pin a reviewed commit that includes it.
+The example pins the current release tag; pin a tag or a reviewed commit, never a branch.
 
 ```yaml
 on:
@@ -373,11 +369,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: CalQuity/rung@v0.3.0
-        with:
-          upload-evidence: false   # v0.3.0 uploads evidence by default
-          comment: false           # v0.3.0 comments by default, which needs pull-requests: write
-          policy-changes: fail     # v0.3.0 only warns by default
+      - uses: CalQuity/rung@v0.4.0
 ```
 
 Use `rung gate --base origin/main` to run the same merge decision locally or in another CI
@@ -537,7 +529,7 @@ To run the same check before every push, add Rung to `.pre-commit-config.yaml`:
 
 ```yaml
 - repo: https://github.com/CalQuity/rung
-  rev: v0.3.0
+  rev: v0.4.0
   hooks:
     - id: rung-check
 ```
