@@ -116,6 +116,48 @@ if it still passes after the application sources in the copy are deliberately br
 
 ## Your project's verification kit
 
+### A plain-language HTML report
+
+```bash
+rung score-my-code                    # run all configured checks and write the HTML report
+rung score-my-code --no-run           # report saved results without running checks
+rung score-my-code --base origin/main # compare scanner findings against a Git base
+```
+
+Open `.rung/cache/score/index.html` in a browser. The CalQuity-branded offline page leads with
+**how many configured checks passed with current evidence**, followed by **verification health** (the Rung score),
+failed checks and execution errors, stale evidence, recorded new blocking scanner findings,
+verification areas, runtime scenario results, check output and next steps. It includes no remote
+assets or JavaScript. The official wordmark is embedded in the file. `--json` returns the same structured
+results plus `report_path`. Missing assessments appear beside the score. Dependency-existence checks
+do not stand in for secret or vulnerability scans, and the shortcut check does not count as a linter.
+
+Shortcut findings are labeled **review required**, with explanations that distinguish an intentional
+exception from a confirmed product defect. They still fail their configured check until resolved through
+the normal workflow; the report does not waive them. Pytest checks record passed, failed, errored and
+skipped cases from JUnit XML, including failing runs. Counts from current reporting suites are summed;
+overlapping suites can count a case more than once. Other runners and old receipts without structured
+counts are explicitly excluded. Stale case counts are labeled as previous results.
+
+The score is **configured-check health**: `100 * fresh passing checks / configured checks`,
+rounded to the nearest integer. Each check has equal weight. It is **not an overall code-quality
+grade**, test-strength measure, security certification or code-coverage percentage. Missing check
+categories are shown as not assessed, separately from the score. Removing checks changes the
+denominator, so compare scores only for the same check definitions (the report includes their
+fingerprint). An empty configuration has no score.
+
+The command runs the checks declared in `rung.toml`; review those commands before running them.
+It does not draft tests, install tools, change check definitions or invoke a model itself. Configured
+commands still have their ordinary side effects. Attested captures are labeled as external evidence,
+not rerun. It writes a report even when checks fail, returning `1` if any check lacks a fresh passing
+result or the ledger is corrupt. The number itself introduces no merge threshold.
+
+To export, use `--out /absolute/path/outside-the-project/report.html`. Relative output paths are
+resolved from the directory containing `rung.toml`. Inside the project, output is restricted to
+`.rung/cache/score/` so writing the page cannot invalidate covered inputs. Existing unrelated files
+and symbolic links are rejected. The page is a snapshot; regenerate it after source edits. Execution
+times describe this invocation only; saved-results mode marks them as not measured.
+
 Each part catches what the others miss, and `rung kit` shows them side by side:
 
 | Part | What it catches | Built from |
@@ -576,6 +618,7 @@ any OpenAI-compatible endpoint, including local models. Rung never stores creden
 | `rung gate [--base REF] [--executor local\|daytona]` | Re-run the merge checks after policy preflight |
 | `rung status [--require-fresh]` | Fresh, stale, failing; `--require-fresh` (alias `--ci`) exits 1 unless all fresh |
 | `rung report [--format md\|json]` | Checks, laws, new findings and fix proofs |
+| `rung score-my-code [--no-run] [--base REF] [--out PATH]` | Run configured checks and write an offline HTML report with an explained configured-check health score |
 | `rung prove 'pytest tests/test_x.py'` | Show a test fails without the fix and passes with it. Pytest and Node can report individual cases. |
 | `rung laws [--approve ID]` | Which laws hold |
 | `rung add <kind> <id> ...` | Declare a `command`, `evidence`, `scan` or `deps` check |

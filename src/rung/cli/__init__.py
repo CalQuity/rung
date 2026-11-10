@@ -162,6 +162,12 @@ def build_parser(*, json_errors: bool = False) -> argparse.ArgumentParser:
     s = add("status", "cmd_status", "show which verdicts are fresh, stale or failing")
     s.add_argument("--require-fresh", "--ci", dest="ci", action="store_true",
                    help="exit 1 unless every verdict is fresh")  # fmt: skip
+    s = add("score-my-code", "cmd_score_my_code", "run configured checks and write an explainable HTML score report")
+    s.add_argument("--no-run", action="store_true", help="report saved results without executing any checks")
+    s.add_argument("--base", help="Git ref for scanner comparison and verdict context")
+    s.add_argument(
+        "--out", help="HTML path inside .rung/cache/score/ or outside the project (relative to project root)"
+    )
     s = add("report", "cmd_report", "summarize checks, laws, new findings and fix proofs")
     s.add_argument("--format", choices=["md", "json"], default="md")
     s.add_argument("--evidence-url", help="where the evidence files can be downloaded (e.g. a CI artifact)")

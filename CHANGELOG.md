@@ -3,6 +3,20 @@
 All notable changes to Rung. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 
+## Unreleased
+
+### Added
+- Score reports use the official CalQuity wordmark and slate palette, put the check count first,
+  disclose missing dedicated assessments beside the score, and explain shortcut findings as review
+  requests without automatically waiving them. Pytest case reports retain structured pass/fail/error/skip
+  counts on both successful and failing runs; stale counts remain explicitly historical.
+- `rung score-my-code` runs the configured checks and creates a standalone HTML report with
+  plain-language results, errors, freshness, verification categories, diagnostics, new blocking
+  findings and next steps. The Rung score explicitly measures configured-check health, not overall
+  code quality. `--no-run` reports saved results, `--base` sets comparison context, `--out` exports
+  safely, and `--json` exposes the report data. Empty configurations have no score; no numerical
+  merge threshold is introduced.
+
 ## 0.4.0 (2026-11-06)
 
 ### Added
