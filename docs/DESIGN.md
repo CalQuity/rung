@@ -366,3 +366,56 @@ durations are unavailable. Stale check details retain labeled historical measure
 `test_metrics` derives total and non-skipped cases from current structured reports. Pass rate
 is passed / (passed + failed + errors); skip rate is skipped / all cases. Empty denominators
 yield null, not a perfect percentage. Test percentages do not imply coverage or suite strength.
+
+### Explicit pytest diagnostics
+
+`rung coverage CHECK --source PATH` and `rung flaky CHECK` operate on an existing
+pytest command check. They are explicit diagnostics: ordinary checks and gates do
+not invoke them, and diagnostic runs never replace ordinary verdicts or alter the
+configured-check health score. No new Rung runtime dependency is introduced;
+coverage collection requires pytest-cov in the selected check's environment.
+
+Diagnostic JSON has `schema_version: 1`, `kind`, `check_id`, `state`, `summary`,
+`errors`, `metrics`, `exit_code`, execution parameters, and a managed `manifest_path`.
+Artifacts are stored in unique runs beneath `.rung/evidence/diagnostics/`. Manifests
+bind input bytes, on-disk configuration, the selected check definition, Git HEAD,
+comparison context and artifact hashes. `content_digest` detects accidental manifest
+edits; it is not a signature against a hostile repository. Source/configuration or
+comparison changes during execution make evidence incomplete. Saved results are
+historical when inputs, artifacts, definitions or comparison context no longer match.
+Text redaction is best effort; binary artifacts, if retained, are explicitly listed
+as unredacted. Review evidence before sharing it.
+
+Coverage records `files` with changed, executable, covered, missing and excluded line
+numbers and an unmeasured flag. Metrics sum covered and total changed executable
+statements; `percent` is null when there are no execution opportunities. The selected
+Git target is retained as `parameters.base_ref`, with its exact merge-base SHA in
+`parameters.base`. Local and nonignored untracked Python source is included. Missing
+source records remain unmeasured, never inferred as covered. Coverage-tool policy is
+preserved. A complete advisory measurement exits 0, an explicit `--fail-under` breach
+exits 1, and failed tests or incomplete execution/measurement exit 2. No changed
+executable lines means `not_applicable`, not 100% coverage.
+
+Repeated-test results retain `attempts` with command, cwd, duration, exit, environment
+and report/log paths. `cases` retain exact parameterized identities, outcomes,
+classification and `identity_scope`. Distinct subtest contexts are represented with
+typed values; identical repeated contexts are explicitly compared as `subtest_group`
+with `observation_counts`. Raw member reports remain available. Changed group counts
+are incomplete; groups cannot identify which individual unnamed child varied.
+Skips, expected failures and lifecycle/collection errors are separate from ordinary
+pass/fail votes. Native retries/repeats, random ordering, cache-based selection,
+early exits and active xdist workers are unsupported and diagnosed.
+
+Five fresh processes and a 600-second execution budget are the defaults, configurable
+with `--attempts` and `--budget`. Consistent ordinary failures exit 1. Intermittent
+ordinary failures are advisory unless `--fail-on-flaky` is supplied. Incomplete
+attempts return 2. Fresh processes do not reset external state, and a clean sample
+does not prove a test is never flaky.
+
+Score JSON adds `diagnostics`, containing the newest saved result per kind/check,
+with `current` and `stale_reasons`. A current complete coverage measurement sets
+`assessments.line_coverage` to `changed_lines_measured`; whole-project coverage and
+assertion strength remain unassessed. HTML displays scoped metrics, attempt timings,
+outcome matrices, warnings and evidence paths. Large case lists are capped in the
+page with attention items first; the manifest retains every case. `--no-run` only
+reads saved evidence and does not execute diagnostic commands.
