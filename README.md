@@ -156,7 +156,21 @@ To export, use `--out /absolute/path/outside-the-project/report.html`. Relative 
 resolved from the directory containing `rung.toml`. Inside the project, output is restricted to
 `.rung/cache/score/` so writing the page cannot invalidate covered inputs. Existing unrelated files
 and symbolic links are rejected. The page is a snapshot; regenerate it after source edits. Execution
-times describe this invocation only; saved-results mode marks them as not measured.
+times distinguish wall-clock run time from checker execution. The timing section shows combined,
+average and median checker duration, the slowest check, time spent in failed/error checks and a
+slowest-first breakdown with each check's share of measured time. Checker duration excludes
+input snapshots, ledger writes and HTML generation. Wall-clock time includes the sequential
+verification loop and its bookkeeping, up to report assembly, not HTML writing.
+
+Ordinary `rung check` executions also record their durations in the ledger. `--no-run` can show
+these as **recorded check timings**, which may come from different runs; their sum is not a
+single run's wall-clock time. Stale results, external captures and older receipts without timing
+do not contribute to that summary. A stale check retains its previous duration in the details.
+
+Structured test metrics show reported cases, executed/error cases, pass rate and skip rate. Pass
+rate includes failures and errors in the denominator and excludes skipped cases. Skip rate uses
+all reported cases. These metrics cover reporting suites only; overlapping suites can count a
+case more than once. They do not measure code coverage or test strength.
 
 Each part catches what the others miss, and `rung kit` shows them side by side:
 

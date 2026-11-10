@@ -29,9 +29,9 @@ def cmd_score_my_code(args, out: Output) -> int:
         start = perf_counter()
         for index, check in enumerate(cfg.checks, 1):
             out.progress(f"[{index}/{len(cfg.checks)}] Running {check.id}")
-            before = perf_counter()
             result = runner.run_check(cfg, check, base=base)
-            durations[check.id] = round(perf_counter() - before, 3)
+            if (seconds := result.outcome.details.get("execution_seconds")) is not None:
+                durations[check.id] = seconds
             out.line(redact(f"{result.verdict.upper()}  {check.id}: {result.outcome.summary}"))
         elapsed = round(perf_counter() - start, 3)
     data = score.build(cfg, ran_checks=not args.no_run, elapsed_seconds=elapsed, durations=durations, base=base)

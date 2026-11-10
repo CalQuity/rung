@@ -347,3 +347,22 @@ search, a detailed issue draft and creation/readback within the user's publishin
 The skill does not add network calls to checking or report rendering. Execution errors and stale
 evidence require diagnosis before a defect claim. Sensitive findings follow the target
 repository's security-reporting route.
+
+### Execution metrics
+
+The runner records monotonic `details.execution_seconds` for the checker call, including setup
+and subprocesses but excluding input snapshots, ledger serialization and HTML generation.
+Failures and execution errors retain durations. Reused external captures are not executions.
+The score command's `elapsed_seconds` remains the sequential verification-loop wall time,
+including its surrounding bookkeeping up to report assembly.
+
+Score rows add `recorded_elapsed_seconds`; invocation-only `elapsed_seconds` retains its existing
+meaning and is null in saved-results mode. The `timing` object includes the mode, wall time,
+measured/unmeasured counts, sum, mean, median, slowest check, failed/error time and a sorted
+breakdown with shares. Saved timing excludes stale, drifted, invalid and external results, and
+discloses that receipts can come from different runs. Legacy or non-finite, negative or boolean
+durations are unavailable. Stale check details retain labeled historical measurements.
+
+`test_metrics` derives total and non-skipped cases from current structured reports. Pass rate
+is passed / (passed + failed + errors); skip rate is skipped / all cases. Empty denominators
+yield null, not a perfect percentage. Test percentages do not imply coverage or suite strength.

@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import shlex
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
+from statistics import median
 from typing import Any
 
 from rung.analysis import kit, report
@@ -60,7 +62,8 @@ def build(
             verdict=entry.get("verdict") if valid else None,
             explanation=STATE_TEXT[held.state],
             diagnostics=entry.get("details", {}).get("lines", []) if valid else [],
-            elapsed_seconds=(durations or {}).get(check.id),
+            elapsed_seconds=_seconds((durations or {}).get(check.id)),
+            recorded_elapsed_seconds=_seconds(entry.get("details", {}).get("execution_seconds")) if valid else None,
             next_step=_next_step(check.id, held.state, entry.get("verdict") if valid else None),
             test_results=entry.get("details", {}).get("test_results") if valid else None,
             assessment=_assessment(check.kind, held.state, entry.get("verdict")),
@@ -100,11 +103,65 @@ def build(
         },
         passed=bool(total) and fresh == total and data["ledger_intact"],
     )
+    data["timing"] = _timing(data["checks"], ran_checks=ran_checks, elapsed_seconds=elapsed_seconds)
+    data["test_metrics"] = _test_metrics(data["test_results"])
     for finding in data["new_findings"]:
         finding["current"] = statuses[finding["check"]].state in {"fresh", "failing"}
         finding["explanation"] = _finding_explanation(finding.get("rule", ""))
     data["summary"]["checks_fresh"] = fresh
     return _redact(data)
+
+
+def _seconds(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        seconds = float(value)
+    except OverflowError:
+        return None
+    return seconds if math.isfinite(seconds) and seconds >= 0 else None
+
+
+def _timing(rows: list[dict[str, Any]], *, ran_checks: bool, elapsed_seconds: float | None) -> dict[str, Any]:
+    measured = []
+    for row in rows:
+        if row["source"] == "external_capture" or (not ran_checks and row["state"] not in {"fresh", "failing"}):
+            continue
+        seconds = row["elapsed_seconds"] if ran_checks else row["recorded_elapsed_seconds"]
+        if seconds is not None:
+            measured.append({"id": row["id"], "seconds": seconds, "verdict": row["verdict"], "at": row["at"]})
+    measured.sort(key=lambda row: (-row["seconds"], row["id"]))
+    total = sum(row["seconds"] for row in measured)
+    for row in measured:
+        row["share_percent"] = round(100 * row["seconds"] / total, 1) if total else 0.0
+    return {
+        "mode": "current" if ran_checks else "recorded",
+        "wall_seconds": elapsed_seconds if ran_checks else None,
+        "measured_checks": len(measured),
+        "unmeasured_checks": len(rows) - len(measured),
+        "total_check_seconds": round(total, 6) if measured else None,
+        "average_seconds": total / len(measured) if measured else None,
+        "median_seconds": median(row["seconds"] for row in measured) if measured else None,
+        "failed_check_seconds": sum(row["seconds"] for row in measured if row["verdict"] in {"fail", "error"})
+        if measured
+        else None,
+        "slowest_check": {"id": measured[0]["id"], "seconds": measured[0]["seconds"]} if measured else None,
+        "checks": measured,
+    }
+
+
+def _test_metrics(results: dict[str, int] | None) -> dict[str, Any] | None:
+    if results is None:
+        return None
+    executed = results["passed"] + results["failed"] + results["errors"]
+    total = executed + results["skipped"]
+    return {
+        "total_cases": total,
+        "executed_cases": executed,
+        "pass_rate_percent": round(100 * results["passed"] / executed, 1) if executed else None,
+        "skip_rate_percent": round(100 * results["skipped"] / total, 1) if total else None,
+        "reporting_suites": results["suites"],
+    }
 
 
 def _assessment(kind: str, state: str, verdict: str | None) -> str:
