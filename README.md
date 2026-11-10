@@ -590,6 +590,61 @@ To run the same check before every push, add Rung to `.pre-commit-config.yaml`:
     - id: rung-check
 ```
 
+## Investigate changed code and unreliable tests
+
+These opt-in diagnostics use an existing **pytest command check**. They keep their own
+evidence and never replace its ordinary verdict or change the Rung score formula.
+
+```bash
+rung coverage tests --source src --base origin/main
+rung coverage tests --source src --base origin/main --fail-under 90
+rung flaky tests                         # five attempts, ten-minute total budget
+rung flaky tests --attempts 10 --budget 300 --fail-on-flaky
+rung score-my-code --no-run              # include saved diagnostics in the HTML report
+```
+
+`tests` is the check ID in `rung.toml`, not a test-directory argument. Use the actual
+project-relative source directory, such as `src/package` or `package`; repeat `--source`
+for multiple directories. The coverage diagnostic requires **pytest-cov** in the configured
+check's Python environment. Rung does not install it or add a runtime dependency.
+
+**Changed-line coverage** compares the working tree with the target's merge base, including
+committed, staged, unstaged and nonignored new Python files. It counts changed executable
+statements from a fresh coverage.py JSON report; deleted lines, blank lines and comments
+are not execution opportunities. Excluded statements remain visible. A missing source
+record is unmeasured evidence, not a covered file. No executable changes means N/A.
+The percentage measures execution of the selected changed statements, not branch outcomes,
+assertion quality, or whole-project coverage. It is separate from configured-check health.
+
+Without `--fail-under`, valid coverage measurements are advisory. An explicit minimum
+returns exit 1 below that threshold. Existing coverage options and incompatible launcher
+settings are diagnosed rather than silently replaced; use a separate pytest command check
+without coverage CLI/addopts flags. Existing project coverage-tool policies still apply.
+Test failures, missing tools, invalid reports and incomplete measurements return exit 2.
+
+**Repeated-test diagnosis** runs the same selected pytest command in fresh processes and
+retains exact parameterized identities, lifecycle outcomes, durations and per-attempt logs.
+Skips, expected failures and execution errors are separate from ordinary pass/fail votes.
+A passing and failing observation of the same case is intermittent failure observed.
+Distinct subtest contexts retain their own identities. Repeated identical contexts are
+explicitly compared as groups, with occurrence counts and every raw report retained;
+a varying group cannot identify which individual unnamed child varied. Changing group
+counts makes the comparison incomplete.
+Consistent ordinary failures return exit 1; observed intermittent cases return 1 only with
+`--fail-on-flaky`. Incomplete execution returns 2. A clean sample does not prove stability.
+
+`--attempts` must be at least two; `--budget` and the coverage `--timeout` are positive seconds.
+Native retry/repeat/random-order plugins, cache-based selection, early-exit modes and active
+xdist workers are currently unsupported and explicitly diagnosed. Normal `-k`/`-m` selection
+is retained. Fresh processes do not reset databases, files, services or time. Review configured
+commands before repeating integration tests with side effects; use isolated fixtures.
+
+Manifests and redacted text artifacts live under `.rung/evidence/diagnostics/`. They bind
+results to project input bytes, the check definition, comparison context and artifact hashes.
+Edits make saved results historical; changes during execution make evidence incomplete.
+Redaction is best effort, not a guarantee. Logs retain the process runner's bounded output
+tail; review evidence before sharing. Diagnostic commands never create issues or publish.
+
 ## With coding agents
 
 `rung agents` installs CLI workflows in `.claude/skills/` and `.agents/skills/` and adds a

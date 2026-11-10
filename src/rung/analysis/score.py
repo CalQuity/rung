@@ -16,7 +16,7 @@ from pathlib import Path
 from statistics import median
 from typing import Any
 
-from rung.analysis import kit, report
+from rung.analysis import diagnostics, kit, report
 from rung.checks import runner
 from rung.checks.command import package_script_commands
 from rung.core import launch
@@ -105,6 +105,15 @@ def build(
     )
     data["timing"] = _timing(data["checks"], ran_checks=ran_checks, elapsed_seconds=elapsed_seconds)
     data["test_metrics"] = _test_metrics(data["test_results"])
+    data["diagnostics"] = diagnostics.saved(config)
+    if any(
+        item["kind"] == "coverage"
+        and item["current"]
+        and item["state"] == "complete"
+        and item.get("metrics", {}).get("percent") is not None
+        for item in data["diagnostics"]
+    ):
+        data["assessments"]["line_coverage"] = "changed_lines_measured"
     for finding in data["new_findings"]:
         finding["current"] = statuses[finding["check"]].state in {"fresh", "failing"}
         finding["explanation"] = _finding_explanation(finding.get("rule", ""))
