@@ -55,13 +55,10 @@ and `report_path`. Check rows additionally carry `category`, original `verdict`,
 inferred from arbitrary text output. Category assignment reuses the kit's check classification;
 it does not establish behavioral coverage.
 
-The renderer escapes all source/checker text, applies best-effort redaction to payload strings,
-and includes no scripts, external assets or active links. The official CalQuity wordmark is packaged
-with Rung and embedded as a data image; its CSP permits data images only. Slate blue, light surfaces
-and native editable HTML carry the brand. The headline is the check count; the numerical score is secondary.
-Report writing is atomic, rejects
-symbolic links and unrelated existing files, and is restricted to the score cache or a location
-outside the project. The destination is checked before and after executing repository commands.
+The renderer escapes source/checker text, applies best-effort redaction and includes no scripts,
+external assets or active links. The packaged wordmark uses a data image permitted by its CSP.
+Report writing is atomic, rejects symbolic links and unrelated existing files, and uses the score
+cache or a location outside the project. The destination is checked before and after executing repository commands.
 The HTML file is not itself a verdict. This command adds no numeric merge threshold; exit 1
 means no checks are configured, a configured check is not fresh and passing, or the ledger is corrupt.
 

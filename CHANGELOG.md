@@ -6,27 +6,16 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 ## Unreleased
 
 ### Added
-- Explicit `rung coverage CHECK --source PATH` and `rung flaky CHECK` diagnostics for pytest:
-  changed executable-line measurements, retained repeat-run outcomes, source/artifact freshness,
-  opt-in failure policies, and saved HTML/JSON reporting separate from configured-check health.
-- `rung-failure-path` skill for Codex and Claude Code: isolated failure tests with passing
-  controls, reached-boundary assertions, state checks, recorded verdicts and regression proofs.
-  Includes a standard-library Python example of a rejected write and cache consistency.
-- Execution metrics in HTML reports: persisted checker durations, wall-clock time, slowest-first
-  breakdowns, average/median duration, failed-check time and scoped test pass/skip rates. Saved
-  views label recorded timings and exclude stale evidence from current summaries.
-- `rung-issue` agent skill for reproduced findings: duplicate checks, detailed reproduction and
-  evidence, proposed fixes, and GitHub issue creation within the user's publishing authorization.
-- Score reports use the official CalQuity wordmark and slate palette, put the check count first,
-  disclose missing dedicated assessments beside the score, and explain shortcut findings as review
-  requests without automatically waiving them. Pytest case reports retain structured pass/fail/error/skip
-  counts on both successful and failing runs; stale counts remain explicitly historical.
-- `rung score-my-code` runs the configured checks and creates a standalone HTML report with
-  plain-language results, errors, freshness, verification categories, diagnostics, new blocking
-  findings and next steps. The Rung score explicitly measures configured-check health, not overall
-  code quality. `--no-run` reports saved results, `--base` sets comparison context, `--out` exports
-  safely, and `--json` exposes the report data. Empty configurations have no score; no numerical
-  merge threshold is introduced.
+- `rung score-my-code`: offline HTML/JSON reports of configured-check health, failures,
+  errors, stale evidence, missing verification areas and next steps. Includes CalQuity
+  styling, checker timings and scoped pytest pass/skip metrics. `--no-run` reads saved
+  evidence; the score is not an overall code-quality grade or merge threshold.
+- Explicit pytest diagnostics: `rung coverage CHECK --source PATH` measures changed
+  executable lines; `rung flaky CHECK` retains repeated outcomes. Both preserve ordinary
+  verdicts, bind evidence to inputs and support opt-in failure policies.
+- `rung-issue` and `rung-failure-path` agent skills for Codex and Claude Code: report
+  reproduced findings within publishing authorization, and test isolated failure scenarios
+  with passing controls and state checks. Includes a rejected-write consistency example.
 
 ## 0.4.0 (2026-11-06)
 
