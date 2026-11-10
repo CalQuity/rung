@@ -67,6 +67,7 @@ def tail(result: subprocess.CompletedProcess[str], lines: int = 15) -> list[str]
 
 def _run(
     ctx: Context, check: Check, env: dict[str, str] | None = None, *, argv: list[str] | None = None,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:  # fmt: skip
     reserved = {"RUNG_EVIDENCE_DIR", "RUNG_SEED", "RUNG_FAULTS", "RUNG_SCENARIOS"}
     source = os.environ if ctx.environment is None else ctx.environment
@@ -75,7 +76,7 @@ def _run(
         [*ctx.command_prefix, *(argv or shlex.split(check.require("run")))],
         cwd=ctx.root / check.get("cwd", "."),
         env=inherited | (env or {}),
-        timeout=check.get_int("timeout", 1800),
+        timeout=check.get_int("timeout", 1800) if timeout is None else timeout,
     )
 
 
