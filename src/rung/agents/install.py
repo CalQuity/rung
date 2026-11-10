@@ -44,9 +44,15 @@ Use your terminal tool. Check `rung --version` first. From another directory, us
    protected policy changes, law approvals and waivers to a person for review.
 6. When a check exposes a reproduced defect, use the rung-issue skill to prepare an actionable
    GitHub issue. Follow the user's publishing instructions; checks never publish on their own.
+7. When testing failed writes, timeouts or retries, use rung-failure-path to check
+   the operation's error response and state after failure with isolated fixtures.
 """
 
 SKILLS = {
+    "rung-failure-path": (
+        "Use when testing failed writes, timeouts, retries, interrupted operations, "
+        "or inconsistent state after an error in a state-changing operation."
+    ),
     "rung-issue": (
         "Use when a Rung check exposes a reproduced defect that needs a GitHub issue, "
         "a failing scenario needs to be documented for maintainers, or a finding needs "
@@ -101,6 +107,7 @@ def install(
     rules = guides.load("rules")
     bodies = {
         "rung": USAGE.format(rules=rules),
+        "rung-failure-path": guides.load("failure-path"),
         "rung-issue": guides.load("issue"),
         "rung-tla": guides.load("tla"),
         "rung-property": guides.load("property"),

@@ -603,6 +603,25 @@ rung check --changed --base origin/main --json
 rung report --json
 ```
 
+### Test failure paths with your agent
+
+`rung agents` installs **rung-failure-path** for Codex and Claude Code. Ask your agent:
+
+```text
+Use rung-failure-path to test whether a rejected save leaves the cache and stored data consistent.
+```
+
+The skill guides the agent to establish the intended behavior, create isolated tests with
+synthetic data, prove the injected failure was reached, and check the error and state afterward.
+It includes passing controls, cleanup, timeout and retry considerations, and recording a Rung
+verdict. For fixes, it points to `rung prove` to establish the regression before and after.
+An ambiguous contract or a test setup error is not treated as a confirmed bug.
+
+This is an agent skill, not a `rung-failure-path` CLI command. Installing it runs no fault
+experiments and adds no dependencies. See the [runnable Python example](examples/failure-path/)
+for a deliberately faulty save and a corrected version; it demonstrates rejected writes,
+not crash durability or general production atomicity.
+
 ### Report reproduced findings with the issue skill
 
 `rung agents` also installs **rung-issue** for both Claude Code and Codex. Ask the agent to
