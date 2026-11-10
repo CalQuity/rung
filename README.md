@@ -589,6 +589,23 @@ rung check --changed --base origin/main --json
 rung report --json
 ```
 
+### Report reproduced findings with the issue skill
+
+`rung agents` also installs **rung-issue** for both Claude Code and Codex. Ask the agent to
+use that skill when a check exposes a reproducible defect. It verifies the scenario against
+current code, checks the affected repository for duplicate issues, and prepares a report with
+expected and actual behavior, reproduction steps, environment, redacted evidence and a
+recommended fix. Untested fixes are labeled as proposals.
+
+With permission to publish to the affected repository, the agent creates a GitHub issue and
+reads it back before sharing its URL. Without that permission, it keeps a local draft for review.
+Missing tools and stale results require diagnosis first; they are not automatically application
+bugs. Suspected vulnerabilities follow the repository's private security-reporting instructions.
+The skill uses GitHub CLI or an available GitHub integration. Installing skills, running checks
+and generating a score report do not publish anything automatically.
+
+### Optional Stop hooks
+
 `rung agents --hooks` installs the Claude Code Stop hook. For Codex, use
 `rung agents --codex-hooks` and review the project hook with `/hooks` in Codex.
 Both hooks point the agent to checks that still need to run and allow the second stop

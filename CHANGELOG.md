@@ -6,6 +6,8 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 ## Unreleased
 
 ### Added
+- `rung-issue` agent skill for reproduced findings: duplicate checks, detailed reproduction and
+  evidence, proposed fixes, and GitHub issue creation within the user's publishing authorization.
 - Score reports use the official CalQuity wordmark and slate palette, put the check count first,
   disclose missing dedicated assessments beside the score, and explain shortcut findings as review
   requests without automatically waiving them. Pytest case reports retain structured pass/fail/error/skip

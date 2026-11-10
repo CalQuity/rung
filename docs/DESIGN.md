@@ -338,3 +338,12 @@ resolved launcher identities, with no environment variables in the shared verdic
 such as terminal or CI bookkeeping variables does not prevent reuse. It includes symlinks along a launcher path and their targets. Rung reruns
 checks when a package runner manages the delegated tool environment and its identity is unavailable
 before execution. The merge gate always reruns its checks.
+
+### Reporting confirmed findings
+
+`rung agents` distributes the `rung-issue` skill from `guides/issue.md` to both supported
+agent skill directories. Its workflow covers reproduction, destination selection, duplicate
+search, a detailed issue draft and creation/readback within the user's publishing authorization.
+The skill does not add network calls to checking or report rendering. Execution errors and stale
+evidence require diagnosis before a defect claim. Sensitive findings follow the target
+repository's security-reporting route.
