@@ -43,8 +43,8 @@ def _runtime(root: Path, check: Check, details: dict[str, Any], evidence: list[s
     }  # fmt: skip
 
 
-def build(config: Config, *, evidence_url: str = "") -> dict[str, Any]:
-    statuses = {s.check_id: s for s in runner.statuses(config)}
+def build(config: Config, *, evidence_url: str = "", base: str | None = None) -> dict[str, Any]:
+    statuses = {s.check_id: s for s in runner.statuses(config, base=base)}
     verdicts = ledger.read_all(config.root)
 
     rows = []

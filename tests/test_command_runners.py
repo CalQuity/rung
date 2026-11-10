@@ -47,6 +47,28 @@ def test_a_leftover_junit_report_does_not_pass_a_run_that_writes_none(repo: Path
     assert _result(capsys)["verdict"] != "pass"
 
 
+def test_zero_exit_cannot_override_failures_in_the_junit_report(repo, capsys, monkeypatch):
+    import subprocess
+
+    from rung.checks import command
+
+    def fake_run(ctx, check, env=None, *, argv=None):
+        path = next(value.split("=", 1)[1] for value in argv if value.startswith("--junitxml="))
+        Path(path).write_text(
+            '<testsuite><testcase name="working"/><testcase name="broken">'
+            "<failure>wrong total</failure></testcase></testsuite>"
+        )
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(command, "_run", fake_run)
+    _check(repo, f"{sys.executable} -m pytest -q")
+    assert rung(repo, "check", "unit", "--json") == 1
+    result = _result(capsys)
+    assert result["verdict"] == "fail"
+    assert result["test_results"]["failed"] == 1
+    assert result["test_results"]["passed"] == 1
+
+
 @pytest.fixture
 def fake_cargo(tmp_path: Path, monkeypatch) -> Path:
     """A `cargo` on PATH that prints the summary in `summary.txt`, with Cargo's colors."""

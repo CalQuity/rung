@@ -33,6 +33,47 @@ exact code it covers, and it should expire on its own.**
    the line protocol are the contract. Any tool, agent or future reimplementation can
    read and write them.
 
+## Configured-check health reports
+
+`rung score-my-code` executes every declared check through the existing runner and writes a
+standalone HTML page to `.rung/cache/score/index.html`. `--no-run` reads existing verdicts instead;
+it still evaluates freshness. Optional `--base` supplies the scanner comparison and required
+verdict context. A missing or mismatched base context cannot earn score credit.
+
+The score is the nearest whole number to `100 * fresh passing / configured`, with every check
+weighted equally. Zero checks yields no score, not 100. Stale, drifted, unrun, failed and errored
+checks earn no credit. Corrupt ledger records are untrusted. Missing check categories do not enter
+the denominator and must be disclosed separately; the score is not a measure of code quality,
+test strength, line coverage or bug absence. The check-set fingerprint hashes sorted IDs and
+existing definition hashes so consumers can identify changes to the scoring denominator.
+
+The version-1 JSON payload extends the ordinary report with `score`, `stats`, `categories`,
+`check_set_digest`, `generated_at`, `ran_checks`, `elapsed_seconds`, `comparison_base`, `passed`
+and `report_path`. Check rows additionally carry `category`, original `verdict`, a plain-language
+`explanation`, `diagnostics`, `next_step` and invocation-only `elapsed_seconds`. New findings carry
+`current` so old findings can be distinguished from current evidence. No test-case counts are
+inferred from arbitrary text output. Category assignment reuses the kit's check classification;
+it does not establish behavioral coverage.
+
+The renderer escapes all source/checker text, applies best-effort redaction to payload strings,
+and includes no scripts, external assets or active links. The official CalQuity wordmark is packaged
+with Rung and embedded as a data image; its CSP permits data images only. Slate blue, light surfaces
+and native editable HTML carry the brand. The headline is the check count; the numerical score is secondary.
+Report writing is atomic, rejects
+symbolic links and unrelated existing files, and is restricted to the score cache or a location
+outside the project. The destination is checked before and after executing repository commands.
+The HTML file is not itself a verdict. This command adds no numeric merge threshold; exit 1
+means no checks are configured, a configured check is not fresh and passing, or the ledger is corrupt.
+
+Additive score fields `assessments` and `test_results` describe dedicated declared scanners, runtime
+and static tooling, and current structured case counts. `stats.review_required` counts failed shortcut
+checks that need a human decision; it does not change exit codes or exclude those checks from the score.
+Check rows include an `assessment` and optional `test_results`. Missing dedicated scanner presets are
+disclosed even when a dependency-existence check is configured; custom checks may need manual review.
+Whole-suite test strength and line coverage remain unassessed by this report. `test_results` aggregates
+only current pytest JUnit counts and lists reporting suites; it is null when no such data exists.
+Historical case counts remain attached to the stale check, with a previous-results label.
+
 ## The ladder
 
 | Rung | Check kind | Evidence |
