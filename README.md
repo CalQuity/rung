@@ -116,6 +116,39 @@ if it still passes after the application sources in the copy are deliberately br
 
 ## Your project's verification kit
 
+### A plain-language HTML report
+
+```bash
+rung score-my-code                    # run configured checks and write the report
+rung score-my-code --no-run           # read saved results without running checks
+rung score-my-code --base origin/main # set the scanner comparison base
+```
+
+Open `.rung/cache/score/index.html`. The offline CalQuity-branded page shows current
+passing checks, failures, execution errors, stale evidence, verification gaps and next
+steps. Shortcut findings remain review-required failures until resolved. `--json`
+returns structured results and `report_path`.
+
+The Rung score is `100 * fresh passing checks / configured checks`, rounded. It measures
+configured-check health. Missing verification areas are disclosed separately; the score
+does not measure overall code quality, test strength, security or coverage. Compare only
+the same check definitions. Empty configurations have no score.
+
+The report includes checker durations, wall time, slowest checks and structured pytest
+pass/skip rates. Saved timings can come from different runs; their sum is not one run's
+wall time. Stale results and external captures do not contribute current timing metrics.
+Test counts cover reporting suites only; overlapping suites may count cases more than once.
+
+The command runs existing `rung.toml` checks with their ordinary side effects. It does not
+draft tests, install tools or invoke a model. External captures are labeled and not rerun.
+It writes the report even when checks fail. Empty configurations, checks without a fresh
+passing result and corrupt ledgers return `1`. The score introduces no merge threshold.
+
+Use `--out /absolute/path/outside-the-project/report.html` to export. Relative paths use
+the project root. In-project output is restricted to `.rung/cache/score/`; links and
+unrelated existing files are rejected. Regenerate the snapshot after source edits.
+See [report contracts](docs/DESIGN.md#configured-check-health-reports) for field definitions.
+
 Each part catches what the others miss, and `rung kit` shows them side by side:
 
 | Part | What it catches | Built from |
@@ -534,6 +567,49 @@ To run the same check before every push, add Rung to `.pre-commit-config.yaml`:
     - id: rung-check
 ```
 
+## Investigate changed code and unreliable tests
+
+These explicit diagnostics use an existing pytest command check and keep separate evidence.
+They never replace ordinary verdicts, run automatically during checks or change the score.
+
+```bash
+rung coverage tests --source src --base origin/main
+rung coverage tests --source src --base origin/main --fail-under 90
+rung flaky tests                         # five attempts, 600-second budget
+rung flaky tests --attempts 10 --budget 300 --fail-on-flaky
+rung score-my-code --no-run              # display saved diagnostics
+```
+
+`tests` is a check ID in `rung.toml`. Use the actual project-relative source directory and
+repeat `--source` for multiple directories. Coverage requires pytest-cov in that check's
+Python environment; Rung does not install it.
+
+Coverage measures changed executable Python lines against the target's merge base, including
+local and nonignored new files. Deleted lines, comments and blanks are not opportunities;
+exclusions remain visible, missing source records are unmeasured, and zero opportunities
+means N/A. This measures selected-line execution, not branch coverage or assertion strength.
+Existing project coverage policies still apply. Use a pytest check without coverage CLI or
+addopts flags; conflicting coverage options and incompatible launchers are diagnosed.
+
+Repeated tests use fresh processes with the same selection. Exact parameterized identities,
+lifecycle outcomes, skips/expected failures and logs are retained. Identical subtest contexts
+are compared as groups with occurrence counts; they cannot identify individual unnamed
+children. Changing group counts makes the comparison incomplete. No clean sample proves
+stability. Fresh processes do not reset files, services or databases; isolate side effects.
+
+Valid measurements are advisory. `--fail-under` returns `1` below the requested coverage;
+`--fail-on-flaky` returns `1` for observed intermittent failures. Consistent ordinary failures
+in repeated-test diagnosis also return `1`. Failed coverage runs, missing tools and incomplete evidence return
+`2`. `--attempts` is at least two; `--budget` and coverage `--timeout` are positive seconds.
+Native retry/repeat/random-order plugins, cache selection, early exits and active xdist are
+unsupported. Normal `-k` and `-m` selection is retained.
+
+Evidence lives under `.rung/evidence/diagnostics/`, bound to source/configuration bytes,
+check definitions, comparison context and artifact hashes. Edits make saved results historical;
+changes during execution make them incomplete. Text redaction is best effort, and logs retain
+bounded output tails. Review artifacts before sharing.
+See [diagnostic contracts](docs/DESIGN.md#explicit-pytest-diagnostics).
+
 ## With coding agents
 
 `rung agents` installs CLI workflows in `.claude/skills/` and `.agents/skills/` and adds a
@@ -546,6 +622,49 @@ rung plan --changed --base origin/main --json
 rung check --changed --base origin/main --json
 rung report --json
 ```
+
+### Test failure paths with your agent
+
+`rung agents` installs **rung-failure-path** for Codex and Claude Code. Ask your agent:
+
+```text
+Use rung-failure-path to test whether a rejected save leaves the cache and stored data consistent.
+```
+
+The skill guides the agent to establish the intended behavior, create isolated tests with
+synthetic data, prove the injected failure was reached, and check the error and state afterward.
+It includes passing controls, cleanup, timeout and retry considerations, and recording a Rung
+verdict. For fixes, it points to `rung prove` to establish the regression before and after.
+An ambiguous contract or a test setup error is not treated as a confirmed bug.
+
+This is an agent skill, not a `rung-failure-path` CLI command. Installing it runs no fault
+experiments and adds no dependencies. The [Python example](examples/failure-path/store.py)
+compares a deliberately faulty save with a corrected version. Run it from the repository root:
+
+```bash
+python -m unittest discover -s examples/failure-path -p 'test_*.py' -v
+```
+
+Its five passing demonstration tests confirm that the faulty cache update is detected and a
+rejected write preserves state in the corrected version. This is an artificial example;
+it does not establish crash durability, partial-write recovery or production atomicity.
+
+### Report reproduced findings with the issue skill
+
+`rung agents` also installs **rung-issue** for both Claude Code and Codex. Ask the agent to
+use that skill when a check exposes a reproducible defect. It verifies the scenario against
+current code, checks the affected repository for duplicate issues, and prepares a report with
+expected and actual behavior, reproduction steps, environment, redacted evidence and a
+recommended fix. Untested fixes are labeled as proposals.
+
+With permission to publish to the affected repository, the agent creates a GitHub issue and
+reads it back before sharing its URL. Without that permission, it keeps a local draft for review.
+Missing tools and stale results require diagnosis first; they are not automatically application
+bugs. Suspected vulnerabilities follow the repository's private security-reporting instructions.
+The skill uses GitHub CLI or an available GitHub integration. Installing skills, running checks
+and generating a score report do not publish anything automatically.
+
+### Optional Stop hooks
 
 `rung agents --hooks` installs the Claude Code Stop hook. For Codex, use
 `rung agents --codex-hooks` and review the project hook with `/hooks` in Codex.
@@ -576,6 +695,7 @@ any OpenAI-compatible endpoint, including local models. Rung never stores creden
 | `rung gate [--base REF] [--executor local\|daytona]` | Re-run the merge checks after policy preflight |
 | `rung status [--require-fresh]` | Fresh, stale, failing; `--require-fresh` (alias `--ci`) exits 1 unless all fresh |
 | `rung report [--format md\|json]` | Checks, laws, new findings and fix proofs |
+| `rung score-my-code [--no-run] [--base REF] [--out PATH]` | Run configured checks and write an offline HTML report with an explained configured-check health score |
 | `rung prove 'pytest tests/test_x.py'` | Show a test fails without the fix and passes with it. Pytest and Node can report individual cases. |
 | `rung laws [--approve ID]` | Which laws hold |
 | `rung add <kind> <id> ...` | Declare a `command`, `evidence`, `scan` or `deps` check |

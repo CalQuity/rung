@@ -3,6 +3,20 @@
 All notable changes to Rung. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 
+## Unreleased
+
+### Added
+- `rung score-my-code`: offline HTML/JSON reports of configured-check health, failures,
+  errors, stale evidence, missing verification areas and next steps. Includes CalQuity
+  styling, checker timings and scoped pytest pass/skip metrics. `--no-run` reads saved
+  evidence; the score is not an overall code-quality grade or merge threshold.
+- Explicit pytest diagnostics: `rung coverage CHECK --source PATH` measures changed
+  executable lines; `rung flaky CHECK` retains repeated outcomes. Both preserve ordinary
+  verdicts, bind evidence to inputs and support opt-in failure policies.
+- `rung-issue` and `rung-failure-path` agent skills for Codex and Claude Code: report
+  reproduced findings within publishing authorization, and test isolated failure scenarios
+  with passing controls and state checks. Includes a rejected-write consistency example.
+
 ## 0.4.0 (2026-11-06)
 
 ### Added

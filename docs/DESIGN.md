@@ -33,6 +33,44 @@ exact code it covers, and it should expire on its own.**
    the line protocol are the contract. Any tool, agent or future reimplementation can
    read and write them.
 
+## Configured-check health reports
+
+`rung score-my-code` executes every declared check through the existing runner and writes a
+standalone HTML page to `.rung/cache/score/index.html`. `--no-run` reads existing verdicts instead;
+it still evaluates freshness. Optional `--base` supplies the scanner comparison and required
+verdict context. A missing or mismatched base context cannot earn score credit.
+
+The score is the nearest whole number to `100 * fresh passing / configured`, with every check
+weighted equally. Zero checks yields no score, not 100. Stale, drifted, unrun, failed and errored
+checks earn no credit. Corrupt ledger records are untrusted. Missing check categories do not enter
+the denominator and must be disclosed separately; the score is not a measure of code quality,
+test strength, line coverage or bug absence. The check-set fingerprint hashes sorted IDs and
+existing definition hashes so consumers can identify changes to the scoring denominator.
+
+The version-1 JSON payload extends the ordinary report with `score`, `stats`, `categories`,
+`check_set_digest`, `generated_at`, `ran_checks`, `elapsed_seconds`, `comparison_base`, `passed`
+and `report_path`. Check rows additionally carry `category`, original `verdict`, a plain-language
+`explanation`, `diagnostics`, `next_step` and invocation-only `elapsed_seconds`. New findings carry
+`current` so old findings can be distinguished from current evidence. No test-case counts are
+inferred from arbitrary text output. Category assignment reuses the kit's check classification;
+it does not establish behavioral coverage.
+
+The renderer escapes source/checker text, applies best-effort redaction and includes no scripts,
+external assets or active links. The packaged wordmark uses a data image permitted by its CSP.
+Report writing is atomic, rejects symbolic links and unrelated existing files, and uses the score
+cache or a location outside the project. The destination is checked before and after executing repository commands.
+The HTML file is not itself a verdict. This command adds no numeric merge threshold; exit 1
+means no checks are configured, a configured check is not fresh and passing, or the ledger is corrupt.
+
+Additive score fields `assessments` and `test_results` describe dedicated declared scanners, runtime
+and static tooling, and current structured case counts. `stats.review_required` counts failed shortcut
+checks that need a human decision; it does not change exit codes or exclude those checks from the score.
+Check rows include an `assessment` and optional `test_results`. Missing dedicated scanner presets are
+disclosed even when a dependency-existence check is configured; custom checks may need manual review.
+Whole-suite test strength and line coverage remain unassessed by this report. `test_results` aggregates
+only current pytest JUnit counts and lists reporting suites; it is null when no such data exists.
+Historical case counts remain attached to the stale check, with a previous-results label.
+
 ## The ladder
 
 | Rung | Check kind | Evidence |
@@ -297,3 +335,84 @@ resolved launcher identities, with no environment variables in the shared verdic
 such as terminal or CI bookkeeping variables does not prevent reuse. It includes symlinks along a launcher path and their targets. Rung reruns
 checks when a package runner manages the delegated tool environment and its identity is unavailable
 before execution. The merge gate always reruns its checks.
+
+### Reporting confirmed findings
+
+`rung agents` distributes the `rung-issue` skill from `guides/issue.md` to both supported
+agent skill directories. Its workflow covers reproduction, destination selection, duplicate
+search, a detailed issue draft and creation/readback within the user's publishing authorization.
+The skill does not add network calls to checking or report rendering. Execution errors and stale
+evidence require diagnosis before a defect claim. Sensitive findings follow the target
+repository's security-reporting route.
+
+### Execution metrics
+
+The runner records monotonic `details.execution_seconds` for the checker call, including setup
+and subprocesses but excluding input snapshots, ledger serialization and HTML generation.
+Failures and execution errors retain durations. Reused external captures are not executions.
+The score command's `elapsed_seconds` remains the sequential verification-loop wall time,
+including its surrounding bookkeeping up to report assembly.
+
+Score rows add `recorded_elapsed_seconds`; invocation-only `elapsed_seconds` retains its existing
+meaning and is null in saved-results mode. The `timing` object includes the mode, wall time,
+measured/unmeasured counts, sum, mean, median, slowest check, failed/error time and a sorted
+breakdown with shares. Saved timing excludes stale, drifted, invalid and external results, and
+discloses that receipts can come from different runs. Legacy or non-finite, negative or boolean
+durations are unavailable. Stale check details retain labeled historical measurements.
+
+`test_metrics` derives total and non-skipped cases from current structured reports. Pass rate
+is passed / (passed + failed + errors); skip rate is skipped / all cases. Empty denominators
+yield null, not a perfect percentage. Test percentages do not imply coverage or suite strength.
+
+### Explicit pytest diagnostics
+
+`rung coverage CHECK --source PATH` and `rung flaky CHECK` operate on an existing
+pytest command check. They are explicit diagnostics: ordinary checks and gates do
+not invoke them, and diagnostic runs never replace ordinary verdicts or alter the
+configured-check health score. No new Rung runtime dependency is introduced;
+coverage collection requires pytest-cov in the selected check's environment.
+
+Diagnostic JSON has `schema_version: 1`, `kind`, `check_id`, `state`, `summary`,
+`errors`, `metrics`, `exit_code`, execution parameters, and a managed `manifest_path`.
+Artifacts are stored in unique runs beneath `.rung/evidence/diagnostics/`. Manifests
+bind input bytes, on-disk configuration, the selected check definition, Git HEAD,
+comparison context and artifact hashes. `content_digest` detects accidental manifest
+edits; it is not a signature against a hostile repository. Source/configuration or
+comparison changes during execution make evidence incomplete. Saved results are
+historical when inputs, artifacts, definitions or comparison context no longer match.
+Text redaction is best effort; binary artifacts, if retained, are explicitly listed
+as unredacted. Review evidence before sharing it.
+
+Coverage records `files` with changed, executable, covered, missing and excluded line
+numbers and an unmeasured flag. Metrics sum covered and total changed executable
+statements; `percent` is null when there are no execution opportunities. The selected
+Git target is retained as `parameters.base_ref`, with its exact merge-base SHA in
+`parameters.base`. Local and nonignored untracked Python source is included. Missing
+source records remain unmeasured, never inferred as covered. Coverage-tool policy is
+preserved. A complete advisory measurement exits 0, an explicit `--fail-under` breach
+exits 1, and failed tests or incomplete execution/measurement exit 2. No changed
+executable lines means `not_applicable`, not 100% coverage.
+
+Repeated-test results retain `attempts` with command, cwd, duration, exit, environment
+and report/log paths. `cases` retain exact parameterized identities, outcomes,
+classification and `identity_scope`. Distinct subtest contexts are represented with
+typed values; identical repeated contexts are explicitly compared as `subtest_group`
+with `observation_counts`. Raw member reports remain available. Changed group counts
+are incomplete; groups cannot identify which individual unnamed child varied.
+Skips, expected failures and lifecycle/collection errors are separate from ordinary
+pass/fail votes. Native retries/repeats, random ordering, cache-based selection,
+early exits and active xdist workers are unsupported and diagnosed.
+
+Five fresh processes and a 600-second execution budget are the defaults, configurable
+with `--attempts` and `--budget`. Consistent ordinary failures exit 1. Intermittent
+ordinary failures are advisory unless `--fail-on-flaky` is supplied. Incomplete
+attempts return 2. Fresh processes do not reset external state, and a clean sample
+does not prove a test is never flaky.
+
+Score JSON adds `diagnostics`, containing the newest saved result per kind/check,
+with `current` and `stale_reasons`. A current complete coverage measurement sets
+`assessments.line_coverage` to `changed_lines_measured`; whole-project coverage and
+assertion strength remain unassessed. HTML displays scoped metrics, attempt timings,
+outcome matrices, warnings and evidence paths. Large case lists are capped in the
+page with attention items first; the manifest retains every case. `--no-run` only
+reads saved evidence and does not execute diagnostic commands.

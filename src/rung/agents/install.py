@@ -42,9 +42,22 @@ Use your terminal tool. Check `rung --version` first. From another directory, us
 5. Use `rung report --json` to report fresh checks, remaining gaps, and evidence. When
    asked to verify merge readiness, run `rung gate --base <target> --json`. Send
    protected policy changes, law approvals and waivers to a person for review.
+6. When a check exposes a reproduced defect, use the rung-issue skill to prepare an actionable
+   GitHub issue. Follow the user's publishing instructions; checks never publish on their own.
+7. When testing failed writes, timeouts or retries, use rung-failure-path to check
+   the operation's error response and state after failure with isolated fixtures.
 """
 
 SKILLS = {
+    "rung-failure-path": (
+        "Use when testing failed writes, timeouts, retries, interrupted operations, "
+        "or inconsistent state after an error in a state-changing operation."
+    ),
+    "rung-issue": (
+        "Use when a Rung check exposes a reproduced defect that needs a GitHub issue, "
+        "a failing scenario needs to be documented for maintainers, or a finding needs "
+        "triage before reporting it to the affected repository."
+    ),
     "rung": (
         "Verify changes with Rung (laws, scans, TLA+, Lean, differential tests, evidence ledger). Use before "
         "declaring any change done, when a check fails or goes stale, when fixing a bug, or when adding a "
@@ -94,6 +107,8 @@ def install(
     rules = guides.load("rules")
     bodies = {
         "rung": USAGE.format(rules=rules),
+        "rung-failure-path": guides.load("failure-path"),
+        "rung-issue": guides.load("issue"),
         "rung-tla": guides.load("tla"),
         "rung-property": guides.load("property"),
         "rung-lean": guides.load("lean", lean_version=lean_version),

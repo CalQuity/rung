@@ -67,6 +67,7 @@ def tail(result: subprocess.CompletedProcess[str], lines: int = 15) -> list[str]
 
 def _run(
     ctx: Context, check: Check, env: dict[str, str] | None = None, *, argv: list[str] | None = None,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:  # fmt: skip
     reserved = {"RUNG_EVIDENCE_DIR", "RUNG_SEED", "RUNG_FAULTS", "RUNG_SCENARIOS"}
     source = os.environ if ctx.environment is None else ctx.environment
@@ -75,7 +76,7 @@ def _run(
         [*ctx.command_prefix, *(argv or shlex.split(check.require("run")))],
         cwd=ctx.root / check.get("cwd", "."),
         env=inherited | (env or {}),
-        timeout=check.get_int("timeout", 1800),
+        timeout=check.get_int("timeout", 1800) if timeout is None else timeout,
     )
 
 
@@ -214,16 +215,37 @@ class CommandChecker(Checker):
                 else:
                     args = [*argv, option]
             result = _run(ctx, check, argv=args)
-            if result.returncode:
-                return Outcome("fail", f"pytest exited {result.returncode}", tail(result))
             try:
                 cases = list(ET.parse(report).iter("testcase"))
             except (OSError, ET.ParseError):
+                if result.returncode:
+                    return Outcome("fail", f"pytest exited {result.returncode}", tail(result))
                 return Outcome("error", "pytest exited zero without a usable case report", tail(result))
-            passed = sum(not {node.tag for node in case} & {"skipped", "error", "failure"} for case in cases)
+            counts = {"passed": 0, "failed": 0, "errors": 0, "skipped": 0}
+            for case in cases:
+                tags = {node.tag for node in case}
+                key = next(
+                    (
+                        name
+                        for tag, name in (("error", "errors"), ("failure", "failed"), ("skipped", "skipped"))
+                        if tag in tags
+                    ),
+                    "passed",
+                )
+                counts[key] += 1
+            details = {"test_results": {"runner": "pytest", **counts}}
+            if result.returncode:
+                return Outcome("fail", f"pytest exited {result.returncode}", tail(result), details=details)
+            if counts["failed"] or counts["errors"]:
+                return Outcome(
+                    "fail", "pytest case report contains failures despite exit zero", tail(result), details=details
+                )
+            passed = counts["passed"]
             if not passed:
-                return Outcome("fail", "pytest exited zero but reported no passing test cases", tail(result))
-            return Outcome("pass", f"pytest passed with {passed} passing test case(s)", tail(result))
+                return Outcome(
+                    "fail", "pytest exited zero but reported no passing test cases", tail(result), details=details
+                )
+            return Outcome("pass", f"pytest passed with {passed} passing test case(s)", tail(result), details=details)
 
 
 def evidence_dir(root: Path, check_id: str) -> Path:

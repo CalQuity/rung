@@ -138,6 +138,19 @@ def build_parser(*, json_errors: bool = False) -> argparse.ArgumentParser:
     s.add_argument("--seed", type=int, help="(evidence) run one seed only, to reproduce a failure; not recorded")
     s.add_argument("--scenario", action="append", metavar="NAME",
                    help="(evidence) run only this scenario of the drive script (repeatable); not recorded")  # fmt: skip
+
+    s = add("coverage", "cmd_coverage", "measure changed Python lines with a fresh pytest coverage run")
+    s.add_argument("check", help="configured pytest command check ID")
+    s.add_argument("--source", action="append", help="required project-relative source directory (repeatable)")
+    s.add_argument("--base", help="comparison target (default: repository default branch)")
+    s.add_argument("--fail-under", type=float, help="explicit minimum changed-line percentage; advisory when absent")
+    s.add_argument("--timeout", type=float, default=600, help="maximum run time in seconds (default: 600)")
+
+    s = add("flaky", "cmd_flaky", "repeat one configured pytest command and retain each observed outcome")
+    s.add_argument("check", help="configured pytest command check ID")
+    s.add_argument("--attempts", type=int, default=5, help="complete command attempts, at least 2 (default: 5)")
+    s.add_argument("--budget", type=float, default=600, help="total time budget in seconds (default: 600)")
+    s.add_argument("--fail-on-flaky", action="store_true", help="return failure for observed intermittent cases")
     s = add("gate", "cmd_gate", "re-run the merge checks under reviewed policy")
     s.add_argument("ids", nargs="*", help="checks to run (default: all declared checks)")
     s.add_argument("--base", help="target branch (default: the repository's default branch)")
@@ -162,6 +175,12 @@ def build_parser(*, json_errors: bool = False) -> argparse.ArgumentParser:
     s = add("status", "cmd_status", "show which verdicts are fresh, stale or failing")
     s.add_argument("--require-fresh", "--ci", dest="ci", action="store_true",
                    help="exit 1 unless every verdict is fresh")  # fmt: skip
+    s = add("score-my-code", "cmd_score_my_code", "run configured checks and write an explainable HTML score report")
+    s.add_argument("--no-run", action="store_true", help="report saved results without executing any checks")
+    s.add_argument("--base", help="Git ref for scanner comparison and verdict context")
+    s.add_argument(
+        "--out", help="HTML path inside .rung/cache/score/ or outside the project (relative to project root)"
+    )
     s = add("report", "cmd_report", "summarize checks, laws, new findings and fix proofs")
     s.add_argument("--format", choices=["md", "json"], default="md")
     s.add_argument("--evidence-url", help="where the evidence files can be downloaded (e.g. a CI artifact)")
