@@ -103,6 +103,7 @@ def render(data: dict[str, Any]) -> str:
         out.append(f'<div class="card"><div class="muted">{label}</div><div class="metric">{value}</div></div>')
     out.append("</div>")
     out += _timing(data["timing"])
+    out += _diagnostics(data.get("diagnostics", []))
     out += [
         "<h2>Issues and next steps</h2>",
         "<p>A failed check needs investigation; it is not a count of confirmed bugs. "
@@ -136,7 +137,8 @@ def render(data: dict[str, Any]) -> str:
     out += [
         '</div><h2>Code quality and test strength</h2><p class="notice">Not assessed as an overall grade. '
         "Static checks report their own rules; a passing test suite does not establish strong tests. "
-        "This report does not calculate line coverage, a suite-wide mutation score or maintainability.</p>",
+        "Saved changed-line diagnostics are scoped evidence, not whole-project coverage. "
+        "This report does not calculate a suite-wide mutation score or maintainability.</p>",
         "<h2>All check details</h2>",
     ]
     out += [_check(row) for row in rows]
@@ -189,7 +191,12 @@ def _gaps(assessments: dict[str, str]) -> str:
     ):
         if assessments[key] == "not_configured":
             gaps.append(label)
-    gaps += ["Test strength: not assessed across the whole suite", "Line coverage: not measured by this report"]
+    gaps += ["Test strength: not assessed across the whole suite"]
+    gaps.append(
+        "Changed-line coverage measured separately; whole-project coverage not assessed"
+        if assessments.get("line_coverage") == "changed_lines_measured"
+        else "Line coverage: not measured by this report"
+    )
     return (
         '<div class="scope"><h3>What this result does not establish</h3><ul>'
         + "".join(f"<li>{_text(gap)}</li>" for gap in gaps)
@@ -206,6 +213,95 @@ def _duration(seconds: float | None) -> str:
         return "<0.01s"
     seconds = round(seconds, 2)
     return f"{int(seconds // 60)}m {seconds % 60:.2f}s" if seconds >= 60 else f"{seconds:.2f}s"
+
+
+def _diagnostics(items: list[dict[str, Any]]) -> list[str]:
+    out = [
+        "<h2>Test diagnostics</h2>",
+        "<p>Explicit diagnostic runs are separate from configured-check health. "
+        "They do not replace normal verdicts or change the Rung score.</p>",
+    ]
+    if not items:
+        return [
+            *out,
+            "<p>No saved diagnostic evidence. Use rung coverage or rung flaky to investigate a pytest check.</p>",
+        ]
+    for item in items:
+        coverage = item["kind"] == "coverage"
+        title = "Changed-line coverage" if coverage else "Repeated-test diagnosis"
+        status = "Current" if item["current"] else "Historical / unusable"
+        metrics = item.get("metrics", {})
+        out.append(f"<details open><summary>{title} · {_text(item['check_id'])} · {status}</summary>")
+        out.append(f"<p><strong>{_text(item['state'])}</strong> · {_text(item['summary'])}</p>")
+        for reason in [*item.get("stale_reasons", []), *item.get("errors", []), *item.get("warnings", [])]:
+            out.append(f'<p class="notice">{_text(reason)}</p>')
+        if coverage:
+            percent = metrics.get("percent")
+            number = f"{percent:.2f}%" if isinstance(percent, (int, float)) else "Not applicable / unmeasured"
+            out.append(
+                f"<p><strong>{_text(number)}</strong> · {_text(metrics.get('covered', '—'))} of "
+                f"{_text(metrics.get('total', '—'))} changed executable lines exercised.</p>"
+            )
+            out.append("<p>This is not whole-project coverage, branch coverage or evidence of strong assertions.</p>")
+            for file in item.get("files", []):
+                missing = ", ".join(map(str, file.get("missing_lines", []))) or "None recorded"
+                label = "Unmeasured" if file.get("unmeasured") else f"Missing changed lines: {missing}"
+                out.append(f"<p><code>{_text(file['path'])}</code> · {_text(label)}</p>")
+        else:
+            out.append(
+                f"<p>{_text(metrics.get('attempts_completed', 0))} of "
+                f"{_text(metrics.get('attempts_requested', '—'))} attempts completed. "
+                f"{_text(metrics.get('flaky_cases', 0))} cases with intermittent failure observed.</p>"
+            )
+            out.append(
+                "<p>No variability observed does not prove a test is non-flaky. Fresh processes do not reset "
+                "files, databases, services or wall-clock state.</p>"
+            )
+            if item.get("attempts"):
+                out.append(
+                    '<div class="table-wrap"><table><thead><tr><th>Attempt</th><th>State</th>'
+                    "<th>Exit code</th><th>Duration (seconds)</th></tr></thead><tbody>"
+                )
+                for attempt in item["attempts"]:
+                    duration = attempt.get("duration_seconds")
+                    seconds = f"{duration:.2f}" if isinstance(duration, (int, float)) else "—"
+                    out.append(
+                        f"<tr><td>{_text(attempt['index'])}</td><td>{_text(attempt['state'])}</td>"
+                        f"<td>{_text(attempt.get('exit_code'))}</td><td>{_text(seconds)}</td></tr>"
+                    )
+                out.append("</tbody></table></div>")
+            cases = item.get("cases", [])
+            if cases:
+                selected = sorted(cases, key=lambda case: case.get("classification") == "no_variability")[:100]
+                if len(cases) > len(selected):
+                    out.append(
+                        f"<p>Showing {len(selected)} of {len(cases)} cases, with attention items first. "
+                        "The evidence manifest retains every case and attempt.</p>"
+                    )
+                out.append(
+                    '<div class="table-wrap"><table><thead><tr><th>Exact test case</th>'
+                    "<th>Classification</th><th>Attempts</th></tr></thead><tbody>"
+                )
+                for case in selected:
+                    scope = case.get("identity_scope", "test")
+                    detail = ""
+                    if scope in {"subtest", "subtest_group"}:
+                        label = "Subtest group" if scope == "subtest_group" else "Subtest"
+                        counts = ", ".join(map(str, case.get("observation_counts", [])))
+                        detail = f"<br><small>{label} · Observations per attempt: {_text(counts)}</small>"
+                    states = ", ".join(
+                        f"{entry['attempt']}: {entry['state']}" if isinstance(entry, dict) else f"{index}: {entry}"
+                        for index, entry in enumerate(case.get("outcomes", []), 1)
+                    )
+                    out.append(
+                        f"<tr><td>{_text(case['id'])}{detail}</td><td>{_text(case['classification'])}</td>"
+                        f"<td>{_text(states)}</td></tr>"
+                    )
+                out.append("</tbody></table></div>")
+        if item.get("manifest_path"):
+            out.append(f"<p><small>Evidence: {_text(item['manifest_path'])}</small></p>")
+        out.append("</details>")
+    return out
 
 
 def _timing(timing: dict[str, Any]) -> list[str]:

@@ -6,6 +6,9 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 ## Unreleased
 
 ### Added
+- Explicit `rung coverage CHECK --source PATH` and `rung flaky CHECK` diagnostics for pytest:
+  changed executable-line measurements, retained repeat-run outcomes, source/artifact freshness,
+  opt-in failure policies, and saved HTML/JSON reporting separate from configured-check health.
 - `rung-failure-path` skill for Codex and Claude Code: isolated failure tests with passing
   controls, reached-boundary assertions, state checks, recorded verdicts and regression proofs.
   Includes a standard-library Python example of a rejected write and cache consistency.

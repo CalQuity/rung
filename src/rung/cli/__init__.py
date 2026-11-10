@@ -138,6 +138,19 @@ def build_parser(*, json_errors: bool = False) -> argparse.ArgumentParser:
     s.add_argument("--seed", type=int, help="(evidence) run one seed only, to reproduce a failure; not recorded")
     s.add_argument("--scenario", action="append", metavar="NAME",
                    help="(evidence) run only this scenario of the drive script (repeatable); not recorded")  # fmt: skip
+
+    s = add("coverage", "cmd_coverage", "measure changed Python lines with a fresh pytest coverage run")
+    s.add_argument("check", help="configured pytest command check ID")
+    s.add_argument("--source", action="append", help="required project-relative source directory (repeatable)")
+    s.add_argument("--base", help="comparison target (default: repository default branch)")
+    s.add_argument("--fail-under", type=float, help="explicit minimum changed-line percentage; advisory when absent")
+    s.add_argument("--timeout", type=float, default=600, help="maximum run time in seconds (default: 600)")
+
+    s = add("flaky", "cmd_flaky", "repeat one configured pytest command and retain each observed outcome")
+    s.add_argument("check", help="configured pytest command check ID")
+    s.add_argument("--attempts", type=int, default=5, help="complete command attempts, at least 2 (default: 5)")
+    s.add_argument("--budget", type=float, default=600, help="total time budget in seconds (default: 600)")
+    s.add_argument("--fail-on-flaky", action="store_true", help="return failure for observed intermittent cases")
     s = add("gate", "cmd_gate", "re-run the merge checks under reviewed policy")
     s.add_argument("ids", nargs="*", help="checks to run (default: all declared checks)")
     s.add_argument("--base", help="target branch (default: the repository's default branch)")
