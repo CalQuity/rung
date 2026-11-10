@@ -8,6 +8,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 
 from rung.checks import registry
 from rung.checks.base import Context, Outcome
@@ -179,6 +180,7 @@ def run_check(
     checked_definition = definition(check, root)
     # A covered link that points outside the project is recorded by its target path, never followed:
     # pointing it somewhere else stales the verdict, but what it points at is not part of the evidence.
+    started = perf_counter()
     try:
         context = Context(root=root, base=base, seed=seed, scenarios=scenarios, merge_gate=merge_gate)
         external = [p for snapshot in before for p, digest in snapshot.items() if digest.startswith("external-link:")]
@@ -188,6 +190,7 @@ def run_check(
             outcome = checker.run(context, check)
     except (RungError, OSError, subprocess.TimeoutExpired) as exc:
         outcome = Outcome("error", str(exc))
+    outcome.details["execution_seconds"] = round(perf_counter() - started, 6)
     # Hash before and after: a file edited mid-run must not be recorded as verified.
     after = (ledger.snapshot(root, cover_patterns), ledger.snapshot(root, specs(check, root)))
     if definition(check, root) != checked_definition:

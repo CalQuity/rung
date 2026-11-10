@@ -6,6 +6,9 @@ and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 ## Unreleased
 
 ### Added
+- Execution metrics in HTML reports: persisted checker durations, wall-clock time, slowest-first
+  breakdowns, average/median duration, failed-check time and scoped test pass/skip rates. Saved
+  views label recorded timings and exclude stale evidence from current summaries.
 - `rung-issue` agent skill for reproduced findings: duplicate checks, detailed reproduction and
   evidence, proposed fixes, and GitHub issue creation within the user's publishing authorization.
 - Score reports use the official CalQuity wordmark and slate palette, put the check count first,

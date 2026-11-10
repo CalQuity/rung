@@ -35,6 +35,8 @@ code{overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere;back
 details{padding:16px 20px;margin:10px 0}summary{cursor:pointer;font-weight:650}summary .badge{margin-right:10px}
 .table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:12px 10px;
 text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}th{color:var(--muted)}
+.time-bar{height:6px;background:#F3F2EE;border-radius:4px;margin-top:7px;min-width:100px}
+.time-bar span{display:block;height:100%;background:var(--accent);border-radius:4px}
 footer{margin-top:36px;font-size:12px;color:var(--muted);overflow-wrap:anywhere}
 @media(max-width:640px){main{padding:24px 14px}
 .hero{grid-template-columns:1fr;padding:20px;gap:16px}.score{font-size:60px}}
@@ -86,7 +88,6 @@ def render(data: dict[str, Any]) -> str:
         if data["ran_checks"]
         else ("Saved-results view: no checks were executed. Freshness was evaluated when this page was generated.")
     )
-    elapsed = data["elapsed_seconds"]
     out += [
         f'<p class="muted">{mode} Generated {_text(data["generated_at"])}.</p>',
         '<div class="grid" aria-label="Check statistics">',
@@ -98,11 +99,12 @@ def render(data: dict[str, Any]) -> str:
         ("Execution errors", stats["errors"]),
         ("Stale or model drift", stats["stale"] + stats["drifted"]),
         ("Never run", stats["never"]),
-        ("Check execution time", f"{elapsed:.2f}s" if elapsed is not None else "Not measured"),
     ):
         out.append(f'<div class="card"><div class="muted">{label}</div><div class="metric">{value}</div></div>')
+    out.append("</div>")
+    out += _timing(data["timing"])
     out += [
-        "</div><h2>Issues and next steps</h2>",
+        "<h2>Issues and next steps</h2>",
         "<p>A failed check needs investigation; it is not a count of confirmed bugs. "
         "Review-required items may be intentional exceptions, but still need a documented decision.</p>",
     ]
@@ -197,6 +199,67 @@ def _gaps(assessments: dict[str, str]) -> str:
     )
 
 
+def _duration(seconds: float | None) -> str:
+    if seconds is None:
+        return "Not measured"
+    if 0 < seconds < 0.01:
+        return "<0.01s"
+    seconds = round(seconds, 2)
+    return f"{int(seconds // 60)}m {seconds % 60:.2f}s" if seconds >= 60 else f"{seconds:.2f}s"
+
+
+def _timing(timing: dict[str, Any]) -> list[str]:
+    title = "Execution timing" if timing["mode"] == "current" else "Recorded check timings"
+    out = [f"<h2>{title}</h2>"]
+    if not timing["measured_checks"]:
+        return [
+            *out,
+            "<p>No current timings available. Run the checks to record execution durations. "
+            "Older receipts, stale results and external captures do not supply current timing metrics.</p>",
+        ]
+    out.append(
+        f"<p>{timing['measured_checks']} checks timed; {timing['unmeasured_checks']} without current timing. "
+        "Checker time measures the verification tool call, including its setup and subprocesses. "
+        "It excludes Rung's input snapshots, ledger writes and HTML generation.</p>"
+    )
+    if timing["mode"] == "recorded":
+        out.append(
+            '<p class="notice">No checks ran for this page. These durations may come from different runs; '
+            "their sum is not a single run's wall-clock time. Only results matching their current inputs "
+            "contribute. Previous timings remain in stale check details.</p>"
+        )
+    else:
+        out.append(
+            "<p>Wall-clock run time includes the sequential checks and Rung's surrounding bookkeeping, "
+            "up to report assembly. It excludes HTML generation and writing.</p>"
+        )
+    slowest = timing["slowest_check"]
+    out.append('<div class="grid" aria-label="Execution timing metrics">')
+    for label, value in (
+        ("Wall-clock run time", _duration(timing["wall_seconds"])),
+        ("Combined checker time", _duration(timing["total_check_seconds"])),
+        ("Average per timed check", _duration(timing["average_seconds"])),
+        ("Median per timed check", _duration(timing["median_seconds"])),
+        ("Slowest check", f"{slowest['id']} · {_duration(slowest['seconds'])}"),
+        ("Time in failed/error checks", _duration(timing["failed_check_seconds"])),
+    ):
+        out.append(f'<div class="card"><div class="muted">{label}</div><div class="metric">{_text(value)}</div></div>')
+    out.append(
+        '</div><div class="table-wrap"><table><thead><tr><th>Check, slowest first</th>'
+        "<th>Result</th><th>Checker time</th><th>Share of measured time</th><th>Recorded</th>"
+        "</tr></thead><tbody>"
+    )
+    for row in timing["checks"]:
+        share = row["share_percent"]
+        out.append(
+            f"<tr><td>{_text(row['id'])}</td><td>{_text(row['verdict'])}</td>"
+            f"<td>{_text(_duration(row['seconds']))}</td><td>{share:.1f}%"
+            f'<div class="time-bar" aria-hidden="true"><span style="width:{share}%"></span></div>'
+            f"</td><td>{_text(row['at'])}</td></tr>"
+        )
+    return [*out, "</tbody></table></div>"]
+
+
 def _test_results(data: dict[str, Any]) -> list[str]:
     results = data["test_results"]
     if results is None:
@@ -205,10 +268,23 @@ def _test_results(data: dict[str, Any]) -> list[str]:
         f"{results[k]} {label}"
         for k, label in (("passed", "passed"), ("failed", "failed"), ("errors", "errors"), ("skipped", "skipped"))
     )
+    metrics = data["test_metrics"]
+    rate = "Not available" if metrics["pass_rate_percent"] is None else f"{metrics['pass_rate_percent']:.1f}%"
+    skip = "Not available" if metrics["skip_rate_percent"] is None else f"{metrics['skip_rate_percent']:.1f}%"
     return [
+        '<div class="grid" aria-label="Recorded test metrics">'
+        '<div class="card"><div class="muted">Reported cases</div>'
+        f'<div class="metric">{metrics["total_cases"]}</div></div>'
+        '<div class="card"><div class="muted">Executed/error cases</div>'
+        f'<div class="metric">{metrics["executed_cases"]}</div></div>'
+        f'<div class="card"><div class="muted">Test pass rate</div><div class="metric">{rate}</div>'
+        "<small>Among reported executed cases, excluding skipped cases. "
+        "Failures and errors remain in the denominator.</small></div>"
+        f'<div class="card"><div class="muted">Skip rate</div><div class="metric">{skip}</div>'
+        "<small>Share of all reported cases. Skips are not counted as passes.</small></div></div>",
         f'<div class="notice"><strong>Recorded test results:</strong> {counts}'
         f"<br><small>From {results['suites']} reporting suite(s). Counts cover current structured reports only; "
-        "overlapping suites can count a test more than once. Other runners are excluded.</small></div>"
+        "overlapping suites can count a test more than once. Other runners are excluded.</small></div>",
     ]
 
 
@@ -238,7 +314,10 @@ def _check(row: dict[str, Any], *, expanded: bool = False) -> str:
     if row["at"]:
         out.append(f'<p class="muted">Recorded {_text(row["at"])} · kind: {_text(row["kind"])}</p>')
     if row["elapsed_seconds"] is not None:
-        out.append(f"<p>Execution time this run: {row['elapsed_seconds']:.2f}s</p>")
+        out.append(f"<p>Checker execution time this run: {_text(_duration(row['elapsed_seconds']))}</p>")
+    elif row["recorded_elapsed_seconds"] is not None:
+        label = "Previous execution time" if state in {"stale", "drifted"} else "Recorded execution time"
+        out.append(f"<p>{label}: {_text(_duration(row['recorded_elapsed_seconds']))}</p>")
     if results := row["test_results"]:
         prefix = "Previous test results" if state in {"stale", "drifted"} else "Test results"
         counts = " · ".join(f"{results[k]} {k}" for k in ("passed", "failed", "errors", "skipped"))
