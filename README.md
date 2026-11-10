@@ -119,58 +119,35 @@ if it still passes after the application sources in the copy are deliberately br
 ### A plain-language HTML report
 
 ```bash
-rung score-my-code                    # run all configured checks and write the HTML report
-rung score-my-code --no-run           # report saved results without running checks
-rung score-my-code --base origin/main # compare scanner findings against a Git base
+rung score-my-code                    # run configured checks and write the report
+rung score-my-code --no-run           # read saved results without running checks
+rung score-my-code --base origin/main # set the scanner comparison base
 ```
 
-Open `.rung/cache/score/index.html` in a browser. The CalQuity-branded offline page leads with
-**how many configured checks passed with current evidence**, followed by **verification health** (the Rung score),
-failed checks and execution errors, stale evidence, recorded new blocking scanner findings,
-verification areas, runtime scenario results, check output and next steps. It includes no remote
-assets or JavaScript. The official wordmark is embedded in the file. `--json` returns the same structured
-results plus `report_path`. Missing assessments appear beside the score. Dependency-existence checks
-do not stand in for secret or vulnerability scans, and the shortcut check does not count as a linter.
+Open `.rung/cache/score/index.html`. The offline CalQuity-branded page shows current
+passing checks, failures, execution errors, stale evidence, verification gaps and next
+steps. Shortcut findings remain review-required failures until resolved. `--json`
+returns structured results and `report_path`.
 
-Shortcut findings are labeled **review required**, with explanations that distinguish an intentional
-exception from a confirmed product defect. They still fail their configured check until resolved through
-the normal workflow; the report does not waive them. Pytest checks record passed, failed, errored and
-skipped cases from JUnit XML, including failing runs. Counts from current reporting suites are summed;
-overlapping suites can count a case more than once. Other runners and old receipts without structured
-counts are explicitly excluded. Stale case counts are labeled as previous results.
+The Rung score is `100 * fresh passing checks / configured checks`, rounded. It measures
+configured-check health. Missing verification areas are disclosed separately; the score
+does not measure overall code quality, test strength, security or coverage. Compare only
+the same check definitions. Empty configurations have no score.
 
-The score is **configured-check health**: `100 * fresh passing checks / configured checks`,
-rounded to the nearest integer. Each check has equal weight. It is **not an overall code-quality
-grade**, test-strength measure, security certification or code-coverage percentage. Missing check
-categories are shown as not assessed, separately from the score. Removing checks changes the
-denominator, so compare scores only for the same check definitions (the report includes their
-fingerprint). An empty configuration has no score.
+The report includes checker durations, wall time, slowest checks and structured pytest
+pass/skip rates. Saved timings can come from different runs; their sum is not one run's
+wall time. Stale results and external captures do not contribute current timing metrics.
+Test counts cover reporting suites only; overlapping suites may count cases more than once.
 
-The command runs the checks declared in `rung.toml`; review those commands before running them.
-It does not draft tests, install tools, change check definitions or invoke a model itself. Configured
-commands still have their ordinary side effects. Attested captures are labeled as external evidence,
-not rerun. It writes a report even when checks fail, returning `1` if any check lacks a fresh passing
-result or the ledger is corrupt. The number itself introduces no merge threshold.
+The command runs existing `rung.toml` checks with their ordinary side effects. It does not
+draft tests, install tools or invoke a model. External captures are labeled and not rerun.
+It writes the report even when checks fail. Empty configurations, checks without a fresh
+passing result and corrupt ledgers return `1`. The score introduces no merge threshold.
 
-To export, use `--out /absolute/path/outside-the-project/report.html`. Relative output paths are
-resolved from the directory containing `rung.toml`. Inside the project, output is restricted to
-`.rung/cache/score/` so writing the page cannot invalidate covered inputs. Existing unrelated files
-and symbolic links are rejected. The page is a snapshot; regenerate it after source edits. Execution
-times distinguish wall-clock run time from checker execution. The timing section shows combined,
-average and median checker duration, the slowest check, time spent in failed/error checks and a
-slowest-first breakdown with each check's share of measured time. Checker duration excludes
-input snapshots, ledger writes and HTML generation. Wall-clock time includes the sequential
-verification loop and its bookkeeping, up to report assembly, not HTML writing.
-
-Ordinary `rung check` executions also record their durations in the ledger. `--no-run` can show
-these as **recorded check timings**, which may come from different runs; their sum is not a
-single run's wall-clock time. Stale results, external captures and older receipts without timing
-do not contribute to that summary. A stale check retains its previous duration in the details.
-
-Structured test metrics show reported cases, executed/error cases, pass rate and skip rate. Pass
-rate includes failures and errors in the denominator and excludes skipped cases. Skip rate uses
-all reported cases. These metrics cover reporting suites only; overlapping suites can count a
-case more than once. They do not measure code coverage or test strength.
+Use `--out /absolute/path/outside-the-project/report.html` to export. Relative paths use
+the project root. In-project output is restricted to `.rung/cache/score/`; links and
+unrelated existing files are rejected. Regenerate the snapshot after source edits.
+See [report contracts](docs/DESIGN.md#configured-check-health-reports) for field definitions.
 
 Each part catches what the others miss, and `rung kit` shows them side by side:
 
@@ -592,58 +569,46 @@ To run the same check before every push, add Rung to `.pre-commit-config.yaml`:
 
 ## Investigate changed code and unreliable tests
 
-These opt-in diagnostics use an existing **pytest command check**. They keep their own
-evidence and never replace its ordinary verdict or change the Rung score formula.
+These explicit diagnostics use an existing pytest command check and keep separate evidence.
+They never replace ordinary verdicts, run automatically during checks or change the score.
 
 ```bash
 rung coverage tests --source src --base origin/main
 rung coverage tests --source src --base origin/main --fail-under 90
-rung flaky tests                         # five attempts, ten-minute total budget
+rung flaky tests                         # five attempts, 600-second budget
 rung flaky tests --attempts 10 --budget 300 --fail-on-flaky
-rung score-my-code --no-run              # include saved diagnostics in the HTML report
+rung score-my-code --no-run              # display saved diagnostics
 ```
 
-`tests` is the check ID in `rung.toml`, not a test-directory argument. Use the actual
-project-relative source directory, such as `src/package` or `package`; repeat `--source`
-for multiple directories. The coverage diagnostic requires **pytest-cov** in the configured
-check's Python environment. Rung does not install it or add a runtime dependency.
+`tests` is a check ID in `rung.toml`. Use the actual project-relative source directory and
+repeat `--source` for multiple directories. Coverage requires pytest-cov in that check's
+Python environment; Rung does not install it.
 
-**Changed-line coverage** compares the working tree with the target's merge base, including
-committed, staged, unstaged and nonignored new Python files. It counts changed executable
-statements from a fresh coverage.py JSON report; deleted lines, blank lines and comments
-are not execution opportunities. Excluded statements remain visible. A missing source
-record is unmeasured evidence, not a covered file. No executable changes means N/A.
-The percentage measures execution of the selected changed statements, not branch outcomes,
-assertion quality, or whole-project coverage. It is separate from configured-check health.
+Coverage measures changed executable Python lines against the target's merge base, including
+local and nonignored new files. Deleted lines, comments and blanks are not opportunities;
+exclusions remain visible, missing source records are unmeasured, and zero opportunities
+means N/A. This measures selected-line execution, not branch coverage or assertion strength.
+Existing project coverage policies still apply. Use a pytest check without coverage CLI or
+addopts flags; conflicting coverage options and incompatible launchers are diagnosed.
 
-Without `--fail-under`, valid coverage measurements are advisory. An explicit minimum
-returns exit 1 below that threshold. Existing coverage options and incompatible launcher
-settings are diagnosed rather than silently replaced; use a separate pytest command check
-without coverage CLI/addopts flags. Existing project coverage-tool policies still apply.
-Test failures, missing tools, invalid reports and incomplete measurements return exit 2.
+Repeated tests use fresh processes with the same selection. Exact parameterized identities,
+lifecycle outcomes, skips/expected failures and logs are retained. Identical subtest contexts
+are compared as groups with occurrence counts; they cannot identify individual unnamed
+children. Changing group counts makes the comparison incomplete. No clean sample proves
+stability. Fresh processes do not reset files, services or databases; isolate side effects.
 
-**Repeated-test diagnosis** runs the same selected pytest command in fresh processes and
-retains exact parameterized identities, lifecycle outcomes, durations and per-attempt logs.
-Skips, expected failures and execution errors are separate from ordinary pass/fail votes.
-A passing and failing observation of the same case is intermittent failure observed.
-Distinct subtest contexts retain their own identities. Repeated identical contexts are
-explicitly compared as groups, with occurrence counts and every raw report retained;
-a varying group cannot identify which individual unnamed child varied. Changing group
-counts makes the comparison incomplete.
-Consistent ordinary failures return exit 1; observed intermittent cases return 1 only with
-`--fail-on-flaky`. Incomplete execution returns 2. A clean sample does not prove stability.
+Valid measurements are advisory. `--fail-under` returns `1` below the requested coverage;
+`--fail-on-flaky` returns `1` for observed intermittent failures. Consistent ordinary failures
+in repeated-test diagnosis also return `1`. Failed coverage runs, missing tools and incomplete evidence return
+`2`. `--attempts` is at least two; `--budget` and coverage `--timeout` are positive seconds.
+Native retry/repeat/random-order plugins, cache selection, early exits and active xdist are
+unsupported. Normal `-k` and `-m` selection is retained.
 
-`--attempts` must be at least two; `--budget` and the coverage `--timeout` are positive seconds.
-Native retry/repeat/random-order plugins, cache-based selection, early-exit modes and active
-xdist workers are currently unsupported and explicitly diagnosed. Normal `-k`/`-m` selection
-is retained. Fresh processes do not reset databases, files, services or time. Review configured
-commands before repeating integration tests with side effects; use isolated fixtures.
-
-Manifests and redacted text artifacts live under `.rung/evidence/diagnostics/`. They bind
-results to project input bytes, the check definition, comparison context and artifact hashes.
-Edits make saved results historical; changes during execution make evidence incomplete.
-Redaction is best effort, not a guarantee. Logs retain the process runner's bounded output
-tail; review evidence before sharing. Diagnostic commands never create issues or publish.
+Evidence lives under `.rung/evidence/diagnostics/`, bound to source/configuration bytes,
+check definitions, comparison context and artifact hashes. Edits make saved results historical;
+changes during execution make them incomplete. Text redaction is best effort, and logs retain
+bounded output tails. Review artifacts before sharing.
+See [diagnostic contracts](docs/DESIGN.md#explicit-pytest-diagnostics).
 
 ## With coding agents
 
@@ -673,9 +638,16 @@ verdict. For fixes, it points to `rung prove` to establish the regression before
 An ambiguous contract or a test setup error is not treated as a confirmed bug.
 
 This is an agent skill, not a `rung-failure-path` CLI command. Installing it runs no fault
-experiments and adds no dependencies. See the [runnable Python example](examples/failure-path/)
-for a deliberately faulty save and a corrected version; it demonstrates rejected writes,
-not crash durability or general production atomicity.
+experiments and adds no dependencies. The [Python example](examples/failure-path/store.py)
+compares a deliberately faulty save with a corrected version. Run it from the repository root:
+
+```bash
+python -m unittest discover -s examples/failure-path -p 'test_*.py' -v
+```
+
+Its five passing demonstration tests confirm that the faulty cache update is detected and a
+rejected write preserves state in the corrected version. This is an artificial example;
+it does not establish crash durability, partial-write recovery or production atomicity.
 
 ### Report reproduced findings with the issue skill
 
