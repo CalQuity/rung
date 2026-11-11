@@ -3,18 +3,34 @@
 All notable changes to Rung. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 
-## Unreleased
+## 0.5.0 (2026-11-12)
+
+### Added
+- A Hermes Agent plugin (`hermes-plugin/`). Before Hermes ends a turn in which it edited code, its
+  `pre_verify` hook asks Rung whether the checks covering those files have a fresh pass, and sends
+  Hermes back with the check ids when they do not. Tools `rung_check`, `rung_plan`, `rung_kit` and
+  `rung_map` return the kit's JSON views; feature decisions stay with the person as `/rung approve`,
+  `/rung not-built` and `/rung drop`.
+
+### Changed
+- Formal receipts bind model reviews, law definitions, imported sources and checker identities.
+  **After upgrading**, renew existing law approvals (`rung laws --approve`) and model confirmations
+  (`rung confirm`) once; until then the affected formal checks report stale.
+- Drafts and maintenance stay proposals until a person confirms their correspondence with the code:
+  a model's "no effect" classification no longer renews a source link.
+- `rung init --model sonnet` (or `opus`, `haiku`, `claude-*`, `gpt-*`, the `o`-series) picks the
+  matching CLI instead of asking; other model names still ask, and `--provider` always wins.
 
 ### Fixed
-- Formal checks reject forged or incomplete tool results, empty proof sets, programmatic TLC
-  termination, commented-out properties and vacuous differential-test inputs.
-- Formal receipts bind model reviews, law definitions, imported sources and checker identities.
-  Existing law approvals and model confirmations require renewal under the stronger binding.
-- Drafts and maintenance remain proposals until a person confirms their correspondence with code.
-  Generated Lean tooling runs in guarded disposable copies; unavailable guards fail closed.
-- Formal timeouts kill child process groups. Counterexamples retain TLC's original output and
-  infinite loops; stateful differential failures retain their observed input batch.
-- Fix-proof freshness includes executable documentation and prose fixtures.
+- An independent audit found 21 ways a TLC, Lean or differential-test verdict could pass without the
+  property being checked, or stay fresh after its inputs changed. Each now fails or errors:
+  - Formal checks reject forged or incomplete tool results, empty proof sets, programmatic TLC
+    termination, commented-out properties and vacuous differential-test inputs; truncated output is
+    an error, never agreement.
+  - Generated Lean tooling runs in guarded disposable copies; unavailable guards fail closed.
+  - Formal timeouts kill child process groups. Counterexamples retain TLC's original output and
+    infinite loops; stateful differential failures retain their observed input batch.
+  - Fix-proof freshness includes executable documentation and prose fixtures.
 
 ## 0.4.0 (2026-11-06)
 
