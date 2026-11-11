@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from rung.core.errors import ToolMissing
 from rung.engines import lean
 
 
@@ -84,7 +85,7 @@ def _real_project(tmp_path: Path, source: str) -> Path:
     (tmp_path / "lean-toolchain").write_text(lean.KNOWN_GOOD_TOOLCHAIN + "\n")
     try:
         available = subprocess.run([lean.find_lake(), "--version"], cwd=tmp_path, capture_output=True, timeout=30)
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired, ToolMissing):
         pytest.skip("Lean toolchain unavailable")
     if available.returncode:
         pytest.skip("Lean toolchain unavailable")
