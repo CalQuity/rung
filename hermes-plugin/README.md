@@ -28,7 +28,9 @@ Then, in a repository, ask Hermes to "set up rung" (the bundled `rung:rung-setup
 | `rung_check` tool | Runs `rung check --json` (all checks, the given ids, or `--changed`) and returns each verdict with its output. |
 | `rung_plan` tool | Runs `rung plan --changed --json`: which checks cover the changed files, and which paths nothing covers. |
 | `rung_kit` tool | Runs `rung kit --json`: every part of the verification kit, what is stale or missing, and how to add it. |
-| `/rung [kit\|plan\|check]` | The same three views from chat. |
+| `rung_map` tool | Drafts (or redrafts) and shows the feature map: the app's user-visible features, which Rung's app-driving scripts exercise once a person approves them. The model cannot approve features. |
+| `/rung [kit\|plan\|check\|map]` | The same views from chat, as plain text. |
+| `/rung approve\|not-built\|drop <ids>` | Your decisions on the feature map. They exist only as slash commands, so only a person makes them. |
 | `rung:rung-setup` skill | Instructions for setting Rung up in a repository. |
 
 ## What it runs, and what leaves your machine
@@ -37,7 +39,10 @@ Then, in a repository, ask Hermes to "set up rung" (the bundled `rung:rung-setup
   commands recorded in that project's `rung.toml`, which are the project's own test, lint and build
   commands and any scanners you installed. Review `rung.toml` as you would a Makefile. The hook only
   reads Rung's local ledger.
-- **Network.** The plugin makes no network calls. The checks may: osv-scanner queries the OSV database,
+- **Model calls.** `rung_map` drafts the feature map with the model CLI chosen in `rung.toml` (`claude`,
+  `codex`, or an OpenAI-compatible endpoint you configure), which reads the project's source. With the
+  provider set to `none`, nothing is drafted.
+- **Network.** The plugin makes no network calls itself. The checks may: osv-scanner queries the OSV database,
   the `deps` check looks up new dependencies on PyPI or npm, and your test suite does whatever it does.
 - **Files.** Rung writes verdicts and evidence under `.rung/` in the project. The plugin stores nothing.
 - **Credentials and telemetry.** None. The plugin reads no credentials and sends no usage data.

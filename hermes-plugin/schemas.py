@@ -35,6 +35,28 @@ RUNG_PLAN = {
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
+RUNG_MAP = {
+    "name": "rung_map",
+    "description": (
+        "Draft and show the project's feature map: the user-visible features and sub-features of the app, "
+        "each with a status the person decides (approved, not built, dropped). Approved features are what "
+        "Rung's app-driving scripts exercise with scenarios and faults. The first call drafts the map with "
+        "the model configured in rung.toml; redraft=true refreshes it from the code (changed features need "
+        "approval again). You cannot approve features: ask the user to run /rung approve <ids> in chat."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "redraft": {"type": "boolean", "description": "Refresh the map from the current code."},
+            "intent": {
+                "type": "string",
+                "description": "What to focus the map on, e.g. 'checkout and coupons'.",
+            },
+        },
+        "required": [],
+    },
+}
+
 RUNG_KIT = {
     "name": "rung_kit",
     "description": (

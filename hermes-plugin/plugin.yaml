@@ -15,6 +15,7 @@ provides_tools:
   - rung_check
   - rung_plan
   - rung_kit
+  - rung_map
 provides_hooks:
   - pre_verify
 python_dependencies:

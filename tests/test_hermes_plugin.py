@@ -131,5 +131,27 @@ def test_tools_report_a_missing_cli_instead_of_raising(plugin, monkeypatch):
     assert reply["ok"] is False and "rung-cli" in reply["error"]
 
 
-def test_slash_command_rejects_unknown_views(plugin):
+def test_slash_command_rejects_unknown_views_and_bare_decisions(plugin):
     assert plugin._slash("deploy").startswith("Usage")
+    assert plugin._slash("approve").startswith("Usage")
+
+
+def test_feature_decisions_are_slash_commands_only(plugin, monkeypatch):
+    tools = sys.modules["rung_hermes.tools"]
+    calls = []
+    monkeypatch.setattr(tools, "_run", _fake_run(calls, stdout="Marked checkout approved."))
+    assert plugin._slash("approve checkout coupons") == "Marked checkout approved."
+    assert calls[0]["args"] == ["map", "--brief", "--approve", "checkout", "coupons", "--no-color"]
+    plugin._slash("not-built wishlist")
+    assert calls[1]["args"][:4] == ["map", "--brief", "--not-built", "wishlist"]
+    schema = json.dumps(sys.modules["rung_hermes.schemas"].RUNG_MAP)
+    assert "approve" not in json.loads(schema)["parameters"]["properties"]
+
+
+def test_map_tool_drafts_with_intent_and_redraft(plugin, monkeypatch):
+    tools = sys.modules["rung_hermes.tools"]
+    calls = []
+    monkeypatch.setattr(tools, "_run", _fake_run(calls, stdout=json.dumps({"features": []})))
+    reply = json.loads(tools.rung_map({"redraft": True, "intent": "checkout"}))
+    assert reply["ok"] is True and reply["result"] == {"features": []}
+    assert calls[0]["args"] == ["map", "--brief", "--redraft", "--intent", "checkout", "--json"]
