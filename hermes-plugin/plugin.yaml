@@ -1,0 +1,21 @@
+name: rung
+version: 0.4.0
+description: >-
+  Verification evidence for agent-written code. Before Hermes says a coding turn is done, Rung checks
+  that the project's own tests, linters, scanners and formal checks have fresh passing verdicts for
+  the code it changed, and sends the agent back to run them when they do not.
+author: CalQuity
+license: Apache-2.0
+homepage: https://github.com/CalQuity/rung
+manifest_version: 2
+api_version: 1
+requires_hermes: ">=0.20"
+tags: [verification, testing, security, coding]
+provides_tools:
+  - rung_check
+  - rung_plan
+  - rung_kit
+provides_hooks:
+  - pre_verify
+python_dependencies:
+  - "rung-cli>=0.4,<0.5"
