@@ -3,6 +3,19 @@
 All notable changes to Rung. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 
+## Unreleased
+
+### Fixed
+- Formal checks reject forged or incomplete tool results, empty proof sets, programmatic TLC
+  termination, commented-out properties and vacuous differential-test inputs.
+- Formal receipts bind model reviews, law definitions, imported sources and checker identities.
+  Existing law approvals and model confirmations require renewal under the stronger binding.
+- Drafts and maintenance remain proposals until a person confirms their correspondence with code.
+  Generated Lean tooling runs in guarded disposable copies; unavailable guards fail closed.
+- Formal timeouts kill child process groups. Counterexamples retain TLC's original output and
+  infinite loops; stateful differential failures retain their observed input batch.
+- Fix-proof freshness includes executable documentation and prose fixtures.
+
 ## 0.4.0 (2026-11-06)
 
 ### Added

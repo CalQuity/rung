@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from rung.core import git
-from rung.core.config import write_atomic
+from rung.core.config import ConfigError, write_atomic
 from rung.core.ledger import inputs_digest, snapshot
 
 FORMAL_DIR = Path(".rung") / "formal"
@@ -44,7 +44,15 @@ def load(root: Path, check_id: str) -> dict[str, Any] | None:
         card = json.loads(path(root, check_id).read_text())
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return None
-    return card if isinstance(card, dict) and card.get("check") == check_id else None
+    if not isinstance(card, dict) or card.get("check") != check_id:
+        return None
+    if not isinstance(card.get("sources"), list) or not all(isinstance(p, str) for p in card["sources"]):
+        return None
+    if not isinstance(card.get("confirmed"), dict):
+        return None
+    if card["confirmed"] and not isinstance(card["confirmed"].get("files"), dict):
+        return None
+    return card
 
 
 def save(root: Path, card: dict[str, Any]) -> Path:
@@ -86,12 +94,36 @@ def describe(card: dict[str, Any], reply: dict[str, Any]) -> None:
         }
 
 
+def review_digest(root: Path, card: dict[str, Any]) -> str:
+    """Bind a source review to the whole model, its scope, and the check declaration."""
+    from rung.checks import runner
+    from rung.core.config import load
+
+    try:
+        check = load(root).check(card["check"])
+        patterns = runner.specs(check, root)
+        patterns = [p for p in patterns if not p.startswith(".rung/") and p != "LAWS.md"]
+        files = snapshot(root, patterns)
+        definition = {"definition": runner.definition(check, root)}
+    except (OSError, ValueError, KeyError, ConfigError):
+        files, definition = {}, {}
+    description = {k: card.get(k) for k in ("sources", "scope", "functions", "actions", "invariants")}
+    return inputs_digest(
+        {
+            "model": inputs_digest(files),
+            "definition": json.dumps(definition, sort_keys=True),
+            "description": json.dumps(description, sort_keys=True),
+        }
+    )
+
+
 def confirm(root: Path, card: dict[str, Any], *, by: str, reason: str, outcome: str = "confirmed") -> None:
     """Record that the model describes the covered sources as they are now."""
     files = snapshot(root, card["sources"])
     card["confirmed"] = {
         "commit": git.head(root),
         "digest": inputs_digest(files),
+        "review_digest": review_digest(root, card),
         "files": files,
         "by": by,
         "reason": reason,
@@ -156,6 +188,8 @@ def drift(root: Path, check_id: str, card: dict[str, Any] | None = None) -> Drif
     confirmed = (card or {}).get("confirmed")
     if not card or not isinstance(confirmed, dict) or not confirmed.get("digest"):
         return None
+    if confirmed.get("review_digest") != review_digest(root, card):
+        return Drift(check_id, confirmed.get("commit", ""), ["(model, check definition, or reviewed scope changed)"])
     if inputs_digest(snapshot(root, card.get("sources", []))) == confirmed["digest"]:
         return None
     changed = changed_files(root, card)

@@ -27,10 +27,17 @@ from rung.core.proc import run as run_process
 class Side:
     command: str
     cwd: Path
+    command_prefix: tuple[str, ...] = ()
+    environment: dict[str, str] | None = None
 
     def run(self, inputs: list[str], timeout: int) -> list[str]:
         proc = run_process(
-            shlex.split(self.command), cwd=self.cwd, timeout=timeout, stdin="".join(line + "\n" for line in inputs)
+            [*self.command_prefix, *shlex.split(self.command)],
+            cwd=self.cwd,
+            timeout=timeout,
+            stdin="".join(line + "\n" for line in inputs),
+            env=self.environment,
+            require_complete=True,
         )
         if proc.returncode != 0:
             raise RuntimeError(f"`{self.command}` exited {proc.returncode}: {proc.stderr.strip()[:500]}")
@@ -55,6 +62,11 @@ class DRTResult:
     divergences: int = 0
     minimal: Divergence | None = None
     examples: list[Divergence] = field(default_factory=list)
+    lengths: list[int] = field(default_factory=list)
+    operations: list[str] = field(default_factory=list)
+    context: list[str] = field(default_factory=list)
+    context_model: list[str] = field(default_factory=list)
+    context_impl: list[str] = field(default_factory=list)
 
 
 def generate(alphabet: list[str], cases: int, min_len: int, max_len: int, seed: int) -> list[str]:
@@ -82,7 +94,10 @@ def shrink(case: str, model: Side, impl: Side, timeout: int, max_rounds: int = 5
     if current is None:
         m, i = model.run([case], timeout)[0], impl.run([case], timeout)[0]
         current = Divergence(case, m, i)
-    return current
+    m, i = model.run([current.input], timeout)[0], impl.run([current.input], timeout)[0]
+    if m == i:
+        raise RuntimeError("divergence requires batch context or is nondeterministic")
+    return Divergence(current.input, m, i)
 
 
 def run(
@@ -96,9 +111,15 @@ def run(
     seed: int = 0,
     timeout: int = 600,
 ) -> DRTResult:
-    if not alphabet:
-        return DRTResult("error", "differential test needs a non-empty `alphabet`")
+    if not alphabet or any(not token.strip() or len(token.split()) != 1 for token in alphabet):
+        return DRTResult("error", "differential test needs a non-empty `alphabet` of single non-whitespace tokens")
+    if cases < 1 or min_len < 0 or max_len < min_len:
+        return DRTResult("error", "invalid case count or trace length bounds")
     inputs = generate(alphabet, cases, min_len, max_len, seed)
+    if not any(inputs):
+        return DRTResult("error", "at least one nonempty trace is required", cases=len(inputs))
+    lengths = sorted({len(line.split()) for line in inputs})
+    operations = sorted({token for line in inputs for token in line.split()})
     try:
         m_out, i_out = model.run(inputs, timeout), impl.run(inputs, timeout)
     except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
@@ -106,13 +127,21 @@ def run(
 
     diverged = [Divergence(c, m, i) for c, m, i in zip(inputs, m_out, i_out, strict=True) if m != i]
     if not diverged:
-        return DRTResult("pass", f"{len(inputs)} random inputs, no divergence", cases=len(inputs))
+        return DRTResult(
+            "pass",
+            f"{len(inputs)} random inputs, no divergence",
+            cases=len(inputs),
+            lengths=lengths,
+            operations=operations,
+        )
 
     shortest = min(diverged, key=lambda d: len(d.input.split()))
+    context: list[str] = []
     try:
         minimal = shrink(shortest.input, model, impl, timeout)
     except (RuntimeError, OSError, subprocess.TimeoutExpired):
-        minimal = shortest
+        minimal = None
+        context = inputs
     return DRTResult(
         "fail",
         f"{len(diverged)} of {len(inputs)} inputs diverge",
@@ -120,4 +149,9 @@ def run(
         divergences=len(diverged),
         minimal=minimal,
         examples=diverged[:5],
+        lengths=lengths,
+        operations=operations,
+        context=context,
+        context_model=m_out if context else [],
+        context_impl=i_out if context else [],
     )

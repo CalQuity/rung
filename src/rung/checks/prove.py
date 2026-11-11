@@ -239,7 +239,7 @@ SETUP_FAILURE = re.compile(
 FAILURE_LINE = re.compile(
     r"\b(?:\w*Error|\w*Exception|assert\w*|fail(?:s|ed|ure|ures)?|panic\w*|want|wanted|expected|got)\b", re.I
 )
-# Documentation never changes what a proof is about: editing it must not stale the proof.
+# Prose can be an executable test fixture; this classification does not narrow proof freshness.
 DOC_SUFFIXES = (".md", ".rst")
 DOC_DIRS = ("docs/",)
 
@@ -250,13 +250,8 @@ def is_documentation(path: str) -> bool:
 
 
 def proof_scope(root: Path) -> list[str]:
-    """Glob patterns for every project file except documentation, which a proof's verdict covers.
-
-    The scope is "everything, minus documentation" rather than a list built from today's files, so
-    a file, directory or file type added later also stales the proof.
-    """
-    return ["**/*", *(f"!**/*{s}" for s in DOC_SUFFIXES), *(f"!**/*{s.upper()}" for s in DOC_SUFFIXES),
-            *(f"!{d}**" for d in DOC_DIRS)]  # fmt: skip
+    """Conservatively cover every project input, including executable docs and prose fixtures."""
+    return ["**/*"]
 
 
 def expect_found(expect: str, run: Run) -> bool:

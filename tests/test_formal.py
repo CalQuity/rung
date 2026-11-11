@@ -105,7 +105,7 @@ def _caught(spec: Path, config: Path | None, **_: object) -> tla_mutate.FailAbil
 
 
 @pytest.fixture
-def shop(repo: Path) -> Path:
+def shop(repo: Path, monkeypatch) -> Path:
     """A repository with a checkout function and a TLA+ check whose model was confirmed at the first commit."""
     (repo / "shop").mkdir()
     (repo / "shop" / "payments.py").write_text(PAYMENTS)
@@ -125,6 +125,8 @@ def shop(repo: Path) -> Path:
     modelcard.describe(card, CARD_REPLY)
     modelcard.confirm(repo, card, by="rung draft", reason="the draft was accepted")
     modelcard.save(repo, card)
+    laws.set_status(repo, "charge-once", "approved")
+    monkeypatch.setattr(tla_mutate, "run", _caught)
     return repo
 
 
@@ -219,13 +221,13 @@ def test_guard_mutants_remove_one_unprimed_conjunct_at_a_time() -> None:
 
 
 def test_typeok_or_a_pass_does_not_count_as_catching_a_mutant() -> None:
-    assert tla_mutate.classify(tla.TLCResult("fail", "x", "AtMostOnce"))[0] == "caught"
+    assert tla_mutate.classify(tla.TLCResult("fail", "x", "AtMostOnce"), ["AtMostOnce"])[0] == "caught"
     assert tla_mutate.classify(tla.TLCResult("fail", "x", "TypeOK"))[0] == "survived"
     assert tla_mutate.classify(tla.TLCResult("pass", "x", distinct_states=4))[0] == "survived"
     assert tla_mutate.classify(tla.TLCResult("error", "TLC timed out after 60s"))[0] == "inconclusive"
     survived = tla_mutate.FailAbility("d", [tla_mutate.MutantResult("A", "g", "survived", "")])
     assert not survived.ok and "can be removed without any invariant noticing" in tla_mutate.repair_request(survived)
-    assert tla_mutate.FailAbility("d").ok  # nothing to remove is not a failure
+    assert not tla_mutate.FailAbility("d").ok  # untested is not evidence
 
 
 def test_tla_draft_sends_invariants_that_notice_no_removed_guard_back(tmp_path: Path, monkeypatch) -> None:
@@ -306,7 +308,8 @@ def test_tlc_is_asked_for_a_dot_dump_only_when_wanted(tmp_path: Path, monkeypatc
 
     monkeypatch.setattr(tla, "find_jar", lambda: tmp_path / "tla2tools.jar")
     monkeypatch.setattr(tla, "find_java", lambda: "java")
-    monkeypatch.setattr(tla.subprocess, "run", fake)
+    monkeypatch.setattr(tla, "run_process", fake)
+    monkeypatch.setattr(tla, "module_paths", lambda spec: [spec])
     (tmp_path / "M.tla").write_text("x")
     tla.run(tmp_path / "M.tla")
     tla.run(tmp_path / "M.tla", dump=tmp_path / "out" / "states.dot")
@@ -335,7 +338,7 @@ def test_laws_and_report_show_harm_scope_and_fail_ability(shop: Path, monkeypatc
     modelcard.save(shop, card)
     assert cli.main(["-C", str(shop), "check", "pay"]) == 0
     out = capsys.readouterr().out
-    assert "fail-ability: 1/1 guard mutants caught by an invariant" in out
+    assert "fail-ability (selected properties only): 1/1 guard mutants caught by an invariant" in out
     assert cli.main(["-C", str(shop), "laws"]) == 0
     out = capsys.readouterr().out
     assert "harm: The customer pays twice." in out and "pay bounds: Clicks = {c1, c2}: two clicks" in out
@@ -389,29 +392,28 @@ def _maintain(shop: Path, monkeypatch, replies: list[dict[str, Any]], tlc=_passe
     return code, provider
 
 
-def test_maintain_updates_the_model_from_the_diff_and_moves_the_confirmed_commit(shop: Path, monkeypatch, capsys):
+def test_maintain_updates_a_proposal_and_preserves_the_confirmed_commit(shop: Path, monkeypatch, capsys):
     _change_code(shop, "fix: hold a lock across check and charge")
     code, provider = _maintain(shop, monkeypatch, [_maintain_reply(LOCKED)])
     out = capsys.readouterr().out
-    assert code == 0 and "UPDATED" in out and "[model-must-change]" in out
+    assert code == 1 and "UPDATED" in out and "[model-must-change]" in out
     prompt = provider.prompts[0]
     assert "+    async with lock:" in prompt and "fix: hold a lock across check and charge" in prompt
     assert "--- model file Pay.tla ---" in prompt and "a customer clicks Pay" in prompt
     assert "promise-may-be-broken" in provider.systems[0] and "never from a checker result" in provider.systems[0]
     assert (shop / "spec" / "Pay.tla").read_text() == LOCKED
     card = modelcard.load(shop, "pay")
-    assert card and card["confirmed"]["commit"] == subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], cwd=shop, text=True).strip()  # fmt: skip
-    assert card["confirmed"]["by"].startswith("rung maintain") and card["history"][-1]["outcome"] == "updated"
-    assert modelcard.drift(shop, "pay") is None
-    assert runner.status(load(shop), load(shop).check("pay")).state == "fresh"
-    assert card["confirmed"]["commit"] in (shop / ".claude" / "skills" / "verify-pay" / "SKILL.md").read_text()
+    assert card and card["confirmed"]["commit"] != git.head(shop)
+    assert card["confirmed"]["by"] == "rung draft"
+    assert modelcard.drift(shop, "pay") is not None
+    assert runner.status(load(shop), load(shop).check("pay")).state == "drifted"
+    assert "review this proposal" in out
 
 
 def test_maintain_rejects_a_weakened_invariant_without_cited_evidence(shop: Path, monkeypatch, capsys) -> None:
     _change_code(shop)
     code, provider = _maintain(shop, monkeypatch, [_maintain_reply(WEAKER), _maintain_reply(LOCKED)])
-    assert code == 0 and "without citing evidence" in provider.prompts[1] and "AtMostOnce" in provider.prompts[1]
+    assert code == 1 and "without citing evidence" in provider.prompts[1] and "AtMostOnce" in provider.prompts[1]
     assert (shop / "spec" / "Pay.tla").read_text() == LOCKED
 
 
@@ -420,8 +422,8 @@ def test_a_promise_changed_with_evidence_may_change_an_invariant(shop: Path, mon
     reply = _maintain_reply(WEAKER, "promise-changed", 'CHANGELOG.md:3 "a retry may charge twice; refunds follow"')
     code, provider = _maintain(shop, monkeypatch, [reply])
     out = capsys.readouterr().out
-    assert code == 0 and len(provider.prompts) == 1 and "promises changed on purpose: AtMostOnce" in out
-    assert "evidence: CHANGELOG.md:3" in out and "still say what you mean" in out
+    assert code == 1 and len(provider.prompts) == 1 and "promises changed on purpose: AtMostOnce" in out
+    assert "evidence: CHANGELOG.md:3" in out and "review this proposal" in out
 
 
 def test_adding_an_invariant_or_a_type_conjunct_is_not_a_weakening() -> None:
@@ -431,15 +433,15 @@ def test_adding_an_invariant_or_a_type_conjunct_is_not_a_weakening() -> None:
     assert maintain.weakened(before, {**before, "setting: state constraint": "x"}) == ["setting: state constraint"]
 
 
-def test_a_counterexample_on_the_updated_model_is_a_bug_and_still_confirms(shop: Path, monkeypatch, capsys) -> None:
+def test_a_counterexample_on_the_updated_proposal_still_requires_review(shop: Path, monkeypatch, capsys) -> None:
     _change_code(shop)
     code, provider = _maintain(shop, monkeypatch, [_maintain_reply(LOCKED)], tlc=_finds)
     out = capsys.readouterr().out
     assert code == 1 and "BUG" in out and "harm: The customer pays twice." in out
     assert "TLC: invariant AtMostOnce is violated" in out
     assert "AtMostOnce" not in "".join(provider.prompts[1:])  # the counterexample never goes back to the model
-    assert modelcard.drift(shop, "pay") is None  # the model was updated, so it describes the code
-    assert runner.status(load(shop), load(shop).check("pay")).state == "failing"
+    assert modelcard.drift(shop, "pay") is not None
+    assert runner.status(load(shop), load(shop).check("pay")).state == "drifted"
 
 
 def test_blocked_maintenance_leaves_the_model_and_the_confirmation_alone(shop: Path, monkeypatch, capsys) -> None:
@@ -450,14 +452,14 @@ def test_blocked_maintenance_leaves_the_model_and_the_confirmation_alone(shop: P
     assert (shop / "spec" / "Pay.tla").read_text() == SPEC
     assert (shop / ".rung" / "cache" / "maintain" / "pay" / "Pay.tla").read_text() == LOCKED
     assert modelcard.drift(shop, "pay") is not None
-    assert out.rstrip().splitlines()[-1].startswith("next: fix the model by hand, then rung confirm pay")
+    assert out.rstrip().splitlines()[-1].startswith("next: review this proposal, then rung confirm pay")
 
 
 def test_maintain_refuses_a_model_file_it_does_not_own(shop: Path, monkeypatch) -> None:
     _change_code(shop)
     stray = {**_maintain_reply(LOCKED), "files": _files(**{"../shop/payments.py": "x"})}
     code, provider = _maintain(shop, monkeypatch, [stray, _maintain_reply(LOCKED)])
-    assert code == 0 and "only change the model's own files" in provider.prompts[1]
+    assert code == 1 and "only change the model's own files" in provider.prompts[1]
     assert (shop / "shop" / "payments.py").read_text() != "x\n"
 
 
@@ -491,7 +493,7 @@ def test_confirm_and_maintain_apply_only_to_formal_checks(project: Path, capsys)
 # --- rung draft acceptance ----------------------------------------------------------------------
 
 
-def test_an_accepted_draft_records_confirmation_scope_skill_and_a_verdict(repo: Path, monkeypatch, capsys) -> None:
+def test_an_accepted_draft_records_unconfirmed_scope_skill_and_a_verdict(repo: Path, monkeypatch, capsys) -> None:
     (repo / "shop").mkdir()
     (repo / "shop" / "payments.py").write_text(PAYMENTS)
     (repo / "rung.toml").write_text('[project]\nname = "shop"\n\n[llm]\nprovider = "none"\n')
@@ -502,11 +504,11 @@ def test_an_accepted_draft_records_confirmation_scope_skill_and_a_verdict(repo: 
     assert cli.main(["-C", str(repo), "draft", "tla", "shop/payments.py"]) == 0
     out = capsys.readouterr().out
     card = modelcard.load(repo, "payments-tla")
-    assert card and card["confirmed"]["files"] == {"shop/payments.py": card["confirmed"]["files"]["shop/payments.py"]}
-    assert card["confirmed"]["commit"] and card["scope"]["not_covered"] == ["gateway timeouts"]
+    assert card and card["confirmed"] == {}
+    assert card["scope"]["not_covered"] == ["gateway timeouts"]
     assert (repo / ".claude" / "skills" / "verify-payments-tla" / "SKILL.md").exists()
     assert "broken: A card is charged at most once. (AtMostOnce)" in out and "diagram: .rung/evidence/" in out
-    assert "confirmed: the model describes the code at" in out
+    assert "unconfirmed proposal" in out
     assert (repo / ".rung" / "verdicts" / "payments-tla.json").exists()
 
 
@@ -548,8 +550,252 @@ def test_model_only_pass_cannot_satisfy_an_approved_implementation_law(shop, mon
     assert check["verdict"] == "pass" and check["implementation_link"] == "model-only"
     data = report.build(load(shop))
     assert data["laws"][0]["state"] == "unproven"
-    assert "Confirm a source link" in data["laws"][0]["why"]
+    assert "review" in data["laws"][0]["why"] or "Confirm a source link" in data["laws"][0]["why"]
     assert cli.main(["-C", str(shop), "gate", "--base", "main", "--json"]) == 1
     gate = json.loads(capsys.readouterr().out)
     assert gate["results"] == []
-    assert gate["blocked"] == ["approved law charge-once needs a confirmed source link or an implementation check"]
+    assert "approved law charge-once needs a confirmed source link or an implementation check" in gate["blocked"]
+
+
+# Regressions from the formal audit: proposals do not renew reviewed associations.
+
+
+def test_finding_6_no_effect_opinion_cannot_clear_source_drift(shop, monkeypatch, capsys):
+    _change_code(shop)
+    before = modelcard.load(shop, "pay")["confirmed"]
+    code, _ = _maintain(shop, monkeypatch, [_maintain_reply("", "no-effect")])
+    assert code == 1 and modelcard.load(shop, "pay")["confirmed"] == before
+    assert modelcard.drift(shop, "pay") is not None
+
+
+def test_finding_8_replacing_a_formal_model_requires_new_confirmation(shop):
+    (shop / "spec" / "Pay.tla").write_text(SPEC.replace("AtMostOnce == charges <= 1", "AtMostOnce == TRUE"))
+    assert modelcard.drift(shop, "pay") is not None
+    assert runner.run_check(load(shop), load(shop).check("pay")).verdict == "error"
+
+
+def test_finding_8_corrupt_model_record_fails_closed(shop):
+    modelcard.path(shop, "pay").write_text("{broken")
+    assert runner.run_check(load(shop), load(shop).check("pay")).verdict == "error"
+    assert runner.status(load(shop), load(shop).check("pay")).state == "drifted"
+
+
+def test_finding_9_named_drt_scripts_stale_without_explicit_specs(tmp_path):
+    import sys
+
+    script = "import sys\nfor line in sys.stdin: print('same')\n"
+    for name in ("model.py", "impl.py"):
+        (tmp_path / name).write_text(script)
+    (tmp_path / "rung.toml").write_text(
+        f'[[check]]\nid="d"\nkind="drt"\nmodel="{sys.executable} model.py"\n'
+        f'impl="{sys.executable} impl.py"\nalphabet=["a"]\ncases=5\n'
+    )
+    config = load(tmp_path)
+    assert runner.run_check(config, config.check("d")).verdict == "pass"
+    (tmp_path / "impl.py").write_text(script.replace("same", "wrong"))
+    assert runner.status(config, config.check("d")).state == "stale"
+    assert runner.select(config, [], {"impl.py"}) == config.checks
+
+
+def test_finding_13_formal_helper_changes_revoke_law_review(shop):
+    laws.set_status(shop, "charge-once", "approved")
+    before = laws.load(shop)[0]
+    assert before.approval == before.current_review
+    (shop / "spec" / "Pay.tla").write_text(SPEC.replace("charges' = charges + 1", "charges' = 0"))
+    after = laws.load(shop)[0]
+    assert after.approval != after.current_review
+    assert laws.state(after, {})[0] == "unproven"
+
+
+def test_finding_16_no_mutants_or_only_timeouts_is_untested():
+    assert not tla_mutate.FailAbility("x").ok
+    assert not tla_mutate.FailAbility("x", [tla_mutate.MutantResult("A", "g", "inconclusive", "timeout")]).ok
+    result = tla.TLCResult("fail", "type bound", "StateType")
+    assert tla_mutate.classify(result, ["Safe"])[0] != "caught"
+
+
+def test_finding_16_check_recomputes_sensitivity(shop, monkeypatch):
+    monkeypatch.setattr(tla, "run", _passes)
+    monkeypatch.setattr(tla_mutate, "run", lambda *a, **k: tla_mutate.FailAbility("x"))
+    result = runner.run_check(load(shop), load(shop).check("pay"))
+    assert result.verdict == "error" and "fail-ability" in result.outcome.summary
+
+
+def test_finding_17_generated_adapter_cannot_write_the_original_project(tmp_path, monkeypatch):
+    import sys
+
+    from rung.drafting.lean import _drt_check
+
+    out = tmp_path / "model"
+    out.mkdir()
+    marker = tmp_path / "sentinel.txt"
+    (out / "drt_adapter.py").write_text(
+        f"from pathlib import Path\nimport sys\nPath({str(marker)!r}).write_text('unsafe')\n"
+        "for line in sys.stdin: print('ok')\n"
+    )
+    lake = tmp_path / "lake"
+    lake.write_text(f"#!{sys.executable}\nimport sys\nfor line in sys.stdin: print('ok')\n")
+    lake.chmod(0o755)
+    monkeypatch.setattr(lean, "find_lake", lambda: str(lake))
+    result = _drt_check(out, tmp_path, "model", ["a"])
+    assert result.verdict != "pass" and not marker.exists()
+
+
+def test_finding_21_unconfirmed_report_never_claims_to_describe_code(shop, monkeypatch):
+    from rung.analysis import formal
+
+    card = modelcard.load(shop, "pay")
+    card["confirmed"] = {}
+    modelcard.save(shop, card)
+    monkeypatch.setattr(tla, "run", _passes)
+    runner.run_check(load(shop), load(shop).check("pay"))
+    text = "\n".join(formal.markdown(formal.rows(load(shop), {s.check_id: s for s in runner.statuses(load(shop))})))
+    assert "unconfirmed/model-only" in text and "describes the code" not in text
+
+
+def test_finding_10_ignored_lean_dependency_bytes_are_receipt_inputs(tmp_path: Path) -> None:
+    from rung.core import ledger
+
+    package = tmp_path / "model" / ".lake" / "packages" / "dep"
+    package.mkdir(parents=True)
+    source = package / "Rules.lean"
+    source.write_text("def limit := 2\n")
+    (tmp_path / ".gitignore").write_text(".lake/\n")
+    check = Check("l", "lean", [], {"project": "model"})
+    before = ledger.snapshot(tmp_path, runner.specs(check, tmp_path))
+    assert "model/.lake/packages/dep/Rules.lean" in before
+    source.write_text("def limit := 1\n")
+    assert before != ledger.snapshot(tmp_path, runner.specs(check, tmp_path))
+
+
+def test_finding_10_default_checker_jar_identity_is_bound(shop: Path, monkeypatch) -> None:
+    jar = shop / "checker.jar"
+    jar.write_bytes(b"checker one")
+    monkeypatch.setattr(tla, "find_jar", lambda: jar)
+    check = load(shop).check("pay")
+    before = runner.definition(check, shop)
+    assert str(jar) in runner.tool_identity(shop, check)
+    jar.write_bytes(b"checker two")
+    assert before != runner.definition(check, shop)
+
+
+def test_finding_13_vacuous_draft_is_not_accepted(tmp_path: Path) -> None:
+    if not tla.DEFAULT_JAR.exists():
+        pytest.skip("cached TLC unavailable")
+    spec = (
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\n"
+        "Next == x' = 1-x\nSafe == TRUE\nSpec == Init /\\ [][Next]_x\n====\n"
+    )
+    reply = {
+        **SPEC_REPLY,
+        **CARD_REPLY,
+        "files": _files(**{"M.tla": spec, "M.cfg": "SPECIFICATION Spec\nINVARIANT Safe\n"}),
+        "invariants": [{"name": "Safe", "statement": "x is always zero", "harm": "wrong value"}],
+    }
+    result = tla_draft.draft(ScriptedProvider([reply]), tmp_path, [_source(tmp_path)], tmp_path / "spec", max_rounds=1)
+    assert not result.ok and not result.failability
+
+
+def test_finding_16_type_only_mutant_kill_does_not_count(tmp_path: Path) -> None:
+    if not tla.DEFAULT_JAR.exists():
+        pytest.skip("cached TLC unavailable")
+    spec, cfg = tmp_path / "M.tla", tmp_path / "M.cfg"
+    spec.write_text(
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\n"
+        "A == /\\ x < 1\n     /\\ x' = x + 1\nNext == A \\/ x' = x\n"
+        "StateType == x \\in 0..1\nSafe == TRUE\nSpec == Init /\\ [][Next]_x\n====\n"
+    )
+    cfg.write_text("SPECIFICATION Spec\nINVARIANTS StateType Safe\n")
+    result = tla_mutate.run(spec, cfg, timeout=5, law_properties=["Safe"])
+    assert not result.ok and result.count("caught") == 0 and result.count("survived") == 1
+
+
+def test_finding_8_deleting_a_previously_confirmed_record_fails_closed(shop, monkeypatch):
+    monkeypatch.setattr(tla, "run", _passes)
+    config = load(shop)
+    assert runner.run_check(config, config.check("pay")).verdict == "pass"
+    modelcard.path(shop, "pay").unlink()
+    assert runner.run_check(config, config.check("pay")).verdict == "error"
+
+
+def test_finding_9_external_named_script_identity_expires_a_receipt(tmp_path: Path) -> None:
+    import sys
+
+    root = tmp_path / "project"
+    root.mkdir()
+    script = tmp_path / "model.py"
+    script.write_text("import sys\nfor line in sys.stdin: print('ok')\n")
+    command = f"{sys.executable} {script}"
+    (root / "rung.toml").write_text(
+        f'[[check]]\nid="d"\nkind="drt"\nmodel="{command}"\nimpl="{command}"\nalphabet=["a"]\ncases=5\n'
+    )
+    config = load(root)
+    assert runner.run_check(config, config.check("d")).verdict == "pass"
+    script.write_text("import sys\nfor line in sys.stdin: print('changed')\n")
+    assert runner.status(config, config.check("d")).state == "stale"
+
+
+def test_finding_19_unparsed_counterexample_keeps_original_evidence(shop, monkeypatch):
+    output = "Error: Temporal properties were violated.\nunsupported trace representation\n"
+    monkeypatch.setattr(tla, "run", lambda *a, **k: tla.TLCResult("fail", "temporal violation", output=output))
+    config = load(shop)
+    result = runner.run_check(config, config.check("pay"))
+    assert result.verdict == "fail" and any("parsing incomplete" in line for line in result.outcome.lines)
+    raw = next(path for path in result.outcome.evidence if path.endswith("tlc-output.txt"))
+    assert (shop / raw).read_text() == output
+
+
+def test_finding_17_generated_build_cannot_change_its_trial_inputs(tmp_path, monkeypatch):
+    from rung.core import sandbox
+    from rung.drafting.lean import _lean_check
+
+    model = tmp_path / "model"
+    model.mkdir()
+    source = model / "Model.lean"
+    source.write_text("theorem safe : True := True.intro\n")
+    monkeypatch.setattr(sandbox, "validated_write_guard", lambda trial: ("unused",))
+
+    def altered(project, theorems, **kwargs):
+        (project / "Model.lean").write_text("theorem safe : False := by sorry\n")
+        return lean.LeanResult("pass", "substituted input")
+
+    monkeypatch.setattr(lean, "run", altered)
+    result = _lean_check(model, tmp_path, ["safe"])
+    assert result.verdict == "error" and "inputs changed" in result.reason
+    assert source.read_text() == "theorem safe : True := True.intro\n"
+
+
+def test_finding_17_generated_drt_cannot_edit_covered_inputs(tmp_path, monkeypatch):
+    import sys
+
+    from rung.core import sandbox
+
+    (tmp_path / "source.py").write_text("original\n")
+    (tmp_path / "model.py").write_text("import sys\nfor line in sys.stdin: print('ok')\n")
+    (tmp_path / "impl.py").write_text(
+        "from pathlib import Path\nimport sys\nPath('source.py').write_text('substituted')\n"
+        "for line in sys.stdin: print('ok')\n"
+    )
+    (tmp_path / "rung.toml").write_text(
+        f'[[check]]\nid="d"\nkind="drt"\nmodel="{sys.executable} model.py"\n'
+        f'impl="{sys.executable} impl.py"\nalphabet=["a"]\ncases=3\ndrafted_by="test"\n'
+    )
+    monkeypatch.setattr(sandbox, "validated_write_guard", lambda trial: ("env",))
+    config = load(tmp_path)
+    result = runner.run_check(config, config.check("d"))
+    assert result.verdict == "error" and "inputs changed" in result.outcome.summary
+    assert (tmp_path / "source.py").read_text() == "original\n"
+
+
+def test_finding_10_compiled_dependency_bytes_are_also_inputs(tmp_path: Path) -> None:
+    from rung.core import ledger
+
+    package = tmp_path / "model" / ".lake" / "packages" / "dep" / ".lake" / "build" / "lib" / "lean"
+    package.mkdir(parents=True)
+    compiled = package / "Rules.olean"
+    compiled.write_bytes(b"compiled dependency one")
+    check = Check("l", "lean", [], {"project": "model"})
+    before = ledger.snapshot(tmp_path, runner.specs(check, tmp_path))
+    assert compiled.relative_to(tmp_path).as_posix() in before
+    compiled.write_bytes(b"compiled dependency two")
+    assert before != ledger.snapshot(tmp_path, runner.specs(check, tmp_path))

@@ -161,7 +161,7 @@ the model was last confirmed to describe them, with who confirmed it and why.
 
 - **Drift is an error, not a rerun.** When the covered sources' digest differs from the confirmed
   one, the check is an error naming the changed files, and the laws it enforces are UNPROVEN until
-  someone acts. A draft that is accepted sets the record; so do the two ways out of drift.
+  someone reviews and confirms the association. An accepted draft creates an unconfirmed record.
 - A standalone check can pass against a model before a source link is confirmed. Reports label that
   result model-only. An approved law that relies entirely on model checks requires at least one
   confirmed link to the source. Differential or other implementation checks can supply separate
@@ -173,14 +173,15 @@ the model was last confirmed to describe them, with who confirmed it and why.
   result. Rung rejects a reply that removes or rewrites an invariant, property or theorem, or adds
   a state constraint, unless a change is classified as an intended promise change with evidence.
   The outcome is in sync, updated, bug (a counterexample on a model that describes the current
-  code) or blocked; the confirmed commit moves only when the model now describes the code.
+  code) or blocked. These are proposals; a person must review and confirm them. The model cannot
+  renew a source link, including when it classifies a change as `no-effect`.
 - **`rung confirm <check> --by NAME --reason TEXT`** records that a person compared the model with
   the code and it still holds, for changes no model needs to see.
 
 ### Able to fail
 
 A TLA+ pass proves invariants over every reachable state, but an invariant that holds whatever the
-actions do proves nothing. After a TLA+ draft passes, and on every `rung maintain`, Rung removes one
+actions do proves nothing. After a TLA+ draft passes, on maintenance, and on source-confirmed checks, Rung removes one
 guard at a time from the actions (a conjunct with no primed variable) and runs TLC on each mutant
 with a short timeout. At least one mutant must break an invariant other than `TypeOK`; if none does,
 the spec goes back to the model as too weak to catch anything. The score is kept with the record

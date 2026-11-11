@@ -29,6 +29,7 @@ def run(
     timeout: float,
     env: Mapping[str, str] | None = None,
     stdin: str | None = None,
+    require_complete: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     """Run `argv` (no shell). Raises `subprocess.TimeoutExpired` after killing the whole process group."""
     posix = os.name == "posix"
@@ -58,6 +59,8 @@ def run(
                 with contextlib.suppress(ProcessLookupError, PermissionError):
                     os.kill(pid, signal.SIGKILL)
             proc.wait()
+        if require_complete and (out.seek(0, 2) > MAX_OUTPUT or err.seek(0, 2) > MAX_OUTPUT):
+            raise OSError("verifier output exceeded the capture limit; complete output is required")
         return subprocess.CompletedProcess(
             list(argv), proc.returncode, _tail(out).decode(errors="replace"), _tail(err).decode(errors="replace")
         )

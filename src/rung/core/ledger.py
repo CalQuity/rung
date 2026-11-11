@@ -59,6 +59,9 @@ def snapshot(root: Path, patterns: list[str]) -> dict[str, str]:
             mode = path.stat().st_mode
         except (FileNotFoundError, NotADirectoryError):
             mode = 0
+        if not path.resolve().is_relative_to(root.resolve()):
+            files[rel] = "external-link:" + hashlib.sha256(os.fsencode(str(path.resolve()))).hexdigest()
+            continue
         if path.is_symlink():
             target = hashlib.sha256(os.fsencode(os.readlink(path))).hexdigest()
             if not path.resolve().is_relative_to(root.resolve()):

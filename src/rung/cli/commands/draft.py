@@ -274,7 +274,9 @@ def cmd_draft(args, out: Output) -> int:
             options = {
                 "model": f"lake exe {exe}", "model_cwd": project,
                 "impl": f"python3 {project}/drt_adapter.py", "alphabet": result.alphabet,
-                "cases": 2000, "max_len": 8, "specs": [f"{project}/**/*.lean", f"{project}/drt_adapter.py"],
+                "cases": 2000, "max_len": 8, "drafted_by": drafted_by(cfg, provider),
+                "specs": [f"{project}/**/*.lean", f"{project}/drt_adapter.py", f"{project}/lakefile.*",
+                                                       f"{project}/lean-toolchain", f"{project}/lake-manifest.json"],
             }  # fmt: skip
             add_check(cfg, Check(f"{check_id}-drt", "drt", covered, options), out, emit=False)
     enforcing = [check_id] if args.kind == "tla" else [check_id, f"{check_id}-drt"]

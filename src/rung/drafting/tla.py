@@ -123,7 +123,9 @@ def draft(
             )
         if result.verdict == "pass" and result.distinct_states > 1:
             # A pass counts only if the invariants can fail: removing a guard must break one of them.
-            failability = tla_mutate.run(out_dir / spec_name, out_dir / cfg_name)
+            failability = tla_mutate.run(
+                out_dir / spec_name, out_dir / cfg_name, law_properties=[i["name"] for i in reply["invariants"]]
+            )
             if not failability.ok:
                 weak = failability.survivors()
                 prompt += tla_mutate.repair_request(failability)

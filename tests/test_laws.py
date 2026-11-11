@@ -34,6 +34,7 @@ def test_parse_joins_wrapped_text() -> None:
 
 def test_law_holds_only_when_every_check_is_fresh() -> None:
     law = laws.parse(SOURCE)[0]
+    law.approval = laws.approval_digest(law)
     assert laws.state(law, {"protocol": _status("fresh"), "model": _status("fresh")})[0] == "held"
     assert laws.state(law, {"protocol": _status("fresh"), "model": _status("stale")})[0] == "unproven"
     assert laws.state(law, {"protocol": _status("failing"), "model": _status("fresh")})[0] == "broken"
@@ -51,3 +52,18 @@ def test_approve_rewrites_only_that_law(tmp_path: Path) -> None:
     parsed = {law.id: law for law in laws.load(tmp_path)}
     assert parsed["proposed-one"].status == "approved"
     assert parsed["result-from-holder"].status == "approved"
+
+
+def test_finding_7_editing_an_approved_law_revokes_approval(tmp_path: Path) -> None:
+    (tmp_path / "LAWS.md").write_text(SOURCE)
+    laws.set_status(tmp_path, "result-from-holder", "approved")
+    law = laws.load(tmp_path)[0]
+    statuses = {"protocol": _status("fresh"), "model": _status("fresh")}
+    assert laws.state(law, statuses)[0] == "held"
+    text = (
+        (tmp_path / "LAWS.md")
+        .read_text()
+        .replace("A job's result always comes from the", "A job's result never comes from the")
+    )
+    (tmp_path / "LAWS.md").write_text(text)
+    assert laws.state(laws.load(tmp_path)[0], statuses)[0] == "unproven"

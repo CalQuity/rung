@@ -14,7 +14,7 @@ from typing import Any
 
 from rung.agents.install import install_formal_skill
 from rung.checks import runner
-from rung.cli.commands.common import GATE_FAILED, OK, add_check, load_config
+from rung.cli.commands.common import GATE_FAILED, OK, load_config
 from rung.cli.output import VERDICT_STYLE, Output
 from rung.core import laws, modelcard
 from rung.core.config import Check, Config, ConfigError
@@ -64,7 +64,12 @@ def _describe(card: dict[str, Any], out: Output, *, scope: bool = True) -> None:
     if line := modelcard.failability_line(card):
         out.detail(line, indent=2)
     commit = (card.get("confirmed") or {}).get("commit", "")
-    out.detail(f"confirmed: the model describes the code at {commit or 'an uncommitted state'}", indent=2)
+    if modelcard.has_source_confirmation(card):
+        out.detail(f"confirmed: the model describes the code at {commit or 'an uncommitted state'}", indent=2)
+    else:
+        out.detail(
+            "unconfirmed proposal; review the model, adapter and operation alphabet, then rung confirm", indent=2
+        )
 
 
 def accept_draft(cfg: Config, check: Check, result: DraftResult, out: Output, *, sources: list[str], by: str) -> int:
@@ -73,7 +78,7 @@ def accept_draft(cfg: Config, check: Check, result: DraftResult, out: Output, *,
     card["sources"] = list(sources)
     modelcard.describe(card, result.described)
     card["failability"] = result.failability
-    modelcard.confirm(cfg.root, card, by=by, reason="the draft was accepted", outcome="drafted")
+    card["confirmed"] = {}  # Tool success cannot establish the proposed English-to-model association.
     path = modelcard.save(cfg.root, card)
     out.line(f"Recorded the code this model describes in {path.relative_to(cfg.root).as_posix()}:")
     _describe(card, out, scope=check.kind != "tla")  # the TLA+ check below prints the scope
@@ -98,15 +103,16 @@ def cmd_maintain(args, out: Output) -> int:
             f'rung confirm {check.id} --by "NAME" --reason "TEXT"'
         )
     provider = providers.get(replace(cfg.llm, model=args.model) if args.model else cfg.llm)
-    changed = modelcard.changed_files(cfg.root, card)
+    drift = modelcard.drift(cfg.root, check.id, card)
+    changed = modelcard.changed_files(cfg.root, card) or (drift.changed if drift else [])
     since = (card["confirmed"].get("commit") or "")[:7] or "an uncommitted state"
     if changed:
         out.line(f"Maintaining {check.id}: {len(changed)} changed file(s) since {since}, with {cfg.llm.provider} ...")
     result = maintain.maintain(provider, cfg, check, card)
-    by = f"rung maintain ({cfg.llm.provider}:{provider.models()})" if changed else "rung maintain"
     out.emit({"check": check.id, "outcome": result.outcome, "message": result.message, "changes": result.changes,
               "files": result.files, "rounds": result.rounds, "failability": result.failability,
-              "story": result.story, "attempt": result.attempt, "confirmed": result.confirms})  # fmt: skip
+              "story": result.story, "attempt": result.attempt,
+              "confirmed": result.confirms and not changed})  # fmt: skip
     out.line(f"{out.badge(result.outcome, OUTCOME_STYLE, 8)}{check.id}: {result.message}")
     for change in result.changes:
         out.detail(f"[{change['classification']}] {change['change']}", indent=2)
@@ -118,6 +124,13 @@ def cmd_maintain(args, out: Output) -> int:
         out.detail(f"fail-ability: {result.failability.get('summary', '')}", indent=2)
     for line in result.story:
         out.detail(line, indent=2)
+    if changed:
+        modelcard.describe(card, result.reply)
+        if result.failability:
+            card["failability"] = result.failability
+        modelcard.save(cfg.root, card)
+        out.line(f'next: review this proposal, then rung confirm {check.id} --by "NAME" --reason "TEXT"')
+        return GATE_FAILED
     if not result.confirms:
         if result.outcome == "blocked":
             if result.attempt:
@@ -127,27 +140,9 @@ def cmd_maintain(args, out: Output) -> int:
             out.line(f"next: fix the code, then rung check {check.id}")
         return GATE_FAILED
 
-    modelcard.describe(card, result.reply)
-    if result.failability:
-        card["failability"] = result.failability
-    counts: dict[str, int] = {}
-    for change in result.changes:
-        counts[change["classification"]] = counts.get(change["classification"], 0) + 1
-    reason = result.outcome + "".join(f"; {n} {kind}" for kind, n in counts.items())
-    modelcard.confirm(cfg.root, card, by=by, reason=reason, outcome=result.outcome)
-    modelcard.save(cfg.root, card)
-    theorems = [t.strip() for t in result.reply.get("theorems", []) if t.strip()]
-    if check.kind == "lean" and theorems and theorems != check.get_list("theorems"):
-        check = Check(check.id, check.kind, check.covers, {**check.options, "theorems": theorems})
-        add_check(cfg, check, out, emit=False)
-    if any(c["classification"] == "promise-changed" for c in result.changes):
-        out.line(f"A promise changed on purpose: check that the laws in {laws.LAWS_FILE} still say what you mean.")
-    skill = write_skill(cfg, check, card)
-    out.line(f"Confirmed the model describes the code at {card['confirmed']['commit'][:7] or 'this state'}; "
-             f"updated {skill.relative_to(cfg.root).as_posix()}.")  # fmt: skip
     checked = runner.run_check(cfg, check)
     _print_result(checked, out)
-    return OK if result.outcome != "bug" and checked.verdict == "pass" else GATE_FAILED
+    return OK if checked.verdict == "pass" else GATE_FAILED
 
 
 def cmd_confirm(args, out: Output) -> int:

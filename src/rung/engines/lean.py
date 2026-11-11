@@ -10,14 +10,19 @@ three standard axioms.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from rung.core import sandbox
+from rung.core.config import managed_path
 from rung.core.errors import ToolMissing
+from rung.core.proc import run as run_process
 
 STANDARD_AXIOMS = frozenset({"propext", "Classical.choice", "Quot.sound"})
 
@@ -29,9 +34,9 @@ ESCAPE_HATCHES = {
         r"^\s*(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|noncomputable|unsafe|partial)\s+)*axiom\s", re.M
     ),
     "native_decide": re.compile(r"\bnative_decide\b"),
-    "unsafe definition": re.compile(r"^\s*(?:@\[[^\]]*\]\s*)?unsafe\s", re.M),
+    "unsafe definition": re.compile(r"\bunsafe\b"),
     "implemented_by": re.compile(r"\bimplemented_by\b"),
-    "extern": re.compile(r"@\[\s*extern\b"),
+    "extern": re.compile(r"\bextern\b"),
 }
 
 # Proofs that only work because the statement is true of anything, such as `0 ≤ n` for a natural number.
@@ -43,9 +48,6 @@ TRIVIAL_PROOFS = frozenset({
 _THEOREM = re.compile(r"^(?:theorem|lemma)\s+(\S+)([\s\S]*?):=\s*([\s\S]*?)(?=^\S|\Z)", re.M)
 KNOWN_GOOD_TOOLCHAIN = "leanprover/lean4:v4.35.0"
 
-_BLOCK_COMMENT = re.compile(r"/-.*?-/", re.S)
-_STRING = re.compile(r'"(?:\\.|[^"\\])*"')
-_LINE_COMMENT = re.compile(r"--[^\n]*")
 _AXIOMS_LINE = re.compile(r"'([^']+)' depends on axioms: \[([^\]]*)\]")
 _NO_AXIOMS_LINE = re.compile(r"'([^']+)' does not depend on any axioms")
 
@@ -147,7 +149,73 @@ def theorem_statements(project: Path) -> dict[str, str]:
 
 def strip_comments(source: str) -> str:
     """Remove comments and string literals, so a word inside either is never mistaken for code."""
-    return _LINE_COMMENT.sub("", _STRING.sub('""', _BLOCK_COMMENT.sub("", source)))
+    out: list[str] = []
+    i, depth, string = 0, 0, False
+    while i < len(source):
+        pair = source[i : i + 2]
+        char = source[i]
+        if depth:
+            if pair == "/-":
+                depth += 1
+                out.extend("  ")
+                i += 2
+                continue
+            if pair == "-/":
+                depth -= 1
+                out.extend("  ")
+                i += 2
+                continue
+        elif string:
+            if char == "\\":
+                out.extend("  ")
+                i += 2
+                continue
+            if char == '"':
+                string = False
+        elif raw := re.match(r'r(#+)"', source[i:]):
+            end_marker = '"' + raw.group(1)
+            end = source.find(end_marker, i + len(raw.group(0)))
+            if end < 0:
+                raise ValueError("unterminated raw Lean string")
+            end += len(end_marker)
+            out.extend("\n" if c == "\n" else " " for c in source[i:end])
+            i = end
+            continue
+        elif char == "'" and (literal := re.match(r"'(?:\\.|[^'\\])'", source[i:])):
+            out.extend(" " * len(literal.group(0)))
+            i += len(literal.group(0))
+            continue
+        elif char == "«":
+            end = source.find("»", i + 1)
+            if end < 0:
+                raise ValueError("unterminated quoted Lean identifier")
+            out.append(" ")
+            out.extend(source[i + 1 : end])
+            out.append(" ")
+            i = end + 1
+            continue
+        elif pair == "--":
+            end = source.find("\n", i)
+            end = len(source) if end < 0 else end
+            out.extend(" " * (end - i))
+            i = end
+            continue
+        elif pair == "/-":
+            depth = 1
+            out.extend("  ")
+            i += 2
+            continue
+        elif char == '"':
+            string = True
+        else:
+            out.append(char)
+            i += 1
+            continue
+        out.append("\n" if char == "\n" else " ")
+        i += 1
+    if depth or string:
+        raise ValueError("unterminated Lean comment or string")
+    return "".join(out)
 
 
 def scan_sources(project: Path) -> list[str]:
@@ -156,7 +224,11 @@ def scan_sources(project: Path) -> list[str]:
     for path in sorted(project.rglob("*.lean")):
         if ".lake" in path.parts or path.name == "lakefile.lean":
             continue
-        code = strip_comments(path.read_text())
+        try:
+            code = strip_comments(path.read_text())
+        except ValueError as exc:
+            findings.append(f"{path.relative_to(project)}: {exc}")
+            continue
         for label, pattern in ESCAPE_HATCHES.items():
             for match in pattern.finditer(code):
                 line = code.count("\n", 0, match.start()) + 1
@@ -167,54 +239,133 @@ def scan_sources(project: Path) -> list[str]:
 def parse_axioms(output: str) -> dict[str, list[str]]:
     axioms: dict[str, list[str]] = {}
     for name, listed in _AXIOMS_LINE.findall(output):
+        if name in axioms:
+            raise ValueError(f"duplicate axiom report for {name}")
         axioms[name] = [a.strip() for a in listed.split(",") if a.strip()]
     for name in _NO_AXIOMS_LINE.findall(output):
+        if name in axioms:
+            raise ValueError(f"duplicate axiom report for {name}")
         axioms[name] = []
     return axioms
 
 
-def audit_axioms(lake: str, project: Path, modules: list[str], theorems: list[str]) -> tuple[dict[str, list[str]], str]:
-    """Ask Lean itself which axioms each theorem depends on."""
-    source = "\n".join(f"import {m}" for m in modules) + "\n\n"
-    source += "\n".join(f"#print axioms {t}" for t in theorems) + "\n"
-    audit = project / ".lake" / "rung_audit.lean"
+def find_lean(project: Path, *, timeout: float = 10) -> str:
+    """Resolve the pinned compiler through elan, without running project Lake tooling."""
+    elan = shutil.which("elan") or str(Path.home() / ".elan" / "bin" / "elan")
+    resolved = run_process([elan, "which", "lean"], cwd=project, timeout=timeout, require_complete=True)
+    if resolved.returncode != 0 or not Path(resolved.stdout.strip()).is_file():
+        raise ValueError("Lean declaration audit failed to resolve the pinned compiler")
+    return resolved.stdout.strip()
+
+
+def audit_axioms(
+    lake: str,
+    project: Path,
+    modules: list[str],
+    theorems: list[str],
+    *,
+    timeout: float = 600,
+    command_prefix: tuple[str, ...] = (),
+    environment: dict[str, str] | None = None,
+) -> tuple[dict[str, list[str]], str]:
+    """Inspect declaration data without executing imported module initializers or extensions."""
+    source = Path(__file__).with_name("lean_audit.lean").read_text()
+    audit = managed_path(project, ".lake/rung_audit.lean")
     audit.parent.mkdir(parents=True, exist_ok=True)
     audit.write_text(source)
-    proc = subprocess.run([lake, "env", "lean", str(audit)], cwd=project, capture_output=True, text=True, timeout=600)
+    started = time.monotonic()
+    compiler = find_lean(project, timeout=min(10, timeout))
+    libraries = [project / ".lake" / "build" / "lib" / "lean"]
+    libraries += sorted((project / ".lake" / "packages").glob("*/.lake/build/lib/lean"))
+    args = [
+        compiler,
+        "--run",
+        str(audit),
+        json.dumps(modules),
+        json.dumps(theorems),
+        json.dumps([str(path) for path in libraries]),
+    ]
+    env = {
+        **(environment if environment is not None else sandbox.scrubbed_env()),
+        "LEAN_PATH": str(Path(compiler).parent.parent / "lib" / "lean"),
+        "LEAN_SYSROOT": str(Path(compiler).parent.parent),
+    }
+    proc = run_process(
+        [*command_prefix, *args],
+        cwd=project,
+        timeout=max(0.01, timeout - (time.monotonic() - started)),
+        env=env,
+        require_complete=True,
+    )
     output = proc.stdout + proc.stderr
-    return parse_axioms(output), output
+    if proc.returncode != 0:
+        raise ValueError("Lean declaration audit failed: " + output[-1500:])
+    records = json.loads(proc.stdout)
+    if not isinstance(records, list) or len(records) != len(theorems):
+        raise ValueError("Lean declaration audit returned an incomplete proof set")
+    axioms: dict[str, list[str]] = {}
+    for record in records:
+        name = record["name"]
+        if name not in theorems or name in axioms or record["kind"] != "theorem" or not record["isProp"]:
+            raise ValueError("Lean declaration audit did not establish a unique proposition theorem")
+        axioms[name] = record["axioms"]
+    return axioms, output
 
 
-def run(project: Path, theorems: list[str], *, timeout: int = 1800) -> LeanResult:
-    """Build the project, scan for escape hatches, and audit theorem axioms."""
+def run(
+    project: Path,
+    theorems: list[str],
+    *,
+    timeout: int = 1800,
+    command_prefix: tuple[str, ...] = (),
+    environment: dict[str, str] | None = None,
+) -> LeanResult:
+    """Build the project, scan for escape hatches, and audit a nonempty theorem set."""
+    project = project.resolve()
+    started = time.monotonic()
+    findings = scan_sources(project)
+    if findings:
+        return LeanResult("fail", f"{len(findings)} trust problem(s)", findings=findings)
     lake = find_lake()
-    build = subprocess.run([lake, "build"], cwd=project, capture_output=True, text=True, timeout=timeout)
+    build = run_process(
+        [*command_prefix, lake, "build"], cwd=project, timeout=timeout, env=environment, require_complete=True
+    )
     output = build.stdout + build.stderr
     if build.returncode != 0:
         return LeanResult("fail", "lake build failed", output=output)
-
-    findings = scan_sources(project)
     if "declaration uses 'sorry'" in output or "declaration uses `sorry`" in output:
         findings.append("the build reports a declaration that uses `sorry`")
     theorems = theorems or discover_theorems(project)
-    axioms: dict[str, list[str]] = {}
-    if theorems:
-        modules = lake_libraries(project) or sorted({t.rsplit(".", 1)[0] for t in theorems if "." in t})
-        axioms, audit_out = audit_axioms(lake, project, modules, theorems)
-        output += "\n" + audit_out
-        for theorem in theorems:
-            if theorem not in axioms:
-                findings.append(f"{theorem}: Lean did not report its axioms (does it exist?)")
-                continue
-            extra = sorted(set(axioms[theorem]) - STANDARD_AXIOMS)
-            if extra:
-                findings.append(f"{theorem}: depends on non-standard axioms {', '.join(extra)}")
-
+    if not theorems:
+        return LeanResult("fail", "no selected proposition theorems; build success is not a proof", output=output)
+    modules = lake_libraries(project) or sorted({t.rsplit(".", 1)[0] for t in theorems if "." in t})
+    try:
+        axioms, audit_out = audit_axioms(
+            lake,
+            project,
+            modules,
+            theorems,
+            timeout=max(0.01, timeout - (time.monotonic() - started)),
+            command_prefix=command_prefix,
+            environment=environment,
+        )
+    except (ValueError, KeyError, TypeError) as exc:
+        return LeanResult("error", str(exc), output=output)
+    output += "\n" + audit_out
+    for theorem in theorems:
+        extra = sorted(set(axioms[theorem]) - STANDARD_AXIOMS)
+        if extra:
+            findings.append(f"{theorem}: depends on non-standard axioms {', '.join(extra)}")
     warnings = weak_theorems(project)
     if findings:
-        return LeanResult("fail", f"{len(findings)} trust problem(s)", findings=findings, warnings=warnings,
-                          axioms=axioms, output=output)  # fmt: skip
-    checked = f"{len(theorems)} theorem(s) kernel-checked" if theorems else "build succeeded"
-    if warnings:
-        checked += f", {len(warnings)} possibly trivial"
-    return LeanResult("pass", checked, findings=findings, warnings=warnings, axioms=axioms, output=output)
+        return LeanResult(
+            "fail",
+            f"{len(findings)} trust problem(s)",
+            findings=findings,
+            warnings=warnings,
+            axioms=axioms,
+            output=output,
+        )
+    return LeanResult(
+        "pass", f"{len(theorems)} theorem(s) kernel-checked", warnings=warnings, axioms=axioms, output=output
+    )

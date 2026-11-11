@@ -22,3 +22,6 @@ examples/*/.rung/
 .lake/
 states/
 *.st
+
+# Keep the requested formal-repair review artifact in this change.
+!/design_choices.html
