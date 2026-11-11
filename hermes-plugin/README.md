@@ -14,7 +14,7 @@ expires when that code changes.
 
 ```bash
 hermes plugins install rung          # from the plugin catalog
-pip install 'rung-cli>=0.4,<0.5'     # into Hermes's environment, if the install did not add it
+pip install 'rung-cli>=0.5,<0.6'     # into Hermes's environment, if the install did not add it
 ```
 
 Then, in a repository, ask Hermes to "set up rung" (the bundled `rung:rung-setup` skill), or run
@@ -49,7 +49,7 @@ Then, in a repository, ask Hermes to "set up rung" (the bundled `rung:rung-setup
 
 ## Requirements
 
-Hermes Agent 0.20 or newer, Python 3.11 or newer, and `rung-cli` 0.4. Scanners (gitleaks, osv-scanner,
+Hermes Agent 0.20 or newer, Python 3.11 or newer, and `rung-cli` 0.5. Scanners (gitleaks, osv-scanner,
 zizmor), Java with TLC, and Lean are optional; `rung doctor` lists what is missing and how to install it.
 
 ## License

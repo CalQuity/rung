@@ -369,7 +369,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: CalQuity/rung@v0.4.0
+      - uses: CalQuity/rung@v0.5.0
 ```
 
 Use `rung gate --base origin/main` to run the same merge decision locally or in another CI
@@ -529,7 +529,7 @@ To run the same check before every push, add Rung to `.pre-commit-config.yaml`:
 
 ```yaml
 - repo: https://github.com/CalQuity/rung
-  rev: v0.4.0
+  rev: v0.5.0
   hooks:
     - id: rung-check
 ```
