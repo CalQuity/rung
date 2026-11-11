@@ -6,10 +6,10 @@ a test suite: it removes one guard at a time from the actions (a conjunct with n
 as `pc[c] = "idle"` or `status # "paid"`) and runs TLC on each mutant. A guard is there to prevent
 something; if no invariant notices any guard disappearing, the invariants are too weak to catch a bug.
 
-A mutant counts as *caught* when TLC reports an invariant or temporal property violation other than
-`TypeOK` (a type invariant says nothing about the promise). A mutant that times out or does not parse
-is *inconclusive* and is not counted either way. Conjunction is commutative, so reordering conjuncts
-changes nothing; only guards are removed.
+A mutant counts as *caught* only when TLC reports a violation of an explicitly selected law property.
+A type or bound invariant outside that reviewed selection is not a meaningful kill. A mutant that
+times out or does not parse is *inconclusive* and is not counted either way. Conjunction is commutative,
+so reordering conjuncts changes nothing; only guards are removed.
 """
 
 from __future__ import annotations
@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from rung.core.errors import RungError
+from rung.core.ledger import file_digest
 from rung.engines import tla
 
 MAX_MUTANTS = 16
@@ -59,8 +61,8 @@ class FailAbility:
 
     @property
     def ok(self) -> bool:
-        """At least one guard mutant was caught, or there was nothing to remove."""
-        return self.count("caught") > 0 or self.count("survived") == 0
+        """At least one completed mutant violated a selected law property."""
+        return self.count("caught") > 0
 
     @property
     def summary(self) -> str:
@@ -81,9 +83,14 @@ class FailAbility:
 
 def spec_digest(spec: Path, config: Path | None) -> str:
     h = hashlib.sha256()
-    for f in (spec, config):
-        if f is not None and f.exists():
-            h.update(f.read_bytes())
+    try:
+        files = [*tla.module_paths(spec), tla.find_jar(), Path(tla.find_java())]
+    except (OSError, ValueError, RungError):
+        files = list(spec.parent.glob("*.tla"))
+    if config is not None:
+        files.append(config)
+    for f in sorted(files):
+        h.update(f.name.encode() + b"\0" + file_digest(f).encode() + b"\0")
     return h.hexdigest()[:16]
 
 
@@ -152,8 +159,8 @@ def guard_mutants(text: str) -> list[Mutant]:
     return mutants[:MAX_MUTANTS]
 
 
-def classify(result: tla.TLCResult) -> tuple[str, str]:
-    if result.verdict == "fail" and result.violated not in ("deadlock", "TypeOK"):
+def classify(result: tla.TLCResult, law_properties: list[str] | None = None) -> tuple[str, str]:
+    if result.verdict == "fail" and result.violated in (law_properties or []):
         return "caught", f"{result.violated} violated"
     if result.verdict == "fail":
         return "survived", f"only {result.violated} noticed"
@@ -162,7 +169,9 @@ def classify(result: tla.TLCResult) -> tuple[str, str]:
     return "inconclusive", result.reason
 
 
-def run(spec: Path, config: Path | None, *, timeout: int = MUTANT_TIMEOUT) -> FailAbility:
+def run(
+    spec: Path, config: Path | None, *, timeout: int = MUTANT_TIMEOUT, law_properties: list[str] | None = None
+) -> FailAbility:
     """Run TLC on each guard mutant of `spec`, in a temporary copy of its directory."""
     spec = spec.resolve()
     outcome = FailAbility(spec_digest(spec, config))
@@ -173,7 +182,7 @@ def run(spec: Path, config: Path | None, *, timeout: int = MUTANT_TIMEOUT) -> Fa
             target = Path(tmp) / spec.name
             target.write_text(mutant.text)
             result = tla.run(target, config.resolve() if config else None, timeout=timeout)
-        verdict, detail = classify(result)
+        verdict, detail = classify(result, law_properties)
         outcome.results.append(MutantResult(mutant.action, mutant.guard, verdict, detail))
     return outcome
 

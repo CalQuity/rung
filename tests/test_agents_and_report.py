@@ -7,7 +7,7 @@ from pathlib import Path
 from rung import agents
 from rung.analysis import report
 from rung.checks import runner
-from rung.core import config
+from rung.core import config, laws
 
 from .conftest import commit_all
 
@@ -20,6 +20,7 @@ def _project(repo: Path) -> config.Config:
         f'run = "{sys.executable} -c \'pass\'"\ncovers = ["src/*.py"]\n'
     )
     (repo / "LAWS.md").write_text("# Laws\n\n## core-ok\nCore works.\n- enforced by: unit\n- status: approved\n")
+    laws.set_status(repo, "core-ok", "approved")
     commit_all(repo, "project")
     return config.load(repo)
 

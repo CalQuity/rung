@@ -240,7 +240,7 @@ A drafted `tla` or `lean` check has a record in `.rung/formal/<check>.json`, wri
 | Field | |
 |---|---|
 | `sources` | The covered source files (globs) the model describes; a `tla` check's `covers` |
-| `confirmed` | `commit`, `digest` and per-file digests of `sources` when the model was last confirmed, with `by`, `reason` and `at` |
+| `confirmed` | `commit`, `digest`, the model/check review digest and per-file digests of `sources` when the model was last confirmed, with `by`, `reason` and `at` |
 | `scope` | `bounds`, `assumptions` and `not_covered`, in plain sentences |
 | `functions` | The functions the model mirrors, as `path:line name` |
 | `actions`, `invariants` | (`tla`) Each action's plain-language label; each invariant's statement and harm |
@@ -248,9 +248,9 @@ A drafted `tla` or `lean` check has a record in `.rung/formal/<check>.json`, wri
 | `history` | The last 20 confirmations, each with its outcome |
 
 When the digest of `sources` differs from `confirmed.digest`, the check is an error ("the code
-changed since the model was confirmed at <commit>") and `rung status` shows it as `drifted`. Resolve
-it with `rung maintain <check>` (the drafting model updates the model from the diff and Rung rechecks
-it) or, after reviewing the model yourself, `rung confirm <check> --by NAME --reason TEXT`.
+changed since the model was confirmed at <commit>") and `rung status` shows it as `drifted`. Use
+`rung maintain <check>` to propose an update from the diff. After reviewing the complete proposal,
+confirm it with `rung confirm <check> --by NAME --reason TEXT`.
 A check without a source link can still validate the model and reports a model-only result.
 An approved law needs a confirmed source link or a check that exercises the implementation
 before it can hold or pass the merge gate. `rung confirm` creates a record from the model's
@@ -286,6 +286,8 @@ One plain sentence a person can approve.
 - status: proposed | approved
 ```
 
+Approve through `rung laws --approve <id>`; it also writes the required approval digest.
+
 A law enforced by a check whose model has drifted is `unproven`, with the changed files as the reason.
 
 ## Waivers (`.rung/waivers.toml`)
@@ -300,3 +302,43 @@ reason = "test fixture with a fake token"
 approved_by = "Dev"
 expires = 2027-01-31
 ```
+
+### Formal review and freshness
+
+Formal drafts and maintenance results are proposals. After reviewing the complete model,
+its assumptions and bounds, the selected law properties, and any production adapter and
+operation alphabet, use `rung confirm <id> --by NAME --reason TEXT`. A model or check-definition
+change requires confirmation again, even if its top-level invariant or theorem text is unchanged.
+A corrupt model record is an error. A source link is reported only by a fresh receipt that
+actually recorded that link.
+
+Use `rung laws --approve <id>` to approve a law. This writes an approval digest over its text,
+enforcement mapping and formal/conformance inputs. Existing `status: approved` lines without
+a digest require approval again. Changing reviewed inputs revokes the approval. Receipts also
+include `LAWS.md`, so approving or editing laws requires rerunning their checks.
+
+TLC supports modules beside the spec and standard modules from the selected checker jar.
+External `TLA-Library` directories, external symlink inputs and programmatic `TLCSet` control
+are rejected. Source-confirmed TLC checks rerun guard mutation checks against the model
+record's selected law invariants; no completed law-property kill means untested sensitivity.
+This does not establish sensitivity for every law or every possible fault.
+
+Lean requires at least one selected proposition theorem. Its declaration audit reads compiled
+module data without executing imported initializers or extensions. The selected Lean/Lake
+binaries and TLC jar are part of formal receipt identity. Local Lean package contents, including compiled dependency artifacts, are
+included even when ignored by Git. Prepare dependencies and build metadata before confirming
+the model; a build that changes verification inputs must be reviewed and rerun.
+
+DRT conservatively covers project inputs as well as named launch scripts. Declare indirect
+inputs in `specs` when they are outside ordinary project discovery, such as ignored helpers.
+Both sides must produce complete protocol output within the capture limit (2 MB per stream).
+Empty or whitespace-only tokens and runs containing only empty traces are errors. Results
+record tested lengths and operations; finite random agreement covers that tested scope.
+A stateful or nondeterministic failure retains its original input batch instead of claiming
+an isolated minimal witness. Fix-proof receipts also cover documentation, since tests can
+execute code under `docs/` or read prose fixtures.
+
+Generated Lean builds and adapters run in guarded disposable project copies with filtered
+environments. If the operating-system guard is unavailable, the trial errors. A trial also errors if it changes
+source or build-policy inputs inside its disposable copy; prepare a reviewed manifest first. Formal timeouts
+kill process groups and use the configured deadline for both builds and audits.

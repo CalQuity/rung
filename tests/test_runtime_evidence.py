@@ -489,7 +489,12 @@ def test_drafted_drive_replay_retains_evidence_with_the_write_guard(tmp_path, mo
         "assert 'DATABASE_URL' not in os.environ\n"
     )
     if sys.platform == "darwin":
-        sandbox.probe_write_guard(tmp_path)
+        from rung.core.errors import ToolMissing
+
+        try:
+            sandbox.probe_write_guard(tmp_path)
+        except ToolMissing as exc:
+            pytest.skip(str(exc))
         guard_assertions += (
             f"outside = Path({str(outside)!r})\n"
             "try:\n"

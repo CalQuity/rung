@@ -8,10 +8,15 @@ and sends trivially-proved theorems back once for something meaningful.
 from __future__ import annotations
 
 import shlex
+import shutil
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from rung import guides
+from rung.core import ledger, sandbox
+from rung.core.errors import RungError
 from rung.drafting import sql_context
 from rung.drafting.common import (
     FILES,
@@ -51,10 +56,50 @@ SCHEMA = schema(
 DRT_SMOKE_CASES = 300
 
 
+@contextmanager
+def _trial(out_dir: Path, root: Path) -> Iterator[tuple[Path, Path, tuple[str, ...], dict[str, str]]]:
+    """Run generated formal tooling in a guarded copy with a filtered environment."""
+    with sandbox.copy_of(root) as trial:
+        project = trial / ".rung" / "cache" / "formal-trial"
+        shutil.copytree(out_dir, project, ignore=shutil.ignore_patterns(".lake", ".git", ".rung"))
+        prefix = sandbox.validated_write_guard(trial)
+        yield project, trial, prefix, sandbox.trial_environment(trial)
+
+
+def _trial_inputs(project: Path, trial: Path) -> tuple[dict[str, str], dict[str, str]]:
+    """Detect source or build-policy edits inside a disposable copy as well as outside it."""
+    patterns = ["**/*.lean", "lakefile.*", "lean-toolchain", "lake-manifest.json", "**/*.py"]
+    return ledger.snapshot(project, patterns), ledger.snapshot(trial, ["**/*"])
+
+
+def _lean_check(out_dir: Path, root: Path, theorems: list[str]) -> lean.LeanResult:
+    try:
+        with _trial(out_dir, root) as (project, trial, prefix, env):
+            before = _trial_inputs(project, trial)
+            result = lean.run(project, theorems, command_prefix=prefix, environment=env)
+            if before != _trial_inputs(project, trial):
+                return lean.LeanResult(
+                    "error", "formal trial inputs changed during execution; review build metadata first"
+                )
+            return result
+    except (RungError, OSError) as exc:
+        return lean.LeanResult("error", str(exc))
+
+
 def _drt_check(out_dir: Path, root: Path, exe: str, alphabet: list[str]) -> drt.DRTResult:
-    model = drt.Side(shlex.join([lean.find_lake(), "exe", exe]), out_dir)
-    impl = drt.Side(shlex.join([sys.executable, str(out_dir / "drt_adapter.py")]), root)
-    return drt.run(model, impl, alphabet=alphabet, cases=DRT_SMOKE_CASES, max_len=6, seed=1)
+    try:
+        with _trial(out_dir, root) as (project, trial, prefix, env):
+            model = drt.Side(shlex.join([lean.find_lake(), "exe", exe]), project, prefix, env)
+            impl = drt.Side(shlex.join([sys.executable, str(project / "drt_adapter.py")]), trial, prefix, env)
+            before = _trial_inputs(project, trial)
+            result = drt.run(model, impl, alphabet=alphabet, cases=DRT_SMOKE_CASES, max_len=6, seed=1)
+            if before != _trial_inputs(project, trial):
+                return drt.DRTResult(
+                    "error", "formal trial inputs changed during execution; review build metadata first"
+                )
+            return result
+    except (RungError, OSError) as exc:
+        return drt.DRTResult("error", str(exc))
 
 
 def draft(
@@ -73,7 +118,6 @@ def draft(
         + (f"\n\n{block}" if (block := sql.block(root)) else "")
     )
     files: list[Path] = []
-    asked_for_stronger = False
     for round_no in range(1, max_rounds + 1):
         reply = provider.complete_json(prompt, schema=SCHEMA, system=system, cwd=root)
         produced = files_of(reply)
@@ -90,7 +134,7 @@ def draft(
         alphabet = [str(a).strip() for a in reply["alphabet"] if str(a).strip()]
         exe = reply["exe"].strip() or "model"
 
-        result = lean.run(out_dir, theorems)
+        result = _lean_check(out_dir, root, theorems)
         if result.verdict != "pass":
             problem = "\n".join(result.findings) or result.output[-3000:]
             prompt += (
@@ -98,8 +142,7 @@ def draft(
                 "Fix the proofs or the model. Do not weaken a theorem to make it pass."
             )
             continue
-        if result.warnings and not asked_for_stronger:
-            asked_for_stronger = True
+        if result.warnings:
             prompt += (
                 "\n\nThese theorems look true of anything, regardless of the model, so they may prove nothing:\n"
                 + "\n".join(result.warnings)

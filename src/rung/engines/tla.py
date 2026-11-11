@@ -12,10 +12,12 @@ import re
 import shutil
 import subprocess
 import tempfile
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from rung.core.errors import ToolMissing
+from rung.core.proc import run as run_process
 
 DEFAULT_JAR = Path.home() / ".cache" / "rung" / "tla2tools.jar"
 JAR_URL = "https://github.com/tlaplus/tlaplus/releases/latest/download/tla2tools.jar"
@@ -31,6 +33,7 @@ class TraceState:
     index: int
     action: str
     values: dict[str, str]
+    loop_to: int | None = None
 
 
 @dataclass
@@ -50,6 +53,79 @@ _CFG_SECTION = re.compile(
 )
 
 
+def strip_comments(text: str) -> str:
+    """Remove nested TLA+/cfg comments while respecting quoted strings."""
+    out: list[str] = []
+    i, depth, string = 0, 0, False
+    while i < len(text):
+        pair, char = text[i : i + 2], text[i]
+        if depth:
+            if pair in ("(*", "*)"):
+                depth += 1 if pair == "(*" else -1
+                out.extend("  ")
+                i += 2
+                continue
+            out.append("\n" if char == "\n" else " ")
+        elif string:
+            out.append(char)
+            if char == "\\" and i + 1 < len(text):
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if char == '"':
+                string = False
+        elif pair == "(*":
+            depth = 1
+            out.extend("  ")
+            i += 2
+            continue
+        elif pair == "\\*":
+            end = text.find("\n", i)
+            end = len(text) if end < 0 else end
+            out.extend(" " * (end - i))
+            i = end
+            continue
+        else:
+            out.append(char)
+            string = char == '"'
+        i += 1
+    if depth or string:
+        raise ValueError("unterminated TLA+ comment or string")
+    return "".join(out)
+
+
+def module_paths(spec: Path) -> list[Path]:
+    """Resolve supported local imports; standard modules come from the bound checker jar."""
+    if any(
+        "TLA-Library" in os.environ.get(key, "") for key in ("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS")
+    ):
+        raise ValueError("external TLA-Library resolution is unsupported; put dependencies beside the spec")
+    with zipfile.ZipFile(find_jar()) as jar:
+        standard = {Path(name).stem for name in jar.namelist() if name.endswith(".tla")}
+    pending, found = [spec], []
+    while pending:
+        path = pending.pop()
+        if path in found:
+            continue
+        if not path.resolve().is_relative_to(spec.parent.resolve()):
+            raise ValueError("external module symlink is unsupported")
+        text = strip_comments(path.read_text())
+        code = re.sub(r'"(?:\\.|[^"\\])*"', '""', text)
+        if re.search(r"\bTLCSet\b", code):
+            raise ValueError("programmatic TLC control (TLCSet) is unsupported")
+        found.append(path)
+        modules = re.findall(r"\bINSTANCE\s+(\w+)", code)
+        for group in re.findall(r"\bEXTENDS\s+(\w+(?:\s*,\s*\w+)*)", code):
+            modules.extend(re.findall(r"\w+", group))
+        for module in modules:
+            local = spec.parent / f"{module}.tla"
+            if local.exists():
+                pending.append(local)
+            elif module not in standard:
+                raise ValueError(f"unresolved module {module}; put it beside the spec")
+    return found
+
+
 def declared_properties(cfg: Path) -> dict[str, list[str]]:
     """What a TLC config asks TLC to check, and settings that narrow what a pass means."""
     out: dict[str, list[str]] = {"invariants": [], "properties": [], "narrowing": []}
@@ -58,8 +134,8 @@ def declared_properties(cfg: Path) -> dict[str, list[str]]:
     except OSError:
         return out
     section = ""
-    for raw in text.splitlines():
-        line = raw.split("\\*", 1)[0].strip()
+    for raw in strip_comments(text).splitlines():
+        line = raw.strip()
         if not line:
             continue
         if m := _CFG_SECTION.match(line):
@@ -71,6 +147,10 @@ def declared_properties(cfg: Path) -> dict[str, list[str]]:
             names = rest.split()
         else:
             names = line.split()
+        if section.startswith(("INVARIANT", "PROPERT")) and any(
+            not re.fullmatch(r"[A-Za-z_]\w*(?:![A-Za-z_]\w*)*", n) for n in names
+        ):
+            raise ValueError("unsupported property list in TLC config")
         if section.startswith("INVARIANT"):
             out["invariants"] += names
         elif section.startswith("PROPERT"):
@@ -104,6 +184,14 @@ def parse_trace(lines: list[str]) -> list[TraceState]:
     current: TraceState | None = None
     last_var = ""
     for line in lines:
+        loop = re.match(r"^(?:State (\d+): Stuttering|(?:State \d+: )?Back to state (\d+))", line)
+        if loop and states:
+            target = states[-1].index if loop.group(1) else int(loop.group(2))
+            states.append(
+                TraceState(states[-1].index + 1, "Stuttering" if loop.group(1) else "Back to state", {}, target)
+            )
+            current, last_var = None, ""
+            continue
         header = _STATE_HEADER.match(line)
         if header:
             current = TraceState(int(header.group(1)), _action_label(header.group(2)), {})
@@ -113,8 +201,9 @@ def parse_trace(lines: list[str]) -> list[TraceState]:
         if current is None:
             continue
         stripped = line.strip()
-        if stripped.startswith("/\\ ") and " = " in stripped:
-            name, _, value = stripped[3:].partition(" = ")
+        value_line = stripped.removeprefix("/\\ ")
+        if re.match(r"^[A-Za-z_]\w* = ", value_line):
+            name, _, value = value_line.partition(" = ")
             last_var = name.strip()
             current.values[last_var] = value.strip()
         elif stripped and last_var and not stripped.startswith(("Error", "State ", "Back to state")):
@@ -170,6 +259,14 @@ def run(
 ) -> TLCResult:
     """Model-check `spec` with TLC and return the parsed result; `dump` writes the state graph there as DOT."""
     jar, java = find_jar(), find_java()
+    try:
+        module_paths(spec)
+        if config is not None:
+            declared = declared_properties(config)
+            if not declared["invariants"] and not declared["properties"]:
+                return TLCResult("error", "the config selects no invariant or property")
+    except (ValueError, OSError, zipfile.BadZipFile) as exc:
+        return TLCResult("error", str(exc))
     spec = spec.resolve()
     cmd = [java, "-XX:+UseParallelGC", "-cp", str(jar), "tlc2.TLC", "-workers", workers]
     with tempfile.TemporaryDirectory(prefix="rung-tlc-") as meta:
@@ -180,7 +277,7 @@ def run(
             cmd += ["-dump", "dot,actionlabels", str(dump.resolve().with_suffix(""))]
         cmd.append(spec.name)
         try:
-            proc = subprocess.run(cmd, cwd=spec.parent, capture_output=True, text=True, timeout=timeout)
+            proc = run_process(cmd, cwd=spec.parent, timeout=timeout, require_complete=True)
         except subprocess.TimeoutExpired:
             return TLCResult(verdict="error", reason=f"TLC timed out after {timeout}s")
     return parse_output(proc.stdout + proc.stderr, proc.returncode)
@@ -191,6 +288,9 @@ def render_trace(trace: list[TraceState]) -> str:
     out: list[str] = []
     previous: dict[str, str] = {}
     for state in trace:
+        if state.loop_to is not None:
+            out.append(f"  {state.index}. {state.action}: loop to state {state.loop_to}")
+            continue
         if state.index == 1:
             out.append("  1. initial state")
             changed = state.values

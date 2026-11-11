@@ -17,6 +17,7 @@ from rung.core import git, launch, ledger, modelcard
 from rung.core.config import Check, Config, ConfigError
 from rung.core.errors import RungError
 from rung.core.redact import redact, redact_lines
+from rung.engines import lean, tla
 
 MAX_RECORDED_FINDINGS = 200
 
@@ -35,12 +36,45 @@ def covers(check: Check) -> list[str]:
     return registry.get(check.kind).covers(check)
 
 
-def specs(check: Check) -> list[str]:
-    return registry.get(check.kind).specs(check)
+def specs(check: Check, root: Path | None = None) -> list[str]:
+    patterns = [*registry.get(check.kind).specs(check), "LAWS.md"]
+    if check.kind in modelcard.KINDS:
+        patterns.append((modelcard.FORMAL_DIR / f"{check.id}.json").as_posix())
+    if root is not None and check.kind == "drt":
+        for key in ("model", "impl"):
+            cwd = root / check.get(f"{key}_cwd", ".")
+            for path in launch.file_inputs(shlex.split(check.require(key)), cwd):
+                if path.is_relative_to(root):
+                    patterns.append(path.relative_to(root).as_posix())
+    if root is not None and check.kind in ("lean", "drt"):
+        projects = (
+            [root / check.require("project")]
+            if check.kind == "lean"
+            else [root / check.get(f"{side}_cwd", ".") for side in ("model", "impl")]
+        )
+        for project in projects:
+            packages = project / ".lake" / "packages"
+            if not packages.exists():
+                continue
+            patterns.extend(
+                p.relative_to(root).as_posix()
+                for p in packages.rglob("*")
+                if p.is_file() and ".git" not in p.relative_to(packages).parts
+            )
+    return patterns
 
 
-def definition(check: Check) -> str:
+def definition(check: Check, root: Path | None = None) -> str:
     options = {**check.options, "isolate": True} if isolates_evidence(check) else check.options
+    if check.kind in (*modelcard.KINDS, "drt"):
+        options = {**options, "formal_protocol": 2}
+    if root is not None and check.kind in (*modelcard.KINDS, "drt"):
+        tools = tool_identity(root, check)
+        options = {**options, "checker_files": {p: ledger.file_digest(Path(p)) for p in tools or {}}}
+        if check.kind == "tla":
+            options["java_options"] = {
+                k: os.environ.get(k, "") for k in ("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS")
+            }
     return ledger.definition_hash(check.kind, check.covers, options)
 
 
@@ -67,9 +101,28 @@ def tool_identity(root: Path, check: Check) -> dict[str, tuple[int, ...]] | None
                     return None
                 argv, cwd = inner.argv, inner.cwd
     if check.kind == "tla":
-        paths += [Path(p) for p in (shutil.which("java"), os.environ.get("RUNG_TLA2TOOLS")) if p]
+        try:
+            paths += [Path(tla.find_java()), tla.find_jar()]
+        except RungError:
+            return None
     if check.kind == "lean":
+        paths.append(Path(lean.__file__).with_name("lean_audit.lean"))
         paths.append(Path(shutil.which("lake") or Path.home() / ".elan/bin/lake"))
+        elan = shutil.which("elan") or str(Path.home() / ".elan/bin/elan")
+        for tool in ("lean", "lake"):
+            try:
+                resolved = subprocess.run(
+                    [elan, "which", tool],
+                    cwd=root / check.require("project"),
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                return None
+            if resolved.returncode:
+                return None
+            paths.append(Path(resolved.stdout.strip()))
     result = {}
     for path in {candidate for name in paths for candidate in launch.linked_paths(name)}:
         try:
@@ -118,18 +171,25 @@ def run_check(
         # Attested evidence cannot be re-run; while its files are unchanged, the attestation stands.
         return Result(check, Outcome("pass", held.entry.get("summary", "attested"), held.entry.get("evidence", [])))
     checker = registry.get(check.kind)
-    cover_patterns, spec_patterns = checker.covers(check), checker.specs(check)
+    cover_patterns, spec_patterns = checker.covers(check), specs(check, root)
     before = (ledger.snapshot(root, cover_patterns), ledger.snapshot(root, spec_patterns))
     tools = tool_identity(root, check)
+    checked_definition = definition(check, root)
     # A covered link that points outside the project is recorded by its target path, never followed:
     # pointing it somewhere else stales the verdict, but what it points at is not part of the evidence.
     try:
         context = Context(root=root, base=base, seed=seed, scenarios=scenarios, merge_gate=merge_gate)
-        outcome = checker.run(context, check)
+        external = [p for snapshot in before for p, digest in snapshot.items() if digest.startswith("external-link:")]
+        if check.kind in (*modelcard.KINDS, "drt") and external:
+            outcome = Outcome("error", "external symlink inputs cannot be verified: " + ", ".join(external))
+        else:
+            outcome = checker.run(context, check)
     except (RungError, OSError, subprocess.TimeoutExpired) as exc:
         outcome = Outcome("error", str(exc))
     # Hash before and after: a file edited mid-run must not be recorded as verified.
-    after = (ledger.snapshot(root, cover_patterns), ledger.snapshot(root, spec_patterns))
+    after = (ledger.snapshot(root, cover_patterns), ledger.snapshot(root, specs(check, root)))
+    if definition(check, root) != checked_definition:
+        outcome = Outcome("error", "checker identity or definition changed while the check ran", outcome.lines)
     if after != before:
         moved = sorted(p for b, a in zip(before, after, strict=True) for p in set(b) | set(a) if b.get(p) != a.get(p))
         hint = (
@@ -148,7 +208,7 @@ def run_check(
         specs=before[1],
         summary=redact(outcome.summary),
         evidence=[f"{path} sha256:{digest}" for path, digest in outcome.evidence.items()],
-        definition=definition(check),
+        definition=checked_definition,
         context=base or "",
         valid_until=outcome.valid_until,
         details={
@@ -167,10 +227,21 @@ def status(config: Config, check: Check, *, base: str | None = None, view: ledge
     """Whether `check`'s latest verdict still holds. With `base`, it must have been made against that base."""
     view = view or ledger.View(config.root)
     max_age = registry.get(check.kind).max_age_days(check)
-    held = view.status(check.id, covers(check), specs(check), definition(check), base, max_age)
+    held = view.status(
+        check.id, covers(check), specs(check, config.root), definition(check, config.root), base, max_age
+    )
     if check.kind in modelcard.KINDS:
         card = modelcard.load(config.root, check.id)
-        held.implementation_link = "source-confirmed" if modelcard.has_source_confirmation(card) else "model-only"
+        receipt_link = ((held.entry or {}).get("details") or {}).get("implementation_link", "model-only")
+        held.implementation_link = (
+            "source-confirmed"
+            if modelcard.has_source_confirmation(card) and receipt_link == "source-confirmed"
+            else "model-only"
+        )
+        if modelcard.path(config.root, check.id).exists() and card is None:
+            return ledger.Status(
+                check.id, "drifted", held.entry, ["model record is corrupt"], implementation_link="drifted"
+            )
         if card and (drift := modelcard.drift(config.root, check.id, card)):
             return ledger.Status(check.id, "drifted", held.entry, [f"{drift.message}: {', '.join(drift.changed)}"],
                                  implementation_link="drifted")  # fmt: skip
@@ -222,7 +293,7 @@ def attest(config: Config, check: Check, files: list[Path], *, by: str, note: st
         specs=before[1],
         summary=summary,
         evidence=[f"{path} sha256:{digest}" for path, digest in artifacts.items()],
-        definition=definition(check),
+        definition=definition(check, root),
         details={"lines": lines, "attested_by": by.strip(), "note": redact(note)},
     )
     return Result(check, Outcome("pass", summary, lines, artifacts))

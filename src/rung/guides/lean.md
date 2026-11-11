@@ -52,8 +52,8 @@ Rung compare the model with the real code on random inputs.
 
 - State the scope: each bound, each assumption ("amounts fit in 64 bits") and what the model leaves
   out. A proof holds only inside it.
-- When the covered code changes, the check is an error until `rung maintain <check>` updates the
-  model (or a person confirms it with `rung confirm`). Never weaken a theorem unless the promise
+- When the covered code changes, the check is an error until a person reviews and confirms the
+  model with `rung confirm`; `rung maintain <check>` proposes an update. Never weaken a theorem unless the promise
   changed on purpose and you can quote where.
 
 ## Trust gate (Rung enforces it)

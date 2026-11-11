@@ -90,6 +90,13 @@ def test_counterexample_stops_the_draft_for_a_person(tmp_path: Path, monkeypatch
 
 
 def test_tla_checker_errors_are_fed_back_for_repair(tmp_path: Path, monkeypatch) -> None:
+    from rung.engines import tla_mutate
+
+    monkeypatch.setattr(
+        tla_mutate,
+        "run",
+        lambda *a, **k: tla_mutate.FailAbility("test", [tla_mutate.MutantResult("A", "g", "caught", "Safe violated")]),
+    )
     results = iter([
         tla.TLCResult("error", "Parse Error at line 3", output="*** Parse Error ***"),
         tla.TLCResult("pass", "ok", distinct_states=12),
@@ -103,6 +110,13 @@ def test_tla_checker_errors_are_fed_back_for_repair(tmp_path: Path, monkeypatch)
 
 
 def test_vacuous_spec_is_sent_back(tmp_path: Path, monkeypatch) -> None:
+    from rung.engines import tla_mutate
+
+    monkeypatch.setattr(
+        tla_mutate,
+        "run",
+        lambda *a, **k: tla_mutate.FailAbility("test", [tla_mutate.MutantResult("A", "g", "caught", "Safe violated")]),
+    )
     results = iter([tla.TLCResult("pass", "ok", distinct_states=1), tla.TLCResult("pass", "ok", distinct_states=9)])
     monkeypatch.setattr(tla, "run", lambda *a, **k: next(results))
     provider = ScriptedProvider([SPEC_REPLY, SPEC_REPLY])
@@ -130,6 +144,7 @@ def _lean_ok(warnings: list[str]) -> lean.LeanResult:
 @pytest.fixture
 def pinned(monkeypatch) -> None:
     monkeypatch.setattr(lean, "toolchain", lambda: "leanprover/lean4:v4.35.0")
+    monkeypatch.setattr(lean_draft, "_lean_check", lambda out_dir, root, theorems: lean.run(out_dir, theorems))
 
 
 def test_lean_draft_pins_the_toolchain_and_retries_trivial_theorems_once(tmp_path: Path, monkeypatch, pinned) -> None:
@@ -234,6 +249,13 @@ def test_runtime_draft_can_require_a_video(tmp_path: Path) -> None:
 
 
 def test_drafts_carry_proposed_laws_that_are_never_duplicated(tmp_path: Path, monkeypatch) -> None:
+    from rung.engines import tla_mutate
+
+    monkeypatch.setattr(
+        tla_mutate,
+        "run",
+        lambda *a, **k: tla_mutate.FailAbility("test", [tla_mutate.MutantResult("A", "g", "caught", "Safe violated")]),
+    )
     from rung.core import laws
 
     monkeypatch.setattr(tla, "run", lambda *a, **k: tla.TLCResult("pass", "ok", distinct_states=9))

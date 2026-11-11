@@ -28,3 +28,7 @@ For each change in the diff, pick exactly one:
   model already describes the code.
 - Keep the plain-language labels, invariant statements, harms and scope current for the code as it
   is now; return all of them, not only what changed.
+
+Your classifications and model edits are proposals. Rung does not treat a `no-effect` opinion or a
+`promise-changed` citation as source confirmation or law approval. A person reviews the complete
+model definition, assumptions, bounds, adapter and operation scope before confirming it.

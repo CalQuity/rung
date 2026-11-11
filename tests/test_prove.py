@@ -256,7 +256,7 @@ def test_reports_the_tests_write_do_not_void_the_proof(repo: Path) -> None:
     assert result.verdict == "error" and "fixture.json" in result.summary
 
 
-def test_documentation_edits_do_not_stale_a_proof(repo: Path) -> None:
+def test_documentation_edits_conservatively_stale_a_proof(repo: Path) -> None:
     from rung.analysis import report
     from rung.core import config
 
@@ -274,7 +274,7 @@ def test_documentation_edits_do_not_stale_a_proof(repo: Path) -> None:
 
     (repo / "README.md").write_text("demo, now with refunds\n")
     (repo / "docs" / "guide.txt").write_text("how refunds work, revised\n")
-    assert verdict() == "pass"
+    assert verdict() == "stale"
     (repo / "fixtures" / "cases.json").write_text("[150, 200]\n")
     assert verdict() == "stale"
 
@@ -291,7 +291,23 @@ def test_a_file_added_after_the_proof_stales_it(repo: Path) -> None:
         return report.build(config.load(repo))["proofs"][0]["verdict"]
 
     (repo / "notes.md").write_text("a new document\n")
-    assert verdict() == "pass"
+    assert verdict() == "stale"
     (repo / "plugins").mkdir()
     (repo / "plugins" / "discount.toml").write_text("rate = 2\n")  # a new directory and file type
     assert verdict() == "stale"
+
+
+def test_finding_14_executable_docs_and_prose_fixtures_are_proof_inputs(tmp_path: Path) -> None:
+    from rung.core import ledger
+
+    (tmp_path / "docs").mkdir()
+    source = tmp_path / "docs" / "impl.py"
+    fixture = tmp_path / "cases.md"
+    source.write_text("def refund(x): return x\n")
+    fixture.write_text("150\n")
+    before = ledger.snapshot(tmp_path, prove.proof_scope(tmp_path))
+    source.write_text("def refund(x): return 999\n")
+    assert ledger.snapshot(tmp_path, prove.proof_scope(tmp_path)) != before
+    before = ledger.snapshot(tmp_path, prove.proof_scope(tmp_path))
+    fixture.write_text("999\n")
+    assert ledger.snapshot(tmp_path, prove.proof_scope(tmp_path)) != before

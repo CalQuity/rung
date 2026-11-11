@@ -27,7 +27,7 @@ def test_a_link_outside_the_project_is_recorded_not_refused(repo: Path, tmp_path
     result = json.loads(capsys.readouterr().out)["results"][0]
     assert result["verdict"] == "pass", result["summary"]
     entry = ledger.read_all(repo)["unit"]
-    recorded = ledger.snapshot(repo, ["**/*"])
+    recorded = ledger.snapshot(repo, ["**/*", *runner.specs(config.load(repo).check("unit"), repo)])
     assert recorded["shared"].startswith("external-link:")
     assert entry["inputs"]["digest"] == ledger.inputs_digest(recorded)
 

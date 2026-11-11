@@ -22,6 +22,10 @@ from rung.engines import drt, lean, tla, tla_mutate, tla_render
 def _drift(root: Path, check: Check) -> tuple[dict[str, Any] | None, Outcome | None]:
     """The check's model record, and an error outcome when the code drifted from it."""
     card = modelcard.load(root, check.id)
+    previous = ledger.read_all(root).get(check.id, {}) if card is None else {}
+    expected = (previous.get("details") or {}).get("implementation_link") == "source-confirmed"
+    if card is None and (modelcard.path(root, check.id).exists() or expected):
+        return None, Outcome("error", "the model record is unreadable or has the wrong check id; restore or review it")
     if card and (d := modelcard.drift(root, check.id, card)):
         details = {"drift": {"since": d.commit, "changed": d.changed}}
         return card, Outcome("error", d.message, d.lines(), details=details)
@@ -52,7 +56,7 @@ class TLAChecker(Checker):
 
     def specs(self, check: Check) -> list[str]:
         spec = Path(check.require("spec"))
-        files = [*super().specs(check), spec.as_posix(), (spec.parent / "*.tla").as_posix()]
+        files = [*super().specs(check), spec.as_posix(), (spec.parent / "*.tla").as_posix(), "**/*.tla"]
         if cfg := check.get("config"):
             files.append(cfg)
         return files
@@ -61,7 +65,10 @@ class TLAChecker(Checker):
         cfg = check.get("config")
         if not cfg:
             raise ConfigError(f"check {check.id!r}: a TLA+ check needs a `config` (.cfg) listing what to check")
-        declared = tla.declared_properties(ctx.root / cfg)
+        try:
+            declared = tla.declared_properties(ctx.root / cfg)
+        except ValueError as exc:
+            return Outcome("error", str(exc))
         if not declared["invariants"] and not declared["properties"]:
             return Outcome("fail", "the .cfg declares no INVARIANT or PROPERTY, so TLC checked nothing", [
                 f"add e.g. `INVARIANT TypeOK` to {cfg}",
@@ -79,11 +86,18 @@ class TLAChecker(Checker):
             lines.append("note: " + "; ".join(declared["narrowing"]) + " (narrows what a pass covers)")
         directory: Path | None = None
         artifacts: dict[str, str] = {}
+        if result.verdict == "fail":
+            directory, raw = _write(directory, ctx.root, check.id, "tlc-output.txt", result.output)
+            artifacts[raw.relative_to(ctx.root).as_posix()] = ledger.file_digest(raw)
+            if not result.trace:
+                lines.append(
+                    "counterexample parsing incomplete; raw TLC output: " + raw.relative_to(ctx.root).as_posix()
+                )
         if result.trace:
             if card is not None:  # the model's own words for its actions and invariants
                 lines += tla_render.story(result.trace, result.violated, card)
             lines.append(f"{'raw ' if card else ''}counterexample ({len(result.trace)} states):")
-            lines.append(tla.render_trace(result.trace))
+            lines.append(result.output or tla.render_trace(result.trace))
             if card is not None:
                 diagram = tla_render.counterexample_mermaid(result.trace, result.violated, card)
                 directory, target = _write(directory, ctx.root, check.id, "counterexample.mmd", diagram)
@@ -103,12 +117,21 @@ class TLAChecker(Checker):
         lines += _described(card)
         details: dict[str, Any] = {}
         if card is not None:
-            digest = tla_mutate.spec_digest(spec, config)
-            if fa_line := modelcard.failability_line(card, digest):
-                lines.append(fa_line)
             details = {"scope": card.get("scope") or {}, "confirmed": (card.get("confirmed") or {}).get("commit", "")}
-            if (card.get("failability") or {}).get("spec_digest") == digest:
-                details["failability"] = {k: card["failability"][k] for k in ("summary", "caught", "survived")}
+            if result.verdict == "pass" and modelcard.has_source_confirmation(card):
+                properties = list(card.get("invariants") or {})
+                if not properties:
+                    return Outcome("error", "no reviewed law properties selected for fail-ability", lines)
+                fa = tla_mutate.run(spec, config, law_properties=properties)
+                lines.append("fail-ability (selected properties only): " + fa.summary)
+                details["failability"] = fa.as_dict()
+                if not fa.ok:
+                    return Outcome(
+                        "error",
+                        "fail-ability is untested or inconclusive for reviewed law properties",
+                        lines,
+                        details=details,
+                    )
         if result.trace:
             lines.append(f"next: replay the steps against the code (a step the code cannot take: rung maintain "
                          f"{check.id}); if every step is real, fix the code, then rung check {check.id}")  # fmt: skip
@@ -122,18 +145,23 @@ class LeanChecker(Checker):
 
     def specs(self, check: Check) -> list[str]:
         project = Path(check.require("project"))
-        files = ("**/*.lean", "lakefile.*", "lean-toolchain", "lake-manifest.json")
+        files = ("**/*.lean", "lakefile.*", "lean-toolchain", "lake-manifest.json", "**/*.py")
         return [*super().specs(check), *((project / name).as_posix() for name in files)]
 
     def run(self, ctx: Context, check: Check) -> Outcome:
         card, drifted = _drift(ctx.root, check)
         if drifted:
             return drifted
-        result = lean.run(
-            ctx.root / check.require("project"),
-            check.get_list("theorems"),
-            timeout=check.get_int("timeout", 1800),
-        )
+        if check.get("drafted_by") and not modelcard.has_source_confirmation(card):
+            from rung.drafting.lean import _lean_check
+
+            result = _lean_check(ctx.root / check.require("project"), ctx.root, check.get_list("theorems"))
+        else:
+            result = lean.run(
+                ctx.root / check.require("project"),
+                check.get_list("theorems"),
+                timeout=check.get_int("timeout", 1800),
+            )
         lines = list(result.findings) + [f"WEAK {w}" for w in result.warnings]
         for theorem, axioms in result.axioms.items():
             lines.append(f"{theorem}: axioms [{', '.join(axioms) or 'none'}]")
@@ -170,14 +198,46 @@ class DRTChecker(Checker):
     kind = "drt"
     summary = "Differentially test the implementation against an executable model"
 
+    def specs(self, check: Check) -> list[str]:
+        # Arbitrary launchers may read helpers and configuration; use a conservative project scope.
+        return [*super().specs(check), "**/*"]
+
     def run(self, ctx: Context, check: Check) -> Outcome:
+        if check.get("drafted_by") and not ctx.command_prefix:
+            from rung.core import sandbox
+
+            with sandbox.copy_of(ctx.root) as trial:
+                prefix = sandbox.validated_write_guard(trial)
+                return self.run(
+                    Context(root=trial, command_prefix=prefix, environment=sandbox.trial_environment(trial)), check
+                )
+        if ctx.command_prefix:
+            patterns = self.covers(check) + self.specs(check)
+            before = ledger.snapshot(ctx.root, patterns)
+            result = self._run(ctx, check)
+            if before != ledger.snapshot(ctx.root, patterns):
+                return Outcome("error", "formal trial inputs changed during execution; review build metadata first")
+            return result
+        return self._run(ctx, check)
+
+    def _run(self, ctx: Context, check: Check) -> Outcome:
         cases, min_len, max_len = check.get_int("cases", 1000), check.get_int("min_len", 0), check.get_int("max_len", 8)
         if cases < 1:
             raise ConfigError(f"check {check.id!r}: `cases` must be at least 1; zero inputs prove nothing")
         if min_len > max_len:
             raise ConfigError(f"check {check.id!r}: `min_len` ({min_len}) is greater than `max_len` ({max_len})")
-        model = drt.Side(_resolve_tools(check.require("model")), ctx.root / check.get("model_cwd", "."))
-        impl = drt.Side(_resolve_tools(check.require("impl")), ctx.root / check.get("impl_cwd", "."))
+        model = drt.Side(
+            _resolve_tools(check.require("model")),
+            ctx.root / check.get("model_cwd", "."),
+            ctx.command_prefix,
+            ctx.environment,
+        )
+        impl = drt.Side(
+            _resolve_tools(check.require("impl")),
+            ctx.root / check.get("impl_cwd", "."),
+            ctx.command_prefix,
+            ctx.environment,
+        )
         result = drt.run(
             model,
             impl,
@@ -196,4 +256,18 @@ class DRTChecker(Checker):
                 f"  model: {m.model}",
                 f"  impl:  {m.impl}",
             ]
-        return Outcome(result.verdict, result.reason, lines)
+        if result.context:
+            lines.append("stateful or nondeterministic divergence; replay the original batch")
+        return Outcome(
+            result.verdict,
+            result.reason,
+            lines,
+            details={
+                "tested_lengths": result.lengths,
+                "tested_operations": result.operations,
+                "batch_context": result.context,
+                "batch_model": result.context_model,
+                "batch_impl": result.context_impl,
+                "observed_divergences": [d.__dict__ for d in result.examples],
+            },
+        )

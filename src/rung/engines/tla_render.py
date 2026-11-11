@@ -41,12 +41,21 @@ def story(trace: list[TraceState], violated: str, card: dict[str, Any] | None) -
         out.append(f"harm: {invariant['harm']}")
     previous: dict[str, str] = {}
     for state in trace:
+        if state.loop_to is not None:
+            out.append(f"  {state.index}. {state.action}: loop to state {state.loop_to}")
+            continue
         if state.index == 1:
             out.append("  1. start: " + ", ".join(f"{k} = {v}" for k, v in state.values.items()))
         else:
             out.append(f"  {state.index}. {label(state.action, actions)}")
             changed = {k: v for k, v in state.values.items() if previous.get(k) != v}
-            out.append("       " + (", ".join(f"{k} = {v}" for k, v in changed.items()) or "(nothing changed)"))
+            out.append(
+                "       "
+                + (
+                    ", ".join(f"{k} = {v}" for k, v in changed.items())
+                    or ("(nothing changed)" if state.values else "(state values unavailable; see raw TLC output)")
+                )
+            )
         previous = state.values
     return out
 
@@ -64,8 +73,12 @@ def counterexample_mermaid(trace: list[TraceState], violated: str, card: dict[st
     lines = ["stateDiagram-v2", "    direction TB"]
     previous: dict[str, str] = {}
     for state in trace:
+        if state.loop_to is not None:
+            continue
         shown = state.values if state.index == 1 else {k: v for k, v in state.values.items() if previous.get(k) != v}
-        body = "<br/>".join(_text(f"{k} = {v}") for k, v in shown.items()) or "(nothing changed)"
+        body = "<br/>".join(_text(f"{k} = {v}") for k, v in shown.items()) or (
+            "(nothing changed)" if state.values else "(state values unavailable; see raw TLC output)"
+        )
         title = "start" if state.index == 1 else f"step {state.index}"
         lines.append(f'    state "{title}<br/>{body}" as s{state.index}')
         previous = state.values
@@ -73,10 +86,11 @@ def counterexample_mermaid(trace: list[TraceState], violated: str, card: dict[st
         lines.append(f"    [*] --> s{trace[0].index}")
     for before, after in itertools.pairwise(trace):
         plain = actions.get(_base(after.action), "")
-        lines.append(f"    s{before.index} --> s{after.index} : {_text(plain or after.action)}")
+        target = after.loop_to if after.loop_to is not None else after.index
+        lines.append(f"    s{before.index} --> s{target} : {_text(plain or after.action)}")
     if trace:
         note = f"{violated} broken" + (f" - {statement}" if statement else "")
-        lines.append(f"    note right of s{trace[-1].index} : {_text(note)}")
+        lines.append(f"    note right of s{trace[-1].loop_to or trace[-1].index} : {_text(note)}")
     return "\n".join(lines) + "\n"
 
 

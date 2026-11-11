@@ -34,7 +34,7 @@ from typing import Any, ClassVar
 from rung import guides
 from rung.checks import registry
 from rung.checks.base import Context
-from rung.core import git, modelcard
+from rung.core import git, ledger, modelcard
 from rung.core.config import Check, Config, ConfigError
 from rung.drafting.common import (
     ACTIONS,
@@ -114,7 +114,7 @@ class MaintainResult:
     @property
     def confirms(self) -> bool:
         """Whether the model now describes the code: move the confirmed commit forward."""
-        return self.outcome in ("in-sync", "updated") or (self.outcome == "bug" and self.updated)
+        return self.rounds == 0 and self.outcome == "in-sync"
 
 
 def _normal(text: str) -> str:
@@ -193,6 +193,9 @@ class TLAModel(Model):
         declared = tla.declared_properties(self.cfg)
         text = self.spec.read_text() if self.spec.exists() else ""
         out = {f"setting: {n}": n for n in declared["narrowing"]}
+        out["model definition closure"] = ledger.inputs_digest(
+            ledger.snapshot(self.root, ["**/*.tla", self.cfg.relative_to(self.root).as_posix()])
+        )
         for name in declared["invariants"] + declared["properties"]:
             m = re.search(rf"^{re.escape(name)}\s*==(.*?)(?=^\S|\Z)", text, re.M | re.S)
             out[name] = _normal(m.group(1)) if m else "(not defined)"
@@ -207,7 +210,7 @@ class TLAModel(Model):
             return Verified("fail", story=[f"TLC: {result.reason}", *story])
         if result.distinct_states <= 1:
             return Verified("error", "TLC explored at most one state, so the invariants are vacuous.")
-        failability = tla_mutate.run(self.spec, self.cfg)
+        failability = tla_mutate.run(self.spec, self.cfg, law_properties=list(card.get("invariants") or {}))
         if not failability.ok:
             return Verified("error", tla_mutate.repair_request(failability).strip())
         return Verified("pass", failability=failability.as_dict())
@@ -232,16 +235,28 @@ class LeanModel(Model):
         return name.endswith(".lean") or name in ("lakefile.toml", "drt_adapter.py")
 
     def promises(self) -> dict[str, str]:
-        return {name: _normal(statement) for name, statement in lean.theorem_statements(self.directory).items()}
+        out = {name: _normal(statement) for name, statement in lean.theorem_statements(self.directory).items()}
+        out["model definition closure"] = ledger.inputs_digest(
+            ledger.snapshot(self.root, registry.get("lean").specs(self.check))
+        )
+        return out
 
     def verify(self, card: dict[str, Any]) -> Verified:
-        result = lean.run(self.directory, self.theorems, timeout=self.check.get_int("timeout", 1800))
+        from rung.drafting.lean import _lean_check
+
+        result = _lean_check(self.directory, self.root, self.theorems)
         if result.verdict != "pass":
             return Verified("error", "\n".join(result.findings) or result.output[-3000:])
         drt_id = f"{self.check.id}-drt"
         if any(c.id == drt_id for c in self.config.checks):
             drt_check = self.config.check(drt_id)
-            outcome = registry.get("drt").run(Context(root=self.root), drt_check)
+            from rung.core import sandbox
+
+            with sandbox.copy_of(self.root) as trial:
+                prefix = sandbox.validated_write_guard(trial)
+                outcome = registry.get("drt").run(
+                    Context(root=trial, command_prefix=prefix, environment=sandbox.trial_environment(trial)), drt_check
+                )
             if outcome.verdict == "error":
                 return Verified("error", f"the differential test could not run: {outcome.summary}")
             if outcome.verdict == "fail":
@@ -324,7 +339,8 @@ def maintain(
     """Update `check`'s model to describe the code as it is now, then let the checker decide."""
     root = config.root
     model = model_for(config, check, card)
-    changed = modelcard.changed_files(root, card)
+    drift = modelcard.drift(root, check.id, card)
+    changed = modelcard.changed_files(root, card) or (drift.changed if drift else [])
     if not changed:
         verified = model.verify(card)
         outcome = {"pass": "in-sync", "fail": "bug"}.get(verified.status, "blocked")
@@ -356,7 +372,7 @@ def maintain(
                 continue
             model.restore(original)
             written = safe_write(model.directory, produced)
-            loosened = weakened(promised, model.promises())
+            loosened = [name for name in weakened(promised, model.promises()) if name != "model definition closure"]
             cited = [c for c in reply["changes"] if c["classification"] == "promise-changed" and c["evidence"].strip()]
             if loosened and not cited:
                 problem = WEAKENED.format(names=", ".join(loosened))
@@ -385,9 +401,9 @@ def maintain(
                 verified.story,
             )
             result.message = {
-                "bug": "the model describes the current code, and the checker finds a bug in it",
-                "updated": f"the model was updated to describe the code ({', '.join(files)}) and it checks",
-                "in-sync": "the changes do not affect what the model describes, and it checks",
+                "bug": "the proposed model has a counterexample; review its correspondence with the code",
+                "updated": f"the proposed model was updated ({', '.join(files)}) and checks; review required",
+                "in-sync": "the model proposes no effect on the spec; source review is still required",
             }[result.outcome]
             if loosened:
                 result.message += f"; promises changed on purpose: {', '.join(loosened)}"

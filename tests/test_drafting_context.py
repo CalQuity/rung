@@ -17,10 +17,22 @@ from rung.drafting import common, providers, routes, runtime, sql_context
 from rung.drafting import lean as lean_draft
 from rung.drafting import property as property_draft
 from rung.drafting import tla as tla_draft
-from rung.engines import drt, lean, tla
+from rung.engines import drt, lean, tla, tla_mutate
 
 from .test_draft import DRIVE_OK, SPEC_REPLY, ScriptedProvider, _files, _lean_ok, _lean_reply
 from .test_property import STRONG, _reply
+
+
+@pytest.fixture(autouse=True)
+def formal_trials(monkeypatch):
+    """Keep context tests independent of external checkers and OS guard availability."""
+    monkeypatch.setattr(
+        tla_mutate,
+        "run",
+        lambda *a, **k: tla_mutate.FailAbility("test", [tla_mutate.MutantResult("A", "g", "caught", "Safe violated")]),
+    )
+    monkeypatch.setattr(lean_draft, "_lean_check", lambda out_dir, root, theorems: lean.run(out_dir, theorems))
+
 
 REPOSITORY = """\
 class OnboardingRepository:
