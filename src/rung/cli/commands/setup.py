@@ -102,8 +102,10 @@ def cmd_init(args, out: Output) -> int:
     info = survey.survey(root)
 
     interactive = sys.stdin.isatty() and not out.json_mode
-    if args.provider:
-        cfg.llm = LLMConfig(provider=args.provider) if args.provider != cfg.llm.provider else cfg.llm
+    # `--model sonnet` already says which CLI to use, so only an ambiguous model name still asks.
+    requested = args.provider or (providers.provider_for_model(args.model) if args.model and not existing else None)
+    if requested:
+        cfg.llm = LLMConfig(provider=requested) if requested != cfg.llm.provider else cfg.llm
     elif not existing and not args.no_drafts and not args.dry_run and interactive:
         cfg.llm = _choose_provider(None)
     if args.model is not None:
