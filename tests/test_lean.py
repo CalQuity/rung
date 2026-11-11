@@ -195,3 +195,29 @@ def test_finding_17_audit_path_cannot_follow_a_prepared_external_link(tmp_path: 
     with pytest.raises(ConfigError):
         lean.audit_axioms("unused", project, [], ["safe"])
     assert outside.read_text() == "original"
+
+
+def test_toolchain_is_prepared_before_the_checker_is_identified(tmp_path: Path, monkeypatch) -> None:
+    """elan installs a pinned toolchain on first use; that install must not look like a checker swap."""
+    from rung.checks import runner
+    from rung.checks.base import Outcome
+    from rung.core.config import Check, Config, LLMConfig
+
+    calls: list[str] = []
+    monkeypatch.setattr(lean, "prepare_toolchain", lambda project, timeout=900: calls.append("prepare"))
+    monkeypatch.setattr(runner, "tool_identity", lambda root, check: calls.append("identify") or None)
+
+    class Proofs:
+        def covers(self, check):
+            return []
+
+        def specs(self, check):
+            return []
+
+        def run(self, ctx, check):
+            return Outcome("pass", "kernel-checked")
+
+    monkeypatch.setattr(runner.registry, "get", lambda kind: Proofs())
+    config = Config(root=tmp_path, name="audit", llm=LLMConfig(), checks=[])
+    runner.run_check(config, Check("proofs", "lean", [], {"project": "."}))
+    assert calls[:2] == ["prepare", "identify"]

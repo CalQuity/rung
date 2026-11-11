@@ -69,6 +69,19 @@ def find_lake() -> str:
     return lake
 
 
+def prepare_toolchain(project: Path, timeout: int = 900) -> None:
+    """Install the project's pinned toolchain before anything identifies it.
+
+    elan installs a `lean-toolchain` on first use. Run once here, before a check records which Lean it
+    used, so that install is not mistaken for the checker changing while the check ran. Errors are left
+    for the check itself to report.
+    """
+    try:
+        subprocess.run([find_lake(), "--version"], cwd=project, capture_output=True, timeout=timeout, check=False)
+    except (ToolMissing, OSError, subprocess.TimeoutExpired):
+        return
+
+
 def toolchain() -> str:
     """The Lean toolchain to pin: `RUNG_LEAN_TOOLCHAIN`, else the newest installed release, else a known-good one.
 
