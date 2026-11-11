@@ -83,6 +83,7 @@ def build_parser(*, json_errors: bool = False) -> argparse.ArgumentParser:
     )
     s.add_argument("--provider", choices=list(providers.PROVIDERS))
     s.add_argument("--model", help="model for drafting, passed to the provider (e.g. sonnet, opus, gpt-6.1-sol); "
+                   "a Claude or OpenAI model name also picks its CLI, so init does not ask; "
                    "empty uses the CLI's own default")  # fmt: skip
     s.add_argument(
         "--yes",

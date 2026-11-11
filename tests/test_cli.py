@@ -176,3 +176,30 @@ def test_drafting_without_a_provider_says_how_to_set_one() -> None:
 
     with pytest.raises(ToolMissing, match=r"rung init --provider claude-cli.*\[llm\] in rung.toml"):
         providers.Provider(LLMConfig()).complete_json("x", schema={})
+
+
+def test_a_model_name_picks_its_provider_without_asking(tmp_path: Path, monkeypatch) -> None:
+    from rung.core.config import load
+    from rung.drafting import providers
+
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    asked = []
+    monkeypatch.setattr("rung.cli.commands.setup.ask", lambda prompt, default="": asked.append(prompt) or "n")
+    (tmp_path / "app.py").write_text("def main():\n    pass\n")
+    assert run(tmp_path, "init", "--model", "sonnet", "--no-drafts", "--no-agents") == 0
+    assert not any(prompt == "Choose" for prompt in asked)
+    llm = load(tmp_path).llm
+    assert (llm.provider, llm.model) == ("claude-cli", "sonnet")
+
+    assert providers.provider_for_model("gpt-6.1-sol") == "codex-cli"
+    assert providers.provider_for_model("o3") == "codex-cli"
+    assert providers.provider_for_model("claude-opus-5-5") == "claude-cli"
+    assert providers.provider_for_model("qwen2.5-coder") is None
+
+
+def test_an_explicit_provider_wins_over_the_model_name(tmp_path: Path) -> None:
+    from rung.core.config import load
+
+    (tmp_path / "app.py").write_text("def main():\n    pass\n")
+    assert run(tmp_path, "init", "--provider", "openai-compatible", "--model", "sonnet") == 0
+    assert load(tmp_path).llm.provider == "openai-compatible"

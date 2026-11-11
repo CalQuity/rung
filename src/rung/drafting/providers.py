@@ -293,6 +293,23 @@ def get(config: LLMConfig) -> Provider:
     return cls(config)
 
 
+CLAUDE_MODELS = ("sonnet", "opus", "haiku", "fable")
+
+
+def provider_for_model(model: str) -> str | None:
+    """The provider a model name belongs to, when the name alone says so, else None.
+
+    `sonnet`, `opus`, `haiku`, `fable` and `claude-*` run on the Claude Code CLI; `gpt-*` and the `o`-series
+    run on the Codex CLI. Any other name (a local model behind an OpenAI-compatible endpoint) is ambiguous.
+    """
+    name = model.strip().lower()
+    if name in CLAUDE_MODELS or name.startswith("claude"):
+        return "claude-cli"
+    if name.startswith(("gpt-", "codex")) or re.fullmatch(r"o\d+(-[a-z0-9.-]+)?", name):
+        return "codex-cli"
+    return None
+
+
 def detect() -> list[str]:
     """Providers usable on this machine right now, best first."""
     found = [name for name, cls in (("claude-cli", ClaudeCLI), ("codex-cli", CodexCLI)) if cls(LLMConfig()).available()]
