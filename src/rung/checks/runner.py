@@ -172,6 +172,8 @@ def run_check(
         return Result(check, Outcome("pass", held.entry.get("summary", "attested"), held.entry.get("evidence", [])))
     checker = registry.get(check.kind)
     cover_patterns, spec_patterns = checker.covers(check), specs(check, root)
+    if check.kind == "lean":  # a first-use toolchain install must happen before the checker is identified
+        lean.prepare_toolchain(root / check.require("project"))
     before = (ledger.snapshot(root, cover_patterns), ledger.snapshot(root, spec_patterns))
     tools = tool_identity(root, check)
     checked_definition = definition(check, root)

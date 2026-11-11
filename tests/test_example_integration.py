@@ -51,7 +51,8 @@ def _verdicts(root: Path) -> dict[str, Outcome]:
 def test_buggy_queue_fails_where_the_readme_says(tmp_path: Path) -> None:
     root = _copy_example(tmp_path)
     outcomes = _verdicts(root)
-    assert outcomes["lease-model-proofs"].verdict == "pass", outcomes["lease-model-proofs"].lines
+    proofs = outcomes["lease-model-proofs"]
+    assert proofs.verdict == "pass", (proofs.summary, proofs.lines)
     assert outcomes["lease-protocol"].verdict == "fail"
     assert "ResultFromLeaseHolder" in outcomes["lease-protocol"].summary
     assert outcomes["impl-matches-model"].verdict == "fail"
