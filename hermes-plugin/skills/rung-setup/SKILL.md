@@ -42,7 +42,15 @@ Call the `rung_check` tool, then `rung_kit`, and report the results.
 - **Scanner findings on existing code:** show the developer the summary (`rung report`). Only if they
   agree to accept today's findings as a starting point, run `rung baseline <check-id>`.
 
-## 4. After that
+## 4. Feature map (web apps)
+
+For an app with a UI, call `rung_map` (pass `intent` to focus it) to draft the map of user-visible
+features. Show the developer the map and ask them to decide each feature in chat with
+`/rung approve <ids>` (or `all`), `/rung not-built <ids>` or `/rung drop <ids>`. Never decide features
+yourself. Then `rung draft runtime` drafts an app-driving script for the approved features only, and
+`rung_check` runs it with its scenarios and faults.
+
+## 5. After that
 
 When you finish a coding turn, the plugin asks Rung whether the checks covering your edits have fresh
 passing verdicts. If not, it sends you back to run `rung_check`. Fix what fails; if a failure remains,

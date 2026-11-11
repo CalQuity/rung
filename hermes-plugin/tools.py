@@ -72,6 +72,28 @@ def rung_kit(args: dict, **kwargs) -> str:
     return _tool(["kit"], QUICK_TIMEOUT_S)
 
 
+def rung_map(args: dict, **kwargs) -> str:
+    """Draft (first time or redraft) and show the feature map. Approving features is the person's: see /rung."""
+    flags = ["--redraft"] if args.get("redraft") else []
+    intent = str(args.get("intent") or "").strip()
+    if intent:
+        flags += ["--intent", intent]
+    return _tool(["map", "--brief", *flags], CHECK_TIMEOUT_S)
+
+
+def text(args: list[str], timeout: int = QUICK_TIMEOUT_S) -> str:
+    """Run a Rung command for a person to read in chat: its plain-text output, or why it could not run."""
+    try:
+        done = _run([*args, "--no-color"], resolve_agent_cwd(), timeout)
+    except FileNotFoundError:
+        return "Rung is not installed. Install it with `uv tool install rung-cli`."
+    except subprocess.TimeoutExpired:
+        return f"`rung {' '.join(args)}` ran longer than {timeout} seconds."
+    except OSError as exc:
+        return f"Could not run Rung: {exc}"
+    return _clip("\n".join(part for part in (done.stdout.strip(), done.stderr.strip()) if part)) or "(no output)"
+
+
 def _start_dir(changed_paths: list) -> Path:
     """The folder to look for rung.toml from: the first edited file's folder, else the session's folder."""
     base = resolve_agent_cwd()
