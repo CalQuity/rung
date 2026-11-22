@@ -1,3 +1,3 @@
 """Rung: an opinionated verification ladder for software written with coding agents."""
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"

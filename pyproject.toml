@@ -1,7 +1,7 @@
 [project]
 name = "rung-cli"
-version = "0.5.0"
-description = "An opinionated verification ladder for software written with coding agents: architecture rules, runtime evidence, properties, TLA+ and Lean, and an evidence ledger that expires when code changes."
+version = "0.6.0"
+description = "Stop coding agents from faking green builds: zero-config shortcut & dep checks, fix proofs, byte-bound verdicts, browser evidence, TLA+ and Lean."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]

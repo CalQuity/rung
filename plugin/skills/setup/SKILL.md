@@ -29,22 +29,13 @@ them (`rung doctor` prints the commands), but continue without them.
 
 ## 2. Initialise
 
-Ask the developer which model, if any, should draft TLA+ specs, Lean proofs, app-driving scripts and
-explanations. `rung doctor` (step 1) shows which model CLIs are installed. The choices are
-`claude-cli`, `codex-cli`, an `openai-compatible` endpoint they configure, or `none` for checks and
-agent skills only. Do not pick one for them. Then run, with their answer:
+Run `rung init` to wire up detected tests, linters, type checkers, `shortcuts`, `deps`, and the agent skills and Stop hook (runs offline in seconds, with no LLM calls; pass `--with-security` if the developer also wants installed external security scanners like `gitleaks`, `osv-scanner`, and `zizmor`, or `--no-agents` to leave agent files alone):
 
 ```bash
-rung init --provider <their choice>
+rung init
 ```
 
-Rung runs the model CLI they chose, and that CLI uses its own sign-in. For an `openai-compatible`
-endpoint, Rung reads the key from the environment variable the developer names and sends it only to
-that endpoint. Rung never stores a credential. `init` builds the project's verification kit: it records each detected test suite, linter
-and type checker, the installed scanners and new-dependency vetting in `rung.toml`, and installs the
-agent skills and the Stop hook (step 5; pass `--no-agents` if the developer does not want them). Run
-without a terminal, it drafts nothing; `rung kit` then lists every part of the kit, what is missing,
-and the command that adds it.
+Only if the developer wants model-drafted feature maps, property tests, TLA+ specs, or Lean models, ask which provider they prefer (`claude-cli`, `codex-cli`, `openai-compatible`, or `none`)—do not pick one for them—and pass `--provider <choice>` (with `--draft` if they want to draft during init). Rung runs the model CLI they chose using its own sign-in, and never stores credentials.
 
 Open `rung.toml` and check it against the repository:
 - Each test check's `run` command works from its `cwd`. Fix it if the project runs tests differently
@@ -83,7 +74,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: CalQuity/rung@v0.5.0
+      - uses: CalQuity/rung@v0.6.0
 ```
 
 The defaults keep the job read-only: no evidence upload, no PR comment, and policy changes (edits to

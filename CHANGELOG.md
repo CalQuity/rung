@@ -3,19 +3,62 @@
 All notable changes to Rung. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 
-## Unreleased
+## 0.6.0 (2026-11-22)
 
 ### Added
+- **Zero-config, zero-write quick checks:** `rung check --changed` (e.g., via `uvx rung-cli check --changed`)
+  and `rung prove '<test command>'` now work on any Git repository without `rung.toml` and without creating
+  `.rung/` files, catching agent shortcuts, hallucinated or <30-day packages, and weak bug-fix tests on the spot.
 - `rung score-my-code`: offline HTML/JSON reports of configured-check health, failures,
-  errors, stale evidence, missing verification areas and next steps. Includes CalQuity
-  styling, checker timings and scoped pytest pass/skip metrics. `--no-run` reads saved
-  evidence; the score is not an overall code-quality grade or merge threshold.
+  errors, stale evidence, missing verification areas, checker timings, scoped pytest pass/skip
+  metrics, and next steps. `--no-run` reads saved evidence; the score is not an overall
+  code-quality grade or merge threshold.
 - Explicit pytest diagnostics: `rung coverage CHECK --source PATH` measures changed
-  executable lines; `rung flaky CHECK` retains repeated outcomes. Both preserve ordinary
-  verdicts, bind evidence to inputs and support opt-in failure policies.
-- `rung-issue` and `rung-failure-path` agent skills for Codex and Claude Code: report
-  reproduced findings within publishing authorization, and test isolated failure scenarios
-  with passing controls and state checks. Includes a rejected-write consistency example.
+  executable lines; `rung flaky CHECK` retains repeated outcomes in fresh processes. Both
+  preserve ordinary verdicts, bind evidence to inputs, and support opt-in failure policies.
+- `rung-issue` and `rung-failure-path` agent skills for Codex and Claude Code, plus the
+  `examples/failure-path/` rejected-write consistency example.
+- `rung init --draft` (opt into interactive drafting during setup) and `rung init --with-security`
+  (opt into wiring installed external security scanners `gitleaks`, `osv-scanner`, and `zizmor`).
+- Focused documentation guides: `docs/RUNTIME.md`, `docs/FORMAL.md`, `docs/DIAGNOSTICS.md`, and `docs/CI.md`.
+
+### Changed
+- `rung init` is now fast, offline, and zero-LLM by default: it wires up detected tests, linters,
+  type checkers, `shortcuts`, `deps`, and agent hooks without prompting for a model login or adding
+  external security scanners unless `--draft` or `--with-security` is passed (`--no-drafts` remains
+  accepted for compatibility).
+- `rung doctor` groups configured check tools above optional rung toolchains in terminal output
+  (JSON schema unchanged).
+- Tightened `README.md` around the zero-config entry wedge and progressive verification ladder.
+
+## 0.5.0 (2026-11-12)
+
+### Added
+- A Hermes Agent plugin (`hermes-plugin/`). Before Hermes ends a turn in which it edited code, its
+  `pre_verify` hook asks Rung whether the checks covering those files have a fresh pass, and sends
+  Hermes back with the check ids when they do not. Tools `rung_check`, `rung_plan`, `rung_kit` and
+  `rung_map` return the kit's JSON views; feature decisions stay with the person as `/rung approve`,
+  `/rung not-built` and `/rung drop`.
+
+### Changed
+- Formal receipts bind model reviews, law definitions, imported sources and checker identities.
+  **After upgrading**, renew existing law approvals (`rung laws --approve`) and model confirmations
+  (`rung confirm`) once; until then the affected formal checks report stale.
+- Drafts and maintenance stay proposals until a person confirms their correspondence with the code:
+  a model's "no effect" classification no longer renews a source link.
+- `rung init --model sonnet` (or `opus`, `haiku`, `claude-*`, `gpt-*`, the `o`-series) picks the
+  matching CLI instead of asking; other model names still ask, and `--provider` always wins.
+
+### Fixed
+- An independent audit found 21 ways a TLC, Lean or differential-test verdict could pass without the
+  property being checked, or stay fresh after its inputs changed. Each now fails or errors:
+  - Formal checks reject forged or incomplete tool results, empty proof sets, programmatic TLC
+    termination, commented-out properties and vacuous differential-test inputs; truncated output is
+    an error, never agreement.
+  - Generated Lean tooling runs in guarded disposable copies; unavailable guards fail closed.
+  - Formal timeouts kill child process groups. Counterexamples retain TLC's original output and
+    infinite loops; stateful differential failures retain their observed input batch.
+  - Fix-proof freshness includes executable documentation and prose fixtures.
 
 ## 0.4.0 (2026-11-06)
 
