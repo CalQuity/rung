@@ -50,6 +50,7 @@ def run(
         except subprocess.TimeoutExpired as exc:
             if posix:
                 detached = _descendants(proc.pid)
+            exc.timeout = timeout
             exc.output, exc.stderr = _tail(out), _tail(err)
             raise
         finally:
