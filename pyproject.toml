@@ -1,6 +1,6 @@
 [project]
 name = "rung-cli"
-version = "0.6.0"
+version = "0.6.1"
 description = "Stop coding agents from faking green builds: zero-config shortcut & dep checks, fix proofs, byte-bound verdicts, browser evidence, TLA+ and Lean."
 readme = "README.md"
 license = "Apache-2.0"

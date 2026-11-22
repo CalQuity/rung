@@ -74,7 +74,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: CalQuity/rung@v0.6.0
+      - uses: CalQuity/rung@v0.6.1
 ```
 
 The defaults keep the job read-only: no evidence upload, no PR comment, and policy changes (edits to

@@ -3,6 +3,17 @@
 All notable changes to Rung. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow the policy in [CONTRIBUTING.md](CONTRIBUTING.md#versioning).
 
+## 0.6.1 (2026-11-22)
+
+### Changed
+- Kept the CLI tightly focused on its core verification ladder: removed the experimental
+  `score-my-code`, pytest-only `coverage`/`flaky` commands, and extra `rung-issue`/`rung-failure-path`
+  skills that landed in the unpublished `0.6.0` tag.
+
+### Fixed
+- `rung.core.proc.run` now preserves the exact requested timeout on `subprocess.TimeoutExpired`
+  across Python 3.11–3.13.
+
 ## 0.6.0 (2026-11-22)
 
 ### Added

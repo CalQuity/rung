@@ -20,7 +20,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: CalQuity/rung@v0.6.0
+      - uses: CalQuity/rung@v0.6.1
 ```
 
 Run the same merge decision locally or on another CI provider with:
@@ -95,7 +95,7 @@ Add Rung to `.pre-commit-config.yaml`:
 
 ```yaml
 - repo: https://github.com/CalQuity/rung
-  rev: v0.6.0
+  rev: v0.6.1
   hooks:
     - id: rung-check
 ```

@@ -76,7 +76,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: CalQuity/rung@v0.6.0
+      - uses: CalQuity/rung@v0.6.1
 ```
 
 `rung gate --base origin/main` runs the same merge gate locally or in any CI: it blocks unauthorized edits to policy files (`rung.toml`, `LAWS.md`, workflows, verifier scripts) *before* executing PR code, then reruns every required check fresh. See [docs/CI.md](docs/CI.md) for `[gate]` settings, approval labels, pre-commit, and sticky comments.
@@ -93,7 +93,6 @@ Start on Rung 1 in seconds. Only climb higher on the files where bugs are expens
 | **4. Property tests** | `rung draft property <file>` | Drafts Hypothesis or fast-check properties and keeps them only if they catch ≥50% of deliberate one-token code mutations | [docs/FORMAL.md](docs/FORMAL.md) |
 | **5. Runtime evidence** | `rung map && rung draft runtime` | Drives your real UI/API through seeded scenarios and injected faults, saving screenshots, video, Playwright traces, HARs, and an HTML evidence page | [docs/RUNTIME.md](docs/RUNTIME.md) |
 | **6. Formal models** | `rung draft tla\|lean <file>` | TLA+ (TLC + guard-removal mutation) for concurrency; Lean 4 (axiom-audited kernel proofs + differential testing) for core logic, with source-drift detection | [docs/FORMAL.md](docs/FORMAL.md) |
-| **Reports & diagnostics** | `rung score-my-code`, `coverage`, `flaky` | Offline HTML health reports, changed-line Python coverage, and repeated-process flaky test diagnosis | [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md) |
 
 Try Rung on two worked examples with planted bugs: [`examples/acme-store`](examples/acme-store) (FastAPI + Next.js) and [`examples/lease-queue`](examples/lease-queue) (TLA+ + Lean 4 + differential testing).
 
@@ -107,7 +106,6 @@ Try Rung on two worked examples with planted bugs: [`examples/acme-store`](examp
 | `rung kit` / `rung plan --changed` | Show verification gaps, check states, and what to run next |
 | `rung gate --base origin/main` | Policy-checked merge gate for CI and local pre-merge checks |
 | `rung status [--require-fresh]` / `rung report` | Fresh vs. stale verdicts, laws, and Markdown/JSON summary |
-| `rung score-my-code [--no-run]` | Offline HTML verification health report with timings and disclosed gaps |
 | `rung draft property\|runtime\|tla\|lean` | Model-drafted tests, drive scripts, or formal specs—accepted only by deterministic checkers |
 | `rung maintain <check>` / `rung confirm <check>` | Keep TLA+ and Lean models synced when covered code changes |
 | `rung doctor [--strict]` | Check configured executables and optional rung toolchains |
@@ -118,8 +116,7 @@ Every command accepts `-C DIR`, `--json`, and `--no-color`. Exit codes: `0` pass
 
 - [Configuration reference (`rung.toml`)](docs/CONFIG.md) · [Stack recipes](docs/RECIPES.md)
 - [Runtime verification & feature maps](docs/RUNTIME.md) · [Property tests, TLA+, Lean & `LAWS.md`](docs/FORMAL.md)
-- [HTML reports, coverage & flaky diagnostics](docs/DIAGNOSTICS.md) · [CI, merge gates & pre-commit](docs/CI.md)
-- [Design & trust boundaries](docs/DESIGN.md) · [Contributing](CONTRIBUTING.md)
+- [CI, merge gates & pre-commit](docs/CI.md) · [Design & trust boundaries](docs/DESIGN.md) · [Contributing](CONTRIBUTING.md)
 
 ## Credits & License
 
