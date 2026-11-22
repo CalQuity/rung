@@ -157,7 +157,7 @@ def select(config: Config, ids: list[str], changed: set[str] | None) -> list[Che
 
 def run_check(
     config: Config, check: Check, *, base: str | None = None, seed: int | None = None, scenarios: tuple[str, ...] = (),
-    merge_gate: bool = False,
+    merge_gate: bool = False, record: bool = True,
 ) -> Result:  # fmt: skip
     """Run one check and record its verdict.
 
@@ -202,7 +202,7 @@ def run_check(
             + ". If the check writes them itself (coverage, reports), add them to .gitignore or narrow `covers`."
         )  # fmt: skip
         outcome = Outcome("error", hint, outcome.lines, details=outcome.details)
-    if partial:
+    if partial or not record:
         return Result(check, outcome)
     entry = ledger.record(
         root,

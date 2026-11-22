@@ -263,7 +263,7 @@ def expect_found(expect: str, run: Run) -> bool:
 def prove(
     root: Path, command: str, base_ref: str, *, tests: list[str] | None = None,
     expect: str | None = None, timeout: int = 1800, cwd: str = ".",
-    node_cases: list[str] | None = None,
+    node_cases: list[str] | None = None, record: bool = True,
 ) -> Proof:  # fmt: skip
     mb = git.merge_base(root, base_ref)
     changed = git.changed_files(root, base_ref)
@@ -386,6 +386,9 @@ def prove(
         proof.verdict = "error"
         proof.summary = "files changed while the proof ran; re-run it: " + ", ".join(moved[:5])
     covered = before if moved else after
+
+    if not record:
+        return proof
 
     slug = re.sub(r"[^a-z0-9]+", "-", command.lower()).strip("-")[:40] or "tests"
     ledger.record(

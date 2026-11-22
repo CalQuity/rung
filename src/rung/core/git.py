@@ -67,6 +67,11 @@ def is_repo(root: Path) -> bool:
         return False
 
 
+def repo_root(root: Path) -> Path:
+    """The top-level directory of the git working tree containing `root`."""
+    return Path(_git(root, "rev-parse", "--show-toplevel").strip()).resolve()
+
+
 def head(root: Path) -> str:
     try:
         return _git(root, "rev-parse", "HEAD").strip()

@@ -20,13 +20,13 @@ from rung.engines.sarif import LEVELS
 EXIT_GATE, EXIT_USAGE, EXIT_TOOL, EXIT_GIT = 1, 2, 3, 4
 
 DESCRIPTION = """\
-Rung builds a verification kit for your project and keeps a ledger of what it has
-actually verified, against which exact code. The kit takes the best of linters,
-tests, property tests, scripts that drive the running app, and formal models (TLA+,
-Lean); laws in LAWS.md say what must never break.
+Stop coding agents from faking green builds. Start in one command with zero config,
+then climb the verification ladder (tests, property tests, browser evidence, TLA+, Lean)
+with every result bound to the exact code it checked.
 
-Start here: `rung init --dry-run` previews setup, `rung init` builds the kit,
-and `rung kit` shows what to run next.
+Start here: `rung check --changed` checks this branch with zero config (no files written),
+`rung prove 'pytest ...'` proves a bug-fix test fails without the fix, and `rung init`
+wires up your tests, hooks, and CI gate in two seconds.
 
 Exit codes: 0 ok · 1 check or gate failed (including missing check tools) ·
 2 configuration or usage error · 3 command cannot start without a prerequisite ·
@@ -79,18 +79,28 @@ def build_parser(*, json_errors: bool = False) -> argparse.ArgumentParser:
         return s
 
     s = add(
-        "init", "cmd_init", "build the project's verification kit: checks, agent skills, drafted scenarios and models"
+        "init", "cmd_init", "set up Rung for this project: detected tests, linters, shortcuts, deps and agent hooks"
     )
     s.add_argument("--provider", choices=list(providers.PROVIDERS))
     s.add_argument("--model", help="model for drafting, passed to the provider (e.g. sonnet, opus, gpt-6.1-sol); "
                    "a Claude or OpenAI model name also picks its CLI, so init does not ask; "
                    "empty uses the CLI's own default")  # fmt: skip
     s.add_argument(
+        "--draft",
+        action="store_true",
+        help="after setup, interactively draft optional parts (feature map, property tests, TLA+, Lean)",
+    )
+    s.add_argument(
+        "--with-security",
+        action="store_true",
+        help="also register installed external security scanners (gitleaks, osv-scanner, zizmor)",
+    )
+    s.add_argument(
         "--yes",
         action="store_true",
         help="draft every part a model can draft without asking (app scenarios, property tests, models)",
     )
-    s.add_argument("--no-drafts", action="store_true", help="set up the checks and agent skills only; draft nothing")
+    s.add_argument("--no-drafts", action="store_true", help="skip drafting (default; kept for compatibility)")
     s.add_argument("--no-agents", action="store_true", help="do not install the agent skills and Stop hook")
     s.add_argument(
         "--dry-run", action="store_true", help="preview checks and file changes without writing or running them"

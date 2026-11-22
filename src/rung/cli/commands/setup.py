@@ -57,24 +57,27 @@ def _choose_provider(requested: str | None) -> LLMConfig:
     return llm
 
 
-def _starter_checks(root: Path, info: survey.Inspection) -> list[Check]:
+def _starter_checks(root: Path, info: survey.Inspection, *, with_security: bool = False) -> list[Check]:
     checks: list[Check] = []
-    files = git.list_files(root)
-    # Wire up the security scanners that are installed and relevant to this repo.
-    for check_id, tool in (
-        ("secrets", "gitleaks"),
-        ("vulnerable-deps", "osv-scanner"),
-        ("workflows", "zizmor"),
-    ):
-        if tool == "osv-scanner":
-            paths = [f for f in files if Path(f).name not in {"pyproject.toml", "package.json", "go.mod", "pom.xml"}]
-        else:
-            paths = files
-        relevant = tool == "gitleaks" or any(
-            git.glob_match(pattern, path) for pattern in PRESETS[tool].covers for path in paths
-        )
-        if shutil.which(tool) and relevant:
-            checks.append(Check(check_id, "scan", [], {"tool": tool}))
+    if with_security:
+        files = git.list_files(root)
+        # Wire up the external security scanners that are installed and relevant to this repo.
+        for check_id, tool in (
+            ("secrets", "gitleaks"),
+            ("vulnerable-deps", "osv-scanner"),
+            ("workflows", "zizmor"),
+        ):
+            if tool == "osv-scanner":
+                paths = [
+                    f for f in files if Path(f).name not in {"pyproject.toml", "package.json", "go.mod", "pom.xml"}
+                ]
+            else:
+                paths = files
+            relevant = tool == "gitleaks" or any(
+                git.glob_match(pattern, path) for pattern in PRESETS[tool].covers for path in paths
+            )
+            if shutil.which(tool) and relevant:
+                checks.append(Check(check_id, "scan", [], {"tool": tool}))
     checks.append(Check("deps", "deps", [], {"min_age_days": 30}))
     checks.extend(check for _, check in plan.detected_checks(info))
     if info.languages:
@@ -102,16 +105,21 @@ def cmd_init(args, out: Output) -> int:
     info = survey.survey(root)
 
     interactive = sys.stdin.isatty() and not out.json_mode
+    wants_draft = bool(args.draft or args.yes) and not args.no_drafts
     # `--model sonnet` already says which CLI to use, so only an ambiguous model name still asks.
     requested = args.provider or (providers.provider_for_model(args.model) if args.model and not existing else None)
     if requested:
         cfg.llm = LLMConfig(provider=requested) if requested != cfg.llm.provider else cfg.llm
-    elif not existing and not args.no_drafts and not args.dry_run and interactive:
+    elif wants_draft and not existing and not args.dry_run and interactive:
         cfg.llm = _choose_provider(None)
     if args.model is not None:
         cfg.llm.model = args.model
     current = {check.id: check for check in cfg.checks}
-    detected = _starter_checks(root, info) if not existing or args.refresh else []
+    detected = (
+        _starter_checks(root, info, with_security=bool(args.with_security))
+        if not existing or args.refresh or args.with_security
+        else []
+    )
     # A command already recorded under another id (same run and cwd) is the same check; do not add it twice.
     recorded = {(c.get("run"), c.get("cwd", ".")) for c in cfg.checks if c.kind == "command"}
     new = [
@@ -166,7 +174,11 @@ def cmd_init(args, out: Output) -> int:
         for change in changed_commands:
             out.detail(f"{change['id']} now detects {change['detected']!r}; review {CONFIG_NAME}.", indent=2)
         out.line("Files to set up: " + (", ".join(files) or "none"))
-        argv = ["rung", "init", "--no-drafts"]
+        argv = ["rung", "init"]
+        if args.with_security:
+            argv.append("--with-security")
+        if args.draft:
+            argv.append("--draft")
         if args.no_agents:
             argv.append("--no-agents")
         if args.refresh:
@@ -184,7 +196,7 @@ def cmd_init(args, out: Output) -> int:
     state_dir = managed_path(root, ".rung")
 
     state = providers.LoginState(False, "drafting disabled")
-    drafting = not args.no_drafts and cfg.llm.provider != "none" and (args.yes or interactive)
+    drafting = wants_draft and cfg.llm.provider != "none" and (args.yes or interactive)
     if drafting:
         provider = providers.get(cfg.llm)
         state = provider.login_state()
@@ -227,7 +239,7 @@ def cmd_init(args, out: Output) -> int:
         installed = [str(p.relative_to(root)) for p in written]
         out.line("Installed Claude Code and Codex skills, AGENTS.md rules, and the Claude Code Stop hook.")
 
-    drafted = _draft_kit(args, root, info, cfg, state.ok, out)
+    drafted = _draft_kit(args, root, info, cfg, state.ok, out) if wants_draft else []
     cfg = load(root)
     built = kit.build(cfg, info)
     recs = plan.plan(info, {c.id for c in cfg.checks})
@@ -542,12 +554,20 @@ def cmd_doctor(args, out: Output) -> int:
         required = []
     else:
         required = _configured_tools(load(root), rows)
-    rows.extend(required)
+    optional = rows
+    rows = [*optional, *required]
     # `strict_failures` names the configured tools `--strict` fails on, whether or not it was passed.
     failures = [label for label, ok, _ in required if not ok]
     out.emit({"tools": [{"tool": label, "ok": ok, "detail": detail} for label, ok, detail in rows],
               "strict_failures": failures})  # fmt: skip
-    for label, ok, detail in rows:
+    if required:
+        out.heading("Configured check tools")
+        for label, ok, detail in required:
+            mark = out.style("ok ", "green") if ok else out.style("ERR", "red")
+            out.line(f"{mark} {label:14} {detail}")
+        out.line("")
+    out.heading("Optional tools", "only needed if you enable those rungs")
+    for label, ok, detail in optional:
         mark = out.style("ok ", "green") if ok else out.style("-- ", "dim")
         out.line(f"{mark} {label:14} {detail}")
     return GATE_FAILED if args.strict and failures else OK

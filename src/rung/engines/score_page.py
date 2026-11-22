@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import base64
 from html import escape
-from importlib.resources import files
 from typing import Any
 
 MARKER = "<!-- rung-score-report-v1 -->"
@@ -18,7 +16,7 @@ h2{font-size:23px;margin:32px 0 12px}h3{font-size:18px;margin:0 0 8px}p{margin:8
 .muted,small{color:var(--muted)}
 .hero,.card,details,.notice{background:white;border:1px solid var(--line);border-radius:14px}
 .brand{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);
-padding:0 0 22px;margin-bottom:32px;gap:24px}.calquity-logo{width:170px;height:auto;display:block}
+padding:0 0 18px;margin-bottom:32px;gap:24px}.brand strong{font-size:18px;letter-spacing:-.01em;color:var(--accent)}
 .brand span{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
 .hero{padding:28px;display:grid;grid-template-columns:2fr 1fr;gap:32px;margin:24px 0}
 .hero h2{margin:0 0 12px;font-size:28px;line-height:1.3}.score-box{background:#F3F2EE;padding:20px;border-radius:10px}
@@ -55,12 +53,11 @@ def render(data: dict[str, Any]) -> str:
         MARKER,
         '<html lang="en"><head><meta charset="utf-8">',
         '<meta name="viewport" content="width=device-width,initial-scale=1">',
-        '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; '
+        '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; '
         "style-src 'unsafe-inline'; "
         "base-uri 'none'; form-action 'none'\">",
         f"<title>{_text(data['project'])} · Rung report</title><style>{CSS}</style></head><body><main>",
-        f'<div class="brand"><img class="calquity-logo" src="{_logo_data()}" alt="CalQuity">'
-        "<span>Engineering · Rung</span></div>",
+        '<div class="brand"><strong>Rung</strong><span>Verification report</span></div>',
         '<header><span class="eyebrow">Verification report</span>',
         f'<h1>{_text(data["project"])}</h1><p class="muted">What was checked, what needs attention, '
         "and what has not been assessed.</p></header>",
@@ -160,11 +157,6 @@ def render(data: dict[str, Any]) -> str:
 
 def _text(value: Any) -> str:
     return escape(str(value), quote=True)
-
-
-def _logo_data() -> str:
-    encoded = base64.b64encode(files("rung").joinpath("assets/calquity-logo-full.png").read_bytes()).decode("ascii")
-    return f"data:image/png;base64,{encoded}"
 
 
 def _outcome(data: dict[str, Any]) -> str:

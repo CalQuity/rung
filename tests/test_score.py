@@ -215,8 +215,8 @@ def test_report_leads_with_scope_and_discloses_missing_assessments(repo, capsys)
     _, data, document = invoke(repo, capsys)
     assert "1 of 1 configured checks passed" in document
     assert document.index("1 of 1 configured checks passed") < document.index("Verification health")
-    assert "calquity-logo" in document and "data:image/png;base64," in document
-    assert "#3A5C78" in document and "img-src data:" in document
+    assert "<strong>Rung</strong>" in document and "calquity-logo" not in document
+    assert "#3A5C78" in document and "default-src 'none'" in document
     assert data["assessments"]["test_strength"] == "not_assessed"
     assert "Vulnerability scanning" in document and "Secret scanning" in document
     assert "No browser or runtime verification configured" in document

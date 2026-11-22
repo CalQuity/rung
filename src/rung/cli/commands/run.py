@@ -24,6 +24,7 @@ from rung.core.config import (
     Check,
     Config,
     ConfigError,
+    LLMConfig,
     find_root,
     parse_gate,
 )
@@ -92,11 +93,14 @@ def _result_data(result: runner.Result) -> dict:
 def _run_checks(
     cfg: Config, selected: list[Check], out: Output, *, base: str | None,
     seed: int | None = None, scenarios: tuple[str, ...] = (), merge_gate: bool = False,
+    record: bool = True,
 ) -> list[runner.Result]:  # fmt: skip
     results = []
     for i, check in enumerate(selected, 1):
         out.progress(f"[{i}/{len(selected)}] Running {check.id}")
-        result = runner.run_check(cfg, check, base=base, seed=seed, scenarios=scenarios, merge_gate=merge_gate)
+        result = runner.run_check(
+            cfg, check, base=base, seed=seed, scenarios=scenarios, merge_gate=merge_gate, record=record
+        )
         results.append(result)
         _print_result(result, out)
     return results
@@ -537,10 +541,52 @@ def cmd_gate(args, out: Output) -> int:
     return OK if passed else GATE_FAILED
 
 
+def _zero_config_checks(args, start: Path) -> tuple[Config, list[Check], str] | None:
+    """When no rung.toml exists in a git repo, run zero-dependency checks without writing files."""
+    if args.ci or args.seed is not None or args.scenario or args.focused or not git.is_repo(start):
+        return None
+    available = {
+        "shortcuts": Check("shortcuts", "shortcuts", [], {}),
+        "deps": Check("deps", "deps", [], {"min_age_days": 30}),
+    }
+    if args.ids and any(check_id not in available for check_id in args.ids):
+        return None
+    root = git.repo_root(start)
+    base = resolve_base(root, args.base)
+    selected = [available[check_id] for check_id in args.ids] if args.ids else list(available.values())
+    cfg = Config(root=root, name=root.name, llm=LLMConfig(), checks=selected)
+    return cfg, selected, base
+
+
 def cmd_check(args, out: Output) -> int:
     if args.focused and not args.changed:
         raise ConfigError("--focused requires --changed")
-    cfg = load_config(args)
+    try:
+        cfg = load_config(args)
+    except ConfigError:
+        quick = _zero_config_checks(args, Path(args.dir).resolve())
+        if quick is None:
+            raise
+        cfg, selected, base = quick
+        out.heading("Quick check (no rung.toml)", f"{cfg.name} · base {base[:12]} · {len(selected)} selected")
+        results = _run_checks(cfg, selected, out, base=base, record=False)
+        out.emit(
+            {
+                "schema_version": 1,
+                "zero_config": True,
+                "base": base,
+                "head": git.head(cfg.root) or None,
+                "recorded": False,
+                "selected": [check.id for check in selected],
+                "selection": "zero-config",
+                "omitted": [],
+                "uncovered_paths": [],
+                "results": [_result_data(result) for result in results],
+            }
+        )
+        _print_summary(results, out)
+        out.line("Zero-config run (no files written). Run `rung init` to add your tests, CI gate, and agent hooks.")
+        return GATE_FAILED if any(r.verdict != "pass" for r in results) else OK
     base: str | None = resolve_base(cfg.root, args.base) if args.changed or args.base else None
     changed = git.changed_files(cfg.root, base) if args.changed and base else None
     uncovered = plan.uncovered_paths(cfg.checks, {path for path in changed or set() if not git.is_rung_output(path)})
@@ -661,17 +707,27 @@ def cmd_evidence(args, out: Output) -> int:
 
 
 def cmd_prove(args, out: Output) -> int:
-    root = find_root(Path(args.dir))
+    recorded = True
+    try:
+        root = find_root(Path(args.dir))
+    except ConfigError:
+        start = Path(args.dir).resolve()
+        if not git.is_repo(start):
+            raise
+        root = git.repo_root(start)
+        recorded = False
     base = args.base or git.default_base(root)
     result = prove.prove(
-        root, args.test_command, base, tests=args.tests or None, expect=args.expect, cwd=args.cwd, node_cases=args.case
-    )
+        root, args.test_command, base, tests=args.tests or None, expect=args.expect, cwd=args.cwd,
+        node_cases=args.case, record=recorded,
+    )  # fmt: skip
 
     def run_data(run: prove.Run | None) -> dict | None:
         return {"returncode": run.returncode, "tail": redact_lines(run.tail)} if run else None
 
     out.emit({
         "verdict": result.verdict, "summary": result.summary, "tests": result.tests,
+        "recorded": recorded,
         "base": run_data(result.base), "head": run_data(result.head),
         "scope": "case" if result.cases else "suite",
         "cases": [c.__dict__ for c in result.cases],
@@ -686,6 +742,8 @@ def cmd_prove(args, out: Output) -> int:
         out.detail(f"merge base run (exit {result.base.returncode}):")
         for line in redact_lines(result.base.tail[-12:]):
             out.detail(line, indent=8)
+    if not recorded:
+        out.line("Zero-config proof (not recorded). Run `rung init` to track proofs in the ledger.")
     return OK if result.verdict == "pass" else GATE_FAILED
 
 
